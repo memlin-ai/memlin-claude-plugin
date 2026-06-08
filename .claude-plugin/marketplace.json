@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "memlin-ai",
+  "description": "Memlin — unified memory, skills, goals, and schemas across Claude Code, Claude.ai, Codex, and Cursor.",
+  "owner": { "name": "Memlin", "email": "support@memlin.ai" },
+  "plugins": [
+    {
+      "name": "memlin",
+      "description": "Sync your Memlin workspace into Claude Code — hooks, slash commands, and the Memlin resolver skill.",
+      "source": "./memlin",
+      "category": "productivity",
+      "homepage": "https://memlin.ai",
+      "version": "0.2.9"
+    }
+  ]
+}

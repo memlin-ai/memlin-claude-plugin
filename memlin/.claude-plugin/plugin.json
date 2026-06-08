@@ -1,0 +1,9 @@
+{
+  "name": "memlin",
+  "description": "Memlin — sync memory, skills, goals, and schemas from your Memlin workspace.",
+  "author": {
+    "name": "Memlin",
+    "email": "support@memlin.ai"
+  },
+  "homepage": "https://memlin.ai"
+}
