@@ -7609,6 +7609,25 @@ var AGENT_KINDS = [
 ];
 var MEMBER_ROLES = ["owner", "admin", "member", "viewer"];
 var ACCOUNT_TIERS = ["free", "starter", "pro", "team", "enterprise"];
+var FREE_TIER_METERS = [
+  {
+    key: "document.write",
+    label: "Document writes",
+    unit: "writes",
+    limit: 1e3,
+    eventTypes: ["document.write"]
+  },
+  {
+    key: "search",
+    label: "Searches",
+    unit: "queries",
+    limit: 200,
+    eventTypes: ["search.semantic", "search.hybrid"]
+  }
+];
+var METERED_EVENT_TYPES = new Set(
+  FREE_TIER_METERS.flatMap((m) => m.eventTypes)
+);
 
 // packages/shared/dist/schemas.js
 var UUID = external_exports.string().uuid();

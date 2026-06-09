@@ -6416,7 +6416,7 @@ var init_zod = __esm({
 });
 
 // packages/shared/dist/constants.js
-var DOCUMENT_KINDS, DOCUMENT_SCOPES, DOCUMENT_STATUSES, MEMORY_TYPES, AGENT_KINDS, MEMBER_ROLES, ACCOUNT_TIERS;
+var DOCUMENT_KINDS, DOCUMENT_SCOPES, DOCUMENT_STATUSES, MEMORY_TYPES, AGENT_KINDS, MEMBER_ROLES, ACCOUNT_TIERS, FREE_TIER_METERS, METERED_EVENT_TYPES;
 var init_constants = __esm({
   "packages/shared/dist/constants.js"() {
     "use strict";
@@ -6463,6 +6463,25 @@ var init_constants = __esm({
     ];
     MEMBER_ROLES = ["owner", "admin", "member", "viewer"];
     ACCOUNT_TIERS = ["free", "starter", "pro", "team", "enterprise"];
+    FREE_TIER_METERS = [
+      {
+        key: "document.write",
+        label: "Document writes",
+        unit: "writes",
+        limit: 1e3,
+        eventTypes: ["document.write"]
+      },
+      {
+        key: "search",
+        label: "Searches",
+        unit: "queries",
+        limit: 200,
+        eventTypes: ["search.semantic", "search.hybrid"]
+      }
+    ];
+    METERED_EVENT_TYPES = new Set(
+      FREE_TIER_METERS.flatMap((m) => m.eventTypes)
+    );
   }
 });
 
