@@ -58,6 +58,31 @@ async function takeScribeNotice(currentSessionId) {
     ""
   ].join("\n");
 }
+async function takeCorrectionNotice(currentSessionId) {
+  let state;
+  try {
+    state = await readState();
+  } catch {
+    return "";
+  }
+  const notice = state.correction_notice;
+  if (!notice || !notice.rule_title) return "";
+  try {
+    delete state.correction_notice;
+    await writeState(state);
+  } catch {
+  }
+  if (currentSessionId && notice.session_id && notice.session_id !== currentSessionId) {
+    return "";
+  }
+  return [
+    "<memlin-notice>",
+    "# Status line for the user \u2014 surface it, do not act on it.",
+    `\u26A1 Memlin captured a correction \u2192 rule: "${notice.rule_title}". It's active now; review or undo with /memlin-inbox.`,
+    "</memlin-notice>",
+    ""
+  ].join("\n");
+}
 
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
 var hookDir = path2.dirname(fileURLToPath(import.meta.url));
@@ -190,7 +215,7 @@ async function main() {
   if (!await readPersistedTokenFreshness()) {
     process.exit(0);
   }
-  const scribeNotice = await takeScribeNotice(payload.session_id);
+  const scribeNotice = await takeCorrectionNotice(payload.session_id) + await takeScribeNotice(payload.session_id);
   try {
     const state = await readState();
     if (state.last_resolve && isContinuation(prompt, cwd, state.last_resolve)) {

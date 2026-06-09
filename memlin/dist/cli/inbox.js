@@ -337,13 +337,12 @@ var MemlinApiClient = class {
     );
     return res.new_version_id;
   }
-  /** GET /inbox — pending scribe proposals (newest first). Pass
-   *  `opts.accountId` to read a different account's inbox than the pinned one
-   *  (e.g. `memlin status` showing the resolver-effective account). */
+  /** GET /inbox — pending scribe proposals (newest first), plus recently
+   *  auto-activated correction rules (so the user can see what stuck + undo).
+   *  Pass `opts.accountId` to read a different account's inbox than the pinned
+   *  one (e.g. `memlin status` showing the resolver-effective account). */
   async listInbox(opts = {}) {
-    return this.request("GET", "/inbox", void 0, {
-      accountId: opts.accountId
-    });
+    return this.request("GET", "/inbox", void 0, { accountId: opts.accountId });
   }
   /** GET /insights — pending derived insights, including auto-memory proposals. */
   async listInsights(params = {}, opts = {}) {
@@ -740,10 +739,11 @@ function titleFromInsight(insight) {
   return "(untitled insight)";
 }
 async function loadPending(api) {
-  const [{ proposals }, { insights }] = await Promise.all([
+  const [inbox, { insights }] = await Promise.all([
     api.listInbox(),
     api.listInsights({ kind: "memory_proposal", status: "pending", limit: 100 })
   ]);
+  const { proposals, recent_corrections = [] } = inbox;
   return [
     ...proposals.map(
       (p) => ({
@@ -752,6 +752,7 @@ async function loadPending(api) {
         kind: p.kind,
         title: p.title,
         confidence: p.confidence,
+        memory_type: p.memory_type ?? null,
         overlaps: (p.overlap_candidates ?? []).map((c) => ({
           shortId: c.id.slice(0, 8),
           title: c.title,
@@ -770,35 +771,71 @@ async function loadPending(api) {
         overlaps: [],
         blocked: false
       })
+    ),
+    // Already-active correction rules captured recently. Included in the match
+    // pool so `reject <id>` undoes them; rendered in their own section.
+    ...recent_corrections.map(
+      (p) => ({
+        source: "document",
+        id: p.id,
+        kind: p.kind,
+        title: p.title,
+        confidence: p.confidence,
+        memory_type: "correction",
+        overlaps: [],
+        blocked: false,
+        recent: true
+      })
     )
   ];
 }
+function kindLabel(p) {
+  if (p.kind === "memory" && p.memory_type) return `${p.kind}:${p.memory_type}`;
+  return p.kind;
+}
 async function listInbox(api) {
-  const pending = await loadPending(api);
-  if (pending.length === 0) {
+  const all = await loadPending(api);
+  const pending = all.filter((p) => !p.recent);
+  const recent = all.filter((p) => p.recent);
+  if (pending.length === 0 && recent.length === 0) {
     process.stdout.write("Inbox clear \u2014 no proposals waiting.\n");
     return;
   }
-  process.stdout.write(`${pending.length} proposal${pending.length === 1 ? "" : "s"} waiting:
-
-`);
   let anyOverlaps = false;
-  for (const p of pending) {
-    const conf = p.confidence != null ? `  ${Math.round(p.confidence * 100)}%` : "";
-    const source = p.source === "insight" ? "auto" : "scribe";
-    const blockedMarker = p.blocked ? "  \u2691 overlap-held" : "";
+  if (pending.length > 0) {
     process.stdout.write(
-      `  ${p.id.slice(0, 8)}  ${source.padEnd(6)} ${p.kind.padEnd(9)}${p.title}${conf}${blockedMarker}
+      `${pending.length} proposal${pending.length === 1 ? "" : "s"} waiting:
+
 `
     );
-    if (p.overlaps.length > 0) {
-      anyOverlaps = true;
-      for (const o of p.overlaps) {
-        process.stdout.write(
-          `             \u2194 overlaps ${o.shortId}  ${o.title}  (sim ${o.similarity.toFixed(2)})
+    for (const p of pending) {
+      const conf = p.confidence != null ? `  ${Math.round(p.confidence * 100)}%` : "";
+      const source = p.source === "insight" ? "auto" : "scribe";
+      const blockedMarker = p.blocked ? "  \u2691 overlap-held" : "";
+      process.stdout.write(
+        `  ${p.id.slice(0, 8)}  ${source.padEnd(6)} ${kindLabel(p).padEnd(18)}${p.title}${conf}${blockedMarker}
 `
-        );
+      );
+      if (p.overlaps.length > 0) {
+        anyOverlaps = true;
+        for (const o of p.overlaps) {
+          process.stdout.write(
+            `             \u2194 overlaps ${o.shortId}  ${o.title}  (sim ${o.similarity.toFixed(2)})
+`
+          );
+        }
       }
+    }
+  }
+  if (recent.length > 0) {
+    process.stdout.write(
+      `${pending.length > 0 ? "\n" : ""}\u26A1 Recently captured (already active \u2014 reject to undo):
+
+`
+    );
+    for (const p of recent) {
+      process.stdout.write(`  ${p.id.slice(0, 8)}  correction  ${p.title}
+`);
     }
   }
   process.stdout.write(

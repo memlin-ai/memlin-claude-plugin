@@ -7578,6 +7578,7 @@ var DOCUMENT_KINDS = [
 ];
 var DOCUMENT_SCOPES = ["personal", "project", "team"];
 var DOCUMENT_STATUSES = ["draft", "in_review", "approved", "archived"];
+var MEMORY_TYPES = ["correction", "preference", "fact", "reference"];
 var AGENT_KINDS = [
   "claude-code",
   "claude-ai",
@@ -7627,10 +7628,12 @@ var SkillFrontmatterSchema = external_exports.object({
   examples: external_exports.array(external_exports.any()).optional(),
   "anti-examples": external_exports.array(external_exports.any()).optional()
 });
+var MemoryTypeSchema = external_exports.enum(MEMORY_TYPES);
 var MemoryFrontmatterSchema = external_exports.object({
   name: external_exports.string().min(1),
   description: external_exports.string().min(1),
-  type: external_exports.enum(["user", "feedback", "project", "reference"])
+  memory_type: MemoryTypeSchema.optional(),
+  type: external_exports.enum(["user", "feedback", "project", "reference"]).optional()
 });
 var GoalFrontmatterSchema = external_exports.object({
   title: external_exports.string().min(1),
@@ -8359,13 +8362,12 @@ var MemlinApiClient = class {
     );
     return res.new_version_id;
   }
-  /** GET /inbox — pending scribe proposals (newest first). Pass
-   *  `opts.accountId` to read a different account's inbox than the pinned one
-   *  (e.g. `memlin status` showing the resolver-effective account). */
+  /** GET /inbox — pending scribe proposals (newest first), plus recently
+   *  auto-activated correction rules (so the user can see what stuck + undo).
+   *  Pass `opts.accountId` to read a different account's inbox than the pinned
+   *  one (e.g. `memlin status` showing the resolver-effective account). */
   async listInbox(opts = {}) {
-    return this.request("GET", "/inbox", void 0, {
-      accountId: opts.accountId
-    });
+    return this.request("GET", "/inbox", void 0, { accountId: opts.accountId });
   }
   /** GET /insights — pending derived insights, including auto-memory proposals. */
   async listInsights(params = {}, opts = {}) {
