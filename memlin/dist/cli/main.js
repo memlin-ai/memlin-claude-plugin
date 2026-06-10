@@ -11279,7 +11279,10 @@ function renderArchitecture(a) {
   }
   if (a.data.length > 0) {
     lines.push(
-      "Database: " + a.data.map((d) => `${d.table} (${d.access.join("+") || "accesses"})`).join(", ")
+      "Database: " + a.data.map((d) => {
+        const acc = d.access.join("+") || "accesses";
+        return d.schema?.path ? `${d.table} (${acc}) \u2014 schema: ${d.schema.path}` : `${d.table} (${acc})`;
+      }).join(", ")
     );
   }
   if (a.functions.length > 0) {
