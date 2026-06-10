@@ -934,6 +934,20 @@ function renderArchitecture(a) {
       }).join(", ")
     );
   }
+  if ((a.api_calls?.length ?? 0) > 0) {
+    lines.push("");
+    lines.push("API calls (page \u2192 API \u2192 table):");
+    for (const c of a.api_calls ?? []) {
+      const m = c.method ? `${c.method} ` : "";
+      if (c.served_by) {
+        const t = c.served_by.tables.length > 0 ? ` \u2192 ${c.served_by.tables.join(", ")}` : "";
+        const comp = c.served_by.component ? ` [${c.served_by.component}]` : "";
+        lines.push(`  - ${m}${c.path} \u2192 ${c.served_by.route}${comp}${t}`);
+      } else {
+        lines.push(`  - ${m}${c.path} (no matching route found)`);
+      }
+    }
+  }
   if (a.functions.length > 0) {
     lines.push("");
     lines.push(`Functions (${a.functions.length}${a.functions_truncated ? "+" : ""}):`);

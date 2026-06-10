@@ -11285,6 +11285,20 @@ function renderArchitecture(a) {
       }).join(", ")
     );
   }
+  if ((a.api_calls?.length ?? 0) > 0) {
+    lines.push("");
+    lines.push("API calls (page \u2192 API \u2192 table):");
+    for (const c of a.api_calls ?? []) {
+      const m = c.method ? `${c.method} ` : "";
+      if (c.served_by) {
+        const t = c.served_by.tables.length > 0 ? ` \u2192 ${c.served_by.tables.join(", ")}` : "";
+        const comp = c.served_by.component ? ` [${c.served_by.component}]` : "";
+        lines.push(`  - ${m}${c.path} \u2192 ${c.served_by.route}${comp}${t}`);
+      } else {
+        lines.push(`  - ${m}${c.path} (no matching route found)`);
+      }
+    }
+  }
   if (a.functions.length > 0) {
     lines.push("");
     lines.push(`Functions (${a.functions.length}${a.functions_truncated ? "+" : ""}):`);
@@ -15274,6 +15288,29 @@ function httpVerbOf(method) {
   }
   return null;
 }
+function routeTemplateOf(decl) {
+  for (const c of decl.children) {
+    if (c.type !== "attribute_list" || typeof c.text !== "string")
+      continue;
+    const m = c.text.match(/\b(?:Route|Http(?:Get|Post|Put|Delete|Patch|Head|Options))\s*\(\s*"([^"]*)"/);
+    if (m?.[1] != null)
+      return m[1];
+  }
+  return null;
+}
+function composeRoutePath(classTpl, methodTpl, base, mName) {
+  if (classTpl == null && methodTpl == null)
+    return null;
+  let tpl;
+  if (methodTpl && (methodTpl.startsWith("/") || methodTpl.startsWith("~/"))) {
+    tpl = methodTpl.replace(/^~/, "");
+  } else {
+    tpl = [classTpl ?? "", methodTpl ?? ""].filter((p) => p && p.length > 0).join("/");
+  }
+  tpl = tpl.replace(/\[controller\]/gi, base.toLowerCase()).replace(/\[action\]/gi, mName.toLowerCase()).replace(/\{[^}]+\}/g, ":param");
+  const norm = "/" + tpl.replace(/^\/+/, "").replace(/\/{2,}/g, "/").replace(/\/$/, "");
+  return norm.length > 1 ? norm : "/";
+}
 function extractCSharpRoutes(root) {
   const out2 = [];
   const walk = (n) => {
@@ -15282,6 +15319,7 @@ function extractCSharpRoutes(root) {
       const isController = /Controller$/.test(className) || declHasAttr(n, /\bApiController\b/);
       if (isController) {
         const base = className.replace(/Controller$/, "") || className;
+        const classTpl = routeTemplateOf(n);
         const body2 = n.childForFieldName("body");
         if (body2) {
           for (const m of body2.children) {
@@ -15291,7 +15329,11 @@ function extractCSharpRoutes(root) {
             if (!verb)
               continue;
             const mName = m.childForFieldName("name")?.text ?? "Action";
-            out2.push({ name: `${verb} /${base}/${mName}`, line: (m.startPosition?.row ?? 0) + 1 });
+            out2.push({
+              name: `${verb} /${base}/${mName}`,
+              line: (m.startPosition?.row ?? 0) + 1,
+              routePath: composeRoutePath(classTpl, routeTemplateOf(m), base, mName)
+            });
           }
         }
       }
@@ -15632,6 +15674,7 @@ async function walkComponent(repoRoot, dir, componentSlug) {
               name: route.name,
               file_path: rel,
               kind: "api_route",
+              route_path: route.routePath ?? null,
               component_slug: componentSlug,
               excerpt: text.slice(0, EXCERPT_CHARS),
               exports: []
@@ -258033,10 +258076,102 @@ function detectTableRef(call) {
   }
   return { table: literal, access, accessKnown: true, via: "from" };
 }
+function urlFromArg(arg) {
+  if (!arg)
+    return null;
+  if (import_ts_morph2.Node.isStringLiteral(arg) || import_ts_morph2.Node.isNoSubstitutionTemplateLiteral(arg)) {
+    return arg.getLiteralText();
+  }
+  if (import_ts_morph2.Node.isTemplateExpression(arg)) {
+    let s = arg.getHead().getLiteralText();
+    for (const span of arg.getTemplateSpans()) {
+      s += ":param" + span.getLiteral().getLiteralText();
+    }
+    return s;
+  }
+  return null;
+}
+function methodFromOptions(arg) {
+  if (!arg || !import_ts_morph2.Node.isObjectLiteralExpression(arg))
+    return null;
+  for (const prop of arg.getProperties()) {
+    if (import_ts_morph2.Node.isPropertyAssignment(prop) && prop.getName() === "method") {
+      const init2 = prop.getInitializer();
+      if (init2 && (import_ts_morph2.Node.isStringLiteral(init2) || import_ts_morph2.Node.isNoSubstitutionTemplateLiteral(init2))) {
+        return init2.getLiteralText().toUpperCase();
+      }
+    }
+  }
+  return null;
+}
+function normalizeHttpPath(rawUrl) {
+  let u = rawUrl.trim();
+  u = u.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, "");
+  u = u.split(/[?#]/)[0] ?? "";
+  if (!u.startsWith("/"))
+    return null;
+  u = u.replace(/\/{2,}/g, "/");
+  if (u.length > 1)
+    u = u.replace(/\/$/, "");
+  return u;
+}
+function detectHttpCall(call) {
+  const expr = call.getExpression();
+  const args2 = call.getArguments();
+  if (args2.length === 0)
+    return null;
+  if (import_ts_morph2.Node.isIdentifier(expr) && expr.getText() === "fetch") {
+    const url = urlFromArg(args2[0]);
+    const path32 = url ? normalizeHttpPath(url) : null;
+    if (path32)
+      return { path: path32, method: methodFromOptions(args2[1]) ?? "GET" };
+    return null;
+  }
+  if (import_ts_morph2.Node.isPropertyAccessExpression(expr)) {
+    const recv = expr.getExpression();
+    const verb = expr.getName();
+    if (import_ts_morph2.Node.isIdentifier(recv) && recv.getText() === "axios" && HTTP_VERBS.includes(verb)) {
+      const url = urlFromArg(args2[0]);
+      const path32 = url ? normalizeHttpPath(url) : null;
+      if (path32)
+        return { path: path32, method: verb.toUpperCase() };
+    }
+    return null;
+  }
+  if (import_ts_morph2.Node.isIdentifier(expr) && expr.getText() === "axios") {
+    const direct = urlFromArg(args2[0]);
+    if (direct) {
+      const path32 = normalizeHttpPath(direct);
+      if (path32)
+        return { path: path32, method: "GET" };
+    }
+    if (args2[0] && import_ts_morph2.Node.isObjectLiteralExpression(args2[0])) {
+      let urlText = null;
+      let method = null;
+      for (const prop of args2[0].getProperties()) {
+        if (!import_ts_morph2.Node.isPropertyAssignment(prop))
+          continue;
+        if (prop.getName() === "url")
+          urlText = urlFromArg(prop.getInitializer());
+        else if (prop.getName() === "method") {
+          const init2 = prop.getInitializer();
+          if (init2 && (import_ts_morph2.Node.isStringLiteral(init2) || import_ts_morph2.Node.isNoSubstitutionTemplateLiteral(init2))) {
+            method = init2.getLiteralText().toUpperCase();
+          }
+        }
+      }
+      const path32 = urlText ? normalizeHttpPath(urlText) : null;
+      if (path32)
+        return { path: path32, method: method ?? "GET" };
+    }
+  }
+  return null;
+}
 function extractComponentFacts(sourceFiles) {
   const calls = [];
   const imports = [];
   const tableRefs = [];
+  const httpCalls = [];
   for (const sf of sourceFiles) {
     const callerFile = sf.getFilePath();
     for (const imp of sf.getImportDeclarations()) {
@@ -258078,6 +258213,19 @@ function extractComponentFacts(sourceFiles) {
           });
         }
       }
+      const http = detectHttpCall(call);
+      if (http) {
+        const httpCaller = enclosingDeclarationName(call);
+        if (httpCaller) {
+          httpCalls.push({
+            callerFile,
+            callerName: httpCaller,
+            path: http.path,
+            method: http.method,
+            line: call.getStartLineNumber()
+          });
+        }
+      }
       const callerName = enclosingDeclarationName(call);
       if (!callerName)
         continue;
@@ -258100,18 +258248,19 @@ function extractComponentFacts(sourceFiles) {
       });
     }
   }
-  return { calls, imports, tableRefs };
+  return { calls, imports, tableRefs, httpCalls };
 }
 function toRepoRelative(repoRoot, absPath) {
   const rel = path25.relative(repoRoot, absPath);
   return rel.split(path25.sep).join("/");
 }
-var import_ts_morph2, WRITE_METHODS;
+var import_ts_morph2, WRITE_METHODS, HTTP_VERBS;
 var init_extract = __esm({
   "services/scanners/dist/scanner-discovery/graph/extract.js"() {
     "use strict";
     import_ts_morph2 = __toESM(require_ts_morph(), 1);
     WRITE_METHODS = /* @__PURE__ */ new Set(["insert", "update", "upsert", "delete"]);
+    HTTP_VERBS = ["get", "post", "put", "patch", "delete", "head", "options"];
   }
 });
 
