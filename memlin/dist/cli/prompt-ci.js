@@ -572,6 +572,20 @@ var MemlinApiClient = class {
       accountId: opts.accountId
     });
   }
+  /** POST /decisions/{id}/verify — record an outcome on the decision
+   *  ledger. Verdicts surface on every future resolve of the decision. */
+  async verifyDecision(decisionId, input, opts = {}) {
+    return this.request("POST", `/decisions/${encodeURIComponent(decisionId)}/verify`, input, {
+      accountId: opts.accountId
+    });
+  }
+  /** GET /decisions/review-due — decisions whose review date arrived. */
+  async listReviewDueDecisions(opts = {}) {
+    const qs = opts.projectId ? `?project_id=${encodeURIComponent(opts.projectId)}` : "";
+    return this.request("GET", `/decisions/review-due${qs}`, void 0, {
+      accountId: opts.accountId
+    });
+  }
   /**
    * POST /ask — natural-language Q&A over the team's workspace memory.
    * Server resolves a bundle, sends it to Claude, returns answer +
@@ -696,7 +710,7 @@ function hash(content) {
 // packages/plugin-core/src/local-scan.ts
 async function scanLocal(opts = {}) {
   const out = [];
-  const root = resolveHost().homeDir();
+  const root = opts.rootOverride ?? resolveHost().homeDir();
   const memDir = path6.join(root, "memory");
   if (existsSync(memDir)) {
     for (const file of await fs5.readdir(memDir)) {

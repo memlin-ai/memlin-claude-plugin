@@ -3,6 +3,9 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
+// packages/plugin-core/src/cli/pull.ts
+import path8 from "node:path";
+
 // packages/plugin-core/src/project-resolver.ts
 import { execSync } from "node:child_process";
 import path from "node:path";
@@ -690,6 +693,20 @@ var MemlinApiClient = class {
       accountId: opts.accountId
     });
   }
+  /** POST /decisions/{id}/verify — record an outcome on the decision
+   *  ledger. Verdicts surface on every future resolve of the decision. */
+  async verifyDecision(decisionId, input, opts = {}) {
+    return this.request("POST", `/decisions/${encodeURIComponent(decisionId)}/verify`, input, {
+      accountId: opts.accountId
+    });
+  }
+  /** GET /decisions/review-due — decisions whose review date arrived. */
+  async listReviewDueDecisions(opts = {}) {
+    const qs = opts.projectId ? `?project_id=${encodeURIComponent(opts.projectId)}` : "";
+    return this.request("GET", `/decisions/review-due${qs}`, void 0, {
+      accountId: opts.accountId
+    });
+  }
   /**
    * POST /ask — natural-language Q&A over the team's workspace memory.
    * Server resolves a bundle, sends it to Claude, returns answer +
@@ -836,7 +853,7 @@ async function archiveDestination(trackedRelPath) {
   }
   return `${stem}.${Date.now()}${ext}`;
 }
-async function applyPullToLocal(docs, state, now) {
+async function applyPullToLocal(docs, state, now, rootOverride) {
   const out = {
     written: [],
     unchanged: [],
@@ -846,7 +863,7 @@ async function applyPullToLocal(docs, state, now) {
     citations: {}
   };
   const currentPaths = /* @__PURE__ */ new Set();
-  const root = resolveHost().homeDir();
+  const root = rootOverride ?? resolveHost().homeDir();
   for (const d of docs) {
     if (d.kind === "brand_guidelines") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
@@ -940,9 +957,24 @@ async function main() {
   console.log(
     `memlin pull \u2014 account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
   );
-  const state = await readState();
-  const result = await applyPullToLocal(docs, state, (/* @__PURE__ */ new Date()).toISOString());
-  await writeState(state);
+  const targetFlag = process.argv.indexOf("--target");
+  const targetDir = targetFlag >= 0 ? process.argv[targetFlag + 1] : null;
+  if (targetFlag >= 0 && !targetDir) {
+    console.error("usage: memlin pull [--target <dir>]");
+    process.exit(2);
+  }
+  const state = targetDir ? { documents: {} } : await readState();
+  const result = await applyPullToLocal(
+    docs,
+    state,
+    (/* @__PURE__ */ new Date()).toISOString(),
+    targetDir ? path8.resolve(runtimeCwd(), targetDir) : void 0
+  );
+  if (targetDir) {
+    console.log(`  (export mode \u2014 wrote under ${targetDir}; sync state untouched)`);
+  } else {
+    await writeState(state);
+  }
   for (const p of result.written) {
     console.log(`  \u2193 ${p}`);
     const cite = result.citations[p];

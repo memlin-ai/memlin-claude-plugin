@@ -3,9 +3,6 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
-// packages/plugin-core/src/cli/link.ts
-import path6 from "node:path";
-
 // packages/plugin-core/src/client.ts
 import { promises as fs3 } from "node:fs";
 import path4 from "node:path";
@@ -634,31 +631,6 @@ async function findWorkspaceBinding(startDir) {
   }
   return null;
 }
-async function writeWorkspaceBinding(workspaceRoot, binding) {
-  const dir = path3.join(path3.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
-  await fs2.mkdir(dir, { recursive: true });
-  const file = path3.join(dir, WORKSPACE_BINDING_FILE);
-  const body = JSON.stringify(
-    {
-      account_id: binding.account_id,
-      project_id: binding.project_id ?? null,
-      account_name: binding.account_name
-    },
-    null,
-    2
-  );
-  await fs2.writeFile(file, body + "\n", "utf8");
-  return file;
-}
-async function clearWorkspaceBinding(workspaceRoot) {
-  const file = path3.join(path3.resolve(workspaceRoot), WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
-  try {
-    await fs2.unlink(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 // packages/plugin-core/src/client.ts
 var CONFIG_DIR = path4.join(os4.homedir(), ".config", "memlin");
@@ -707,150 +679,103 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
-// packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import path5 from "node:path";
-var WORKSPACE_ENV_VARS = [
-  // Claude Code exposes the original project dir to hooks/plugin commands.
-  "CLAUDE_PROJECT_DIR",
-  // Cursor/plugin shims and local tests can set this explicitly.
-  "CURSOR_WORKSPACE_ROOT",
-  "CURSOR_PROJECT_ROOT",
-  "MEMLIN_WORKSPACE_ROOT",
-  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
-  "INIT_CWD"
-];
-function runtimeCwd(fallback = process.cwd()) {
-  for (const name of WORKSPACE_ENV_VARS) {
-    const raw = process.env[name]?.trim();
-    if (raw && path5.isAbsolute(raw)) return path5.resolve(raw);
-  }
-  return path5.resolve(fallback);
-}
-
-// packages/plugin-core/src/cli/link.ts
-function parseArgs(argv) {
-  const out = {};
+// packages/plugin-core/src/cli/verify.ts
+function parseVerifyArgs(argv) {
+  const out = {
+    due: false,
+    decisionId: null,
+    verdict: null,
+    metrics: {},
+    artifacts: [],
+    notes: null
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--account" || a === "-a") {
+    if (a === "--due") {
+      out.due = true;
+    } else if (a === "--against") {
+      out.decisionId = argv[++i] ?? null;
+      if (!out.decisionId) return { error: "--against needs a decision id" };
+    } else if (a === "--verdict") {
       const v = argv[++i];
-      if (!v) return { error: "--account requires a value" };
-      out.account = v;
-    } else if (a === "--clear") {
-      out.clear = true;
-    } else if (a === "--list" || a === "-l") {
-      out.list = true;
-    } else if (a === "--root") {
-      const v = argv[++i];
-      if (!v) return { error: "--root requires a value" };
-      out.root = v;
-    } else if (a === "--help" || a === "-h") {
-      return { error: "help" };
-    } else if (a?.startsWith("--")) {
-      return { error: `unknown flag: ${a}` };
+      if (v !== "held" && v !== "broke" && v !== "inconclusive") {
+        return { error: "--verdict must be held, broke, or inconclusive" };
+      }
+      out.verdict = v;
+    } else if (a === "--metric") {
+      const kv = argv[++i];
+      const eq = kv?.indexOf("=") ?? -1;
+      if (!kv || eq <= 0) return { error: "--metric needs key=value" };
+      const raw = kv.slice(eq + 1);
+      const num = Number(raw);
+      out.metrics[kv.slice(0, eq)] = Number.isFinite(num) && raw.trim() !== "" ? num : raw;
+    } else if (a === "--artifact") {
+      const ref = argv[++i];
+      if (!ref) return { error: "--artifact needs a path or url" };
+      out.artifacts.push(/^https?:\/\//.test(ref) ? { url: ref } : { path: ref });
+    } else if (a === "--notes") {
+      const n = argv[++i];
+      if (n === void 0) return { error: "--notes needs text" };
+      out.notes = n;
+    } else if (!a.startsWith("-") && !out.decisionId) {
+      out.decisionId = a;
+    } else {
+      return { error: `unknown argument: ${a}` };
     }
+  }
+  if (!out.due && !out.decisionId) {
+    return { error: "usage: memlin verify --due | memlin verify <decision-id> --verdict held|broke|inconclusive" };
+  }
+  if (out.decisionId && !out.due && !out.verdict) {
+    return { error: "recording an outcome needs --verdict held|broke|inconclusive" };
   }
   return out;
 }
-function printHelp() {
-  console.log(
-    [
-      "memlin link \u2014 pin the current workspace to a specific Memlin account",
-      "",
-      "Usage:",
-      "  memlin link                    Interactive picker",
-      "  memlin link --account <id>     Pin by uuid",
-      "  memlin link --account <name>   Pin by fuzzy name (case-insensitive)",
-      "  memlin link --clear            Remove the binding",
-      "  memlin link --list             Show your accounts",
-      "  memlin link --root <path>      Workspace root (defaults to cwd)",
-      "",
-      "Writes .memlin/config.json at the workspace root. Subsequent Memlin",
-      "calls from anywhere inside that directory will target the pinned",
-      "account instead of the global default."
-    ].join("\n")
-  );
-}
-function chooseAccount(accounts, needle) {
-  const byId = accounts.find((a) => a.id === needle);
-  if (byId) return byId;
-  const lower = needle.toLowerCase();
-  const byName = accounts.filter((a) => a.name.toLowerCase().includes(lower));
-  if (byName.length === 1) return byName[0];
-  return null;
-}
 async function main() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs(argv);
+  const parsed = parseVerifyArgs(process.argv.slice(2));
   if ("error" in parsed) {
-    if (parsed.error === "help") {
-      printHelp();
-      process.exit(0);
-    }
-    console.error(`memlin link: ${parsed.error}`);
-    printHelp();
+    console.error(parsed.error);
     process.exit(2);
   }
   const ctx = await getApi();
   if (!ctx) {
-    console.error("memlin link: not configured. Run `memlin login` first.");
+    console.error("memlin: not configured. Run `memlin login` first.");
     process.exit(1);
   }
-  const root = path6.resolve(parsed.root ?? runtimeCwd());
-  if (parsed.clear) {
-    const removed = await clearWorkspaceBinding(root);
-    if (removed) {
-      console.log(`Unlinked ${root}`);
-      console.log("Falls back to the global config in ~/.config/memlin/config.json");
-    } else {
-      console.log(`No .memlin/config.json found at ${root}; nothing to clear.`);
+  const { api } = ctx;
+  if (parsed.due) {
+    const { decisions } = await api.listReviewDueDecisions({});
+    if (decisions.length === 0) {
+      console.log("nothing due for review.");
+      return;
     }
+    console.log(`${decisions.length} decision(s) due for review:`);
+    for (const d of decisions) {
+      console.log(
+        `  ${d.id.slice(0, 8)}  ${d.title}` + (d.review_by ? `  (review by ${d.review_by.slice(0, 10)})` : "") + (d.last_verdict ? `  [last: ${d.last_verdict}]` : "")
+      );
+    }
+    console.log("record one: memlin verify <decision-id> --verdict held|broke|inconclusive");
     return;
   }
-  const me = await ctx.api.me();
-  const accounts = me.accounts.map((a) => ({
-    id: a.id,
-    name: a.name,
-    kind: a.kind,
-    role: a.role
-  }));
-  if (parsed.list || !parsed.account && accounts.length === 0) {
-    const existing = await findWorkspaceBinding(root);
-    console.log(`Accounts for ${me.email ?? "(unknown user)"}:`);
-    for (const a of accounts) {
-      const tag = a.id === ctx.config.account_id ? " (global default)" : "";
-      const pinTag = existing && existing.binding.account_id === a.id ? " (workspace pin)" : "";
-      console.log(`  ${a.id}  ${a.name}  [${a.kind}/${a.role}]${tag}${pinTag}`);
-    }
-    if (existing) {
-      console.log(`
-Workspace binding at ${existing.workspaceRoot}/.memlin/config.json`);
-    }
-    return;
-  }
-  if (!parsed.account) {
-    console.error("memlin link: --account <id|name> is required (or --list, --clear)");
-    printHelp();
-    process.exit(2);
-  }
-  const match = chooseAccount(accounts, parsed.account);
-  if (!match) {
-    console.error(`memlin link: no account matched "${parsed.account}".`);
-    console.error("Run `memlin link --list` to see available accounts.");
-    process.exit(1);
-  }
-  const file = await writeWorkspaceBinding(root, {
-    account_id: match.id,
-    account_name: match.name
+  const result = await api.verifyDecision(parsed.decisionId, {
+    verdict: parsed.verdict,
+    ...Object.keys(parsed.metrics).length > 0 ? { measured: parsed.metrics } : {},
+    ...parsed.artifacts.length > 0 ? { artifacts: parsed.artifacts } : {},
+    ...parsed.notes ? { notes: parsed.notes } : {}
   });
-  console.log(`Linked ${root}`);
-  console.log(`  \u2192 ${match.name} [${match.kind}/${match.role}]`);
-  console.log(`  wrote ${file}`);
-  console.log(`
-Any Memlin call from this directory now targets account ${match.id.slice(0, 8)}.`);
+  console.log(
+    `recorded: ${result.verdict} on decision ${parsed.decisionId.slice(0, 8)} (${result.observed_at.slice(0, 19)}Z)`
+  );
+  console.log("this verdict now surfaces wherever the decision appears in agent context.");
 }
-main().catch((err) => {
-  console.error("memlin link failed:", err instanceof Error ? err.message : err);
-  process.exit(1);
-});
+var isDirectRun = process.argv[1]?.endsWith("verify.js") || process.argv[1]?.endsWith("verify.ts");
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error("memlin verify failed:", err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
+}
+export {
+  parseVerifyArgs
+};

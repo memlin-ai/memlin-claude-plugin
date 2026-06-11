@@ -3728,7 +3728,7 @@ function resolveHost() {
 // packages/plugin-core/src/local-scan.ts
 async function scanLocal(opts = {}) {
   const out = [];
-  const root = resolveHost().homeDir();
+  const root = opts.rootOverride ?? resolveHost().homeDir();
   const memDir = path4.join(root, "memory");
   if (existsSync(memDir)) {
     for (const file of await fs2.readdir(memDir)) {
@@ -3830,7 +3830,7 @@ async function archiveDestination(trackedRelPath) {
   }
   return `${stem}.${Date.now()}${ext}`;
 }
-async function applyPullToLocal(docs, state, now) {
+async function applyPullToLocal(docs, state, now, rootOverride) {
   const out = {
     written: [],
     unchanged: [],
@@ -3840,7 +3840,7 @@ async function applyPullToLocal(docs, state, now) {
     citations: {}
   };
   const currentPaths = /* @__PURE__ */ new Set();
-  const root = resolveHost().homeDir();
+  const root = rootOverride ?? resolveHost().homeDir();
   for (const d of docs) {
     if (d.kind === "brand_guidelines") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
@@ -4398,6 +4398,20 @@ var MemlinApiClient = class {
    */
   async patchProject(projectId, input, opts = {}) {
     return this.request("PATCH", `/projects/${encodeURIComponent(projectId)}`, input, {
+      accountId: opts.accountId
+    });
+  }
+  /** POST /decisions/{id}/verify — record an outcome on the decision
+   *  ledger. Verdicts surface on every future resolve of the decision. */
+  async verifyDecision(decisionId, input, opts = {}) {
+    return this.request("POST", `/decisions/${encodeURIComponent(decisionId)}/verify`, input, {
+      accountId: opts.accountId
+    });
+  }
+  /** GET /decisions/review-due — decisions whose review date arrived. */
+  async listReviewDueDecisions(opts = {}) {
+    const qs = opts.projectId ? `?project_id=${encodeURIComponent(opts.projectId)}` : "";
+    return this.request("GET", `/decisions/review-due${qs}`, void 0, {
       accountId: opts.accountId
     });
   }
