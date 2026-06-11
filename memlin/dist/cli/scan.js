@@ -244516,6 +244516,63 @@ async function extractFunctions(root, components) {
     out2.push(...items.slice(0, MAX_FUNCTIONS_PER_COMPONENT));
   }
   out2.push(...await extractMigrations(root));
+  out2.push(...await extractDotNetRoutes(root, components));
+  return out2;
+}
+function componentSlugForFile(rel, components) {
+  let best = "root";
+  let bestLen = -1;
+  for (const c of components) {
+    const base = c.path_pattern === "**" ? "" : c.path_pattern.replace(/\/\*\*$/, "");
+    if (base === "") {
+      if (bestLen < 0)
+        best = c.slug;
+      continue;
+    }
+    if ((rel === base || rel.startsWith(`${base}/`)) && base.length > bestLen) {
+      best = c.slug;
+      bestLen = base.length;
+    }
+  }
+  return best;
+}
+async function extractDotNetRoutes(repoRoot, components) {
+  const out2 = [];
+  const candidates = [];
+  await collectCandidates(repoRoot, candidates, 6e3);
+  let parsed = 0;
+  const PARSE_CAP = 2e3;
+  for (const { abs } of candidates) {
+    if (parsed >= PARSE_CAP)
+      break;
+    if (path7.extname(abs).toLowerCase() !== ".cs")
+      continue;
+    const text = await fs5.readFile(abs, "utf8").catch(() => "");
+    if (!text || !/\[ApiController\]|\[Route\(|\[Http(Get|Post|Put|Delete|Patch|Head|Options)\b/.test(text)) {
+      continue;
+    }
+    parsed++;
+    try {
+      const parser = await getCSharpParser();
+      const tree = parser.parse(text);
+      if (!tree)
+        continue;
+      const rel = path7.relative(repoRoot, abs);
+      const slug = componentSlugForFile(rel, components);
+      for (const route of extractCSharpRoutes(tree.rootNode)) {
+        out2.push({
+          name: route.name,
+          file_path: rel,
+          kind: "api_route",
+          route_path: route.routePath ?? null,
+          component_slug: slug,
+          excerpt: text.slice(0, EXCERPT_CHARS),
+          exports: []
+        });
+      }
+    } catch {
+    }
+  }
   return out2;
 }
 async function walkComponent(repoRoot, dir, componentSlug) {
@@ -244572,17 +244629,6 @@ async function walkComponent(repoRoot, dir, componentSlug) {
         const tree = parser.parse(text);
         if (tree) {
           const root = tree.rootNode;
-          for (const route of extractCSharpRoutes(root)) {
-            results.push({
-              name: route.name,
-              file_path: rel,
-              kind: "api_route",
-              route_path: route.routePath ?? null,
-              component_slug: componentSlug,
-              excerpt: text.slice(0, EXCERPT_CHARS),
-              exports: []
-            });
-          }
           const names = [...new Set(extractCSharpSymbols(root).map((s) => s.name))];
           for (const name of names.slice(0, 8)) {
             results.push({
@@ -245272,6 +245318,8 @@ function normalizeHttpPath(rawUrl) {
   let u = rawUrl.trim();
   u = u.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, "");
   u = u.split(/[?#]/)[0] ?? "";
+  if (u.startsWith(":param/"))
+    u = u.slice(":param".length);
   if (!u.startsWith("/"))
     return null;
   u = u.replace(/\/{2,}/g, "/");

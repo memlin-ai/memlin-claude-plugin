@@ -10512,9 +10512,36 @@ var init_prompt_linter = __esm({
   }
 });
 
+// packages/shared/dist/model-prices.js
+var MODEL_PRICES;
+var init_model_prices = __esm({
+  "packages/shared/dist/model-prices.js"() {
+    "use strict";
+    MODEL_PRICES = {
+      // Anthropic
+      "claude-haiku-4-5": { inputUsdPerMTok: 1, outputUsdPerMTok: 5 },
+      "claude-sonnet-4-6": { inputUsdPerMTok: 3, outputUsdPerMTok: 15 },
+      // OpenAI
+      "text-embedding-3-small": { inputUsdPerMTok: 0.02, outputUsdPerMTok: 0 },
+      "gpt-4.1-mini": { inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.6 }
+    };
+  }
+});
+
 // packages/shared/dist/usage-stats.js
+var SONNET_INPUT_USD_PER_MTOK, SONNET_OUTPUT_USD_PER_MTOK;
 var init_usage_stats = __esm({
   "packages/shared/dist/usage-stats.js"() {
+    "use strict";
+    init_model_prices();
+    SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
+    SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+  }
+});
+
+// packages/shared/dist/credit-math.js
+var init_credit_math = __esm({
+  "packages/shared/dist/credit-math.js"() {
     "use strict";
   }
 });
@@ -10543,6 +10570,8 @@ var init_dist = __esm({
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
+    init_model_prices();
+    init_credit_math();
   }
 });
 
@@ -15613,6 +15642,63 @@ async function extractFunctions(root, components) {
     out2.push(...items.slice(0, MAX_FUNCTIONS_PER_COMPONENT));
   }
   out2.push(...await extractMigrations(root));
+  out2.push(...await extractDotNetRoutes(root, components));
+  return out2;
+}
+function componentSlugForFile(rel, components) {
+  let best = "root";
+  let bestLen = -1;
+  for (const c of components) {
+    const base = c.path_pattern === "**" ? "" : c.path_pattern.replace(/\/\*\*$/, "");
+    if (base === "") {
+      if (bestLen < 0)
+        best = c.slug;
+      continue;
+    }
+    if ((rel === base || rel.startsWith(`${base}/`)) && base.length > bestLen) {
+      best = c.slug;
+      bestLen = base.length;
+    }
+  }
+  return best;
+}
+async function extractDotNetRoutes(repoRoot, components) {
+  const out2 = [];
+  const candidates = [];
+  await collectCandidates(repoRoot, candidates, 6e3);
+  let parsed = 0;
+  const PARSE_CAP = 2e3;
+  for (const { abs } of candidates) {
+    if (parsed >= PARSE_CAP)
+      break;
+    if (path23.extname(abs).toLowerCase() !== ".cs")
+      continue;
+    const text = await fs16.readFile(abs, "utf8").catch(() => "");
+    if (!text || !/\[ApiController\]|\[Route\(|\[Http(Get|Post|Put|Delete|Patch|Head|Options)\b/.test(text)) {
+      continue;
+    }
+    parsed++;
+    try {
+      const parser = await getCSharpParser();
+      const tree = parser.parse(text);
+      if (!tree)
+        continue;
+      const rel = path23.relative(repoRoot, abs);
+      const slug = componentSlugForFile(rel, components);
+      for (const route of extractCSharpRoutes(tree.rootNode)) {
+        out2.push({
+          name: route.name,
+          file_path: rel,
+          kind: "api_route",
+          route_path: route.routePath ?? null,
+          component_slug: slug,
+          excerpt: text.slice(0, EXCERPT_CHARS),
+          exports: []
+        });
+      }
+    } catch {
+    }
+  }
   return out2;
 }
 async function walkComponent(repoRoot, dir, componentSlug) {
@@ -15669,17 +15755,6 @@ async function walkComponent(repoRoot, dir, componentSlug) {
         const tree = parser.parse(text);
         if (tree) {
           const root = tree.rootNode;
-          for (const route of extractCSharpRoutes(root)) {
-            results.push({
-              name: route.name,
-              file_path: rel,
-              kind: "api_route",
-              route_path: route.routePath ?? null,
-              component_slug: componentSlug,
-              excerpt: text.slice(0, EXCERPT_CHARS),
-              exports: []
-            });
-          }
           const names = [...new Set(extractCSharpSymbols(root).map((s) => s.name))];
           for (const name of names.slice(0, 8)) {
             results.push({
@@ -258108,6 +258183,8 @@ function normalizeHttpPath(rawUrl) {
   let u = rawUrl.trim();
   u = u.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]+/i, "");
   u = u.split(/[?#]/)[0] ?? "";
+  if (u.startsWith(":param/"))
+    u = u.slice(":param".length);
   if (!u.startsWith("/"))
     return null;
   u = u.replace(/\/{2,}/g, "/");

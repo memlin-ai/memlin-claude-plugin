@@ -8800,6 +8800,20 @@ function isNegativeFeedback(text) {
 // packages/shared/dist/skill-frontmatter.js
 var import_gray_matter2 = __toESM(require_gray_matter(), 1);
 
+// packages/shared/dist/model-prices.js
+var MODEL_PRICES = {
+  // Anthropic
+  "claude-haiku-4-5": { inputUsdPerMTok: 1, outputUsdPerMTok: 5 },
+  "claude-sonnet-4-6": { inputUsdPerMTok: 3, outputUsdPerMTok: 15 },
+  // OpenAI
+  "text-embedding-3-small": { inputUsdPerMTok: 0.02, outputUsdPerMTok: 0 },
+  "gpt-4.1-mini": { inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.6 }
+};
+
+// packages/shared/dist/usage-stats.js
+var SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
+var SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+
 // packages/plugin-core/dist/stop-handler.js
 var MEMORABLE_USER_PATTERNS = [
   // Explicit memory triggers.
