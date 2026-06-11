@@ -6450,7 +6450,7 @@ var init_constants = __esm({
     ];
     DOCUMENT_SCOPES = ["personal", "project", "team"];
     DOCUMENT_STATUSES = ["draft", "in_review", "approved", "archived"];
-    MEMORY_TYPES = ["correction", "preference", "fact", "reference"];
+    MEMORY_TYPES = ["correction", "preference", "fact", "reference", "episodic"];
     AGENT_KINDS = [
       "claude-code",
       "claude-ai",
@@ -11488,6 +11488,24 @@ function compileBundle(result, parsedTask, agent) {
     out2.push("");
     if (b.pinned && b.pinned.length > 0) {
       out2.push(renderPinned(b.pinned));
+    }
+    const openThreads = b.open_threads ?? [];
+    if (openThreads.length > 0) {
+      out2.push("## OPEN THREADS (entity-matched follow-ups \u2014 resolve or update these)");
+      out2.push("# Pulled by entity + status, not similarity: prior episodes that left an");
+      out2.push("# open prediction or promise touching this task. Close one by writing a");
+      out2.push("# new episodic memory whose custom.resolves points at it.");
+      out2.push("");
+      for (const t of openThreads) {
+        const meta = [];
+        if (t.thread?.occurred_at) meta.push(t.thread.occurred_at.slice(0, 10));
+        if (t.thread?.entities?.length) meta.push(t.thread.entities.join(", "));
+        out2.push(`### ${t.title}${meta.length ? ` (${meta.join(" \xB7 ")})` : ""}`);
+        out2.push(`# source: ${formatCitation3(t)} \xB7 thread: open`);
+        out2.push("");
+        out2.push(t.body.trimEnd());
+        out2.push("");
+      }
     }
     const deploys = b.deploy_in_progress ?? [];
     if (deploys.length > 0) {
