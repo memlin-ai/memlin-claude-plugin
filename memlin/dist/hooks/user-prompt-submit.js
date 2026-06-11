@@ -245,10 +245,8 @@ async function main() {
   process.stdout.write(
     scribeNotice + [
       "<memlin-resolved-context>",
-      "# This bundle was auto-resolved by Memlin for the user prompt below.",
-      "# Treat it as authoritative project context: apply skills, respect goals,",
-      "# validate against schemas, cite by path + version. Do NOT re-invoke",
-      "# memlin_resolve_task unless the user asks you to explore something specific.",
+      "# Auto-resolved by Memlin \u2014 authoritative project context. Apply skills, honor",
+      "# goals, validate schemas, cite sources; do not re-invoke memlin_resolve_task.",
       "",
       rendered,
       "</memlin-resolved-context>"

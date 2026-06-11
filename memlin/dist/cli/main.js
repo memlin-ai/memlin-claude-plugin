@@ -11163,88 +11163,7 @@ var init_bind_plans = __esm({
   }
 });
 
-// packages/plugin-core/src/cli/resolve.ts
-var resolve_exports = {};
-import { execSync as execSync4 } from "node:child_process";
-function parseArgs3(argv) {
-  const positional = [];
-  let project;
-  let maxTokens;
-  let hybrid;
-  let agent;
-  const kinds = [];
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--project" || a === "-p") {
-      project = argv[++i];
-      if (!project) return { error: "--project requires a value" };
-    } else if (a === "--max-tokens") {
-      const v = argv[++i];
-      if (!v) return { error: "--max-tokens requires a value" };
-      const n = Number(v);
-      if (!Number.isFinite(n) || n <= 0) return { error: `--max-tokens: bad number "${v}"` };
-      maxTokens = Math.floor(n);
-    } else if (a === "--kind" || a === "-k") {
-      const v = argv[++i];
-      if (!v) return { error: "--kind requires a value" };
-      if (!["skill", "memory", "goal", "schema"].includes(v)) {
-        return { error: `--kind: must be one of skill|memory|goal|schema (got "${v}")` };
-      }
-      kinds.push(v);
-    } else if (a === "--agent" || a === "-a") {
-      agent = argv[++i];
-      if (!agent) return { error: "--agent requires a value" };
-      if (!["claude-code", "cursor", "antigravity", "codex", "windsurf"].includes(agent)) {
-        return {
-          error: `--agent: must be one of claude-code|cursor|antigravity|codex|windsurf (got "${agent}")`
-        };
-      }
-    } else if (a === "--hybrid") {
-      hybrid = true;
-    } else if (a === "--semantic") {
-      hybrid = false;
-    } else if (a === "--help" || a === "-h") {
-      return { error: "help" };
-    } else if (a?.startsWith("--")) {
-      return { error: `unknown flag: ${a}` };
-    } else if (a) {
-      positional.push(a);
-    }
-  }
-  const task = positional.join(" ").trim();
-  if (!task) return { error: 'missing task. usage: memlin resolve "<task description>"' };
-  return {
-    task,
-    ...project !== void 0 ? { project } : {},
-    ...maxTokens !== void 0 ? { maxTokens } : {},
-    ...kinds.length > 0 ? { kinds } : {},
-    ...hybrid !== void 0 ? { hybrid } : {},
-    ...agent !== void 0 ? { agent } : {}
-  };
-}
-function printHelp2() {
-  console.log(
-    [
-      "memlin resolve \u2014 assemble specialized context for a task",
-      "",
-      "Usage:",
-      '  memlin resolve "<task description>" [options]',
-      "",
-      "Options:",
-      "  --project <id>      Override the auto-resolved project scope",
-      "  --max-tokens <n>    Bundle token budget (default 4000)",
-      "  --kind <k>          Restrict to a kind. Repeatable.",
-      "                      One of: skill, memory, goal, schema",
-      "  --agent <a_type>    Compile bundle for agent (claude-code|cursor|antigravity|codex|windsurf)",
-      "  --hybrid            Use hybrid retrieval (BM25 + cosine via RRF).",
-      "                      This is the server default.",
-      "  --semantic          Force pure cosine retrieval for diagnostics/evals.",
-      "",
-      "Example:",
-      '  memlin resolve "wire OAuth callback between API and SPA"'
-    ].join("\n")
-  );
-}
+// packages/plugin-core/src/cli/compile-bundle.ts
 function formatCitation3(c) {
   const parts = [];
   parts.push(c.citation.path ?? "(no path)");
@@ -11257,6 +11176,13 @@ function renderBrandGuidelines(b) {
   const fm = b.frontmatter;
   const lines = [];
   const title = fm.name ?? "(unnamed brand guidelines)";
+  if (b.mode === "pointer") {
+    lines.push(
+      `## BRAND GUIDELINES: ${title} (on file \u2014 not loaded for this task; mention brand/copy work to load them)`
+    );
+    lines.push("");
+    return lines.join("\n");
+  }
   lines.push(`## BRAND GUIDELINES: ${title} (${b.source})`);
   lines.push(`# source: brand-guidelines://${b.brand_guidelines_id} \xB7 ${b.updated_at}`);
   lines.push("");
@@ -11368,18 +11294,6 @@ function renderPinned(items) {
   }
   return lines.join("\n");
 }
-function readGitRemote4(cwd) {
-  try {
-    const url = execSync4("git remote get-url origin", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
-}
 function bundleSummary(r) {
   const b = r.bundle;
   const totalSkills = (b.primary_skill ? 1 : 0) + b.supporting_skills.length;
@@ -11417,11 +11331,18 @@ function renderItemXml(tagName, item, attributes = {}) {
   lines.push(`</${tagName}>`);
   return lines.join("\n");
 }
+function truncateTask(task) {
+  const oneLine = task.replace(/\s+/g, " ").trim();
+  return oneLine.length <= TASK_ECHO_MAX_CHARS ? oneLine : `${oneLine.slice(0, TASK_ECHO_MAX_CHARS - 1)}\u2026`;
+}
+function xmlAttr(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+}
 function compileBundle(result, parsedTask, agent) {
   const b = result.bundle;
   const out2 = [];
   if (agent === "claude-code") {
-    out2.push(`<memlin_context task="${parsedTask}" resolved_at="${result.resolved_at}">`);
+    out2.push(`<memlin_context task="${xmlAttr(truncateTask(parsedTask))}">`);
     if (result.active_component) {
       out2.push(`  <active_component name="${result.active_component.name}" boost="0.15" />`);
     }
@@ -11460,7 +11381,12 @@ function compileBundle(result, parsedTask, agent) {
       out2.push("    </component>");
       out2.push("  </architecture>");
     }
-    if (b.brand_guidelines) {
+    if (b.brand_guidelines && b.brand_guidelines.mode === "pointer") {
+      const name = b.brand_guidelines.frontmatter.name || "Brand Guidelines";
+      out2.push(
+        `  <brand_guidelines name="${xmlAttr(name)}" mode="pointer" note="on file \u2014 not loaded for this task; mention brand/copy work to load them" />`
+      );
+    } else if (b.brand_guidelines) {
       out2.push("  <brand_guidelines>");
       out2.push(
         renderItemXml("guidelines", {
@@ -11521,14 +11447,9 @@ function compileBundle(result, parsedTask, agent) {
     }
     out2.push("</memlin_context>");
   } else {
-    out2.push(`# Memlin Resolved Context \u2014 invoked ${result.resolved_at}`);
-    out2.push(`# task: ${parsedTask}`);
-    if (result.active_component) {
-      out2.push(`# active component: ${result.active_component.name}  (boosted by +0.15)`);
-    } else {
-      out2.push("# active component: (none \u2014 project-wide search)");
-    }
-    out2.push(`# bundle: ${bundleSummary(result)}`);
+    out2.push(`# Memlin Resolved Context \u2014 task: ${truncateTask(parsedTask)}`);
+    const componentNote = result.active_component ? `${result.active_component.name} (boosted by +0.15)` : "(none \u2014 project-wide search)";
+    out2.push(`# component: ${componentNote} \xB7 bundle: ${bundleSummary(result)}`);
     const tb = result.token_budget;
     const tokenLine = `# tokens: ${tb.used.toLocaleString()} / ${tb.limit.toLocaleString()}` + (tb.truncated ? " (truncated \u2014 lower-priority items dropped)" : "");
     out2.push(tokenLine);
@@ -11621,12 +11542,115 @@ function compileBundle(result, parsedTask, agent) {
       out2.push(renderItem("MEMORY", m));
     }
   }
+  out2.push(`# resolved_at: ${result.resolved_at}`);
   out2.push(`# audit_id: ${result.audit_id || "(audit-log write failed \u2014 bundle is still valid)"}`);
   if (result.audit_id) {
     out2.push(`# replay with: memlin audit replay ${result.audit_id}`);
     out2.push(`# explain with: memlin audit explain ${result.audit_id}`);
   }
   return out2.join("\n") + "\n";
+}
+var TASK_ECHO_MAX_CHARS;
+var init_compile_bundle = __esm({
+  "packages/plugin-core/src/cli/compile-bundle.ts"() {
+    "use strict";
+    TASK_ECHO_MAX_CHARS = 80;
+  }
+});
+
+// packages/plugin-core/src/cli/resolve.ts
+var resolve_exports = {};
+import { execSync as execSync4 } from "node:child_process";
+function parseArgs3(argv) {
+  const positional = [];
+  let project;
+  let maxTokens;
+  let hybrid;
+  let agent;
+  const kinds = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--project" || a === "-p") {
+      project = argv[++i];
+      if (!project) return { error: "--project requires a value" };
+    } else if (a === "--max-tokens") {
+      const v = argv[++i];
+      if (!v) return { error: "--max-tokens requires a value" };
+      const n = Number(v);
+      if (!Number.isFinite(n) || n <= 0) return { error: `--max-tokens: bad number "${v}"` };
+      maxTokens = Math.floor(n);
+    } else if (a === "--kind" || a === "-k") {
+      const v = argv[++i];
+      if (!v) return { error: "--kind requires a value" };
+      if (!["skill", "memory", "goal", "schema"].includes(v)) {
+        return { error: `--kind: must be one of skill|memory|goal|schema (got "${v}")` };
+      }
+      kinds.push(v);
+    } else if (a === "--agent" || a === "-a") {
+      agent = argv[++i];
+      if (!agent) return { error: "--agent requires a value" };
+      if (!["claude-code", "cursor", "antigravity", "codex", "windsurf"].includes(agent)) {
+        return {
+          error: `--agent: must be one of claude-code|cursor|antigravity|codex|windsurf (got "${agent}")`
+        };
+      }
+    } else if (a === "--hybrid") {
+      hybrid = true;
+    } else if (a === "--semantic") {
+      hybrid = false;
+    } else if (a === "--help" || a === "-h") {
+      return { error: "help" };
+    } else if (a?.startsWith("--")) {
+      return { error: `unknown flag: ${a}` };
+    } else if (a) {
+      positional.push(a);
+    }
+  }
+  const task = positional.join(" ").trim();
+  if (!task) return { error: 'missing task. usage: memlin resolve "<task description>"' };
+  return {
+    task,
+    ...project !== void 0 ? { project } : {},
+    ...maxTokens !== void 0 ? { maxTokens } : {},
+    ...kinds.length > 0 ? { kinds } : {},
+    ...hybrid !== void 0 ? { hybrid } : {},
+    ...agent !== void 0 ? { agent } : {}
+  };
+}
+function printHelp2() {
+  console.log(
+    [
+      "memlin resolve \u2014 assemble specialized context for a task",
+      "",
+      "Usage:",
+      '  memlin resolve "<task description>" [options]',
+      "",
+      "Options:",
+      "  --project <id>      Override the auto-resolved project scope",
+      "  --max-tokens <n>    Bundle token budget (default 4000)",
+      "  --kind <k>          Restrict to a kind. Repeatable.",
+      "                      One of: skill, memory, goal, schema",
+      "  --agent <a_type>    Compile bundle for agent (claude-code|cursor|antigravity|codex|windsurf)",
+      "  --hybrid            Use hybrid retrieval (BM25 + cosine via RRF).",
+      "                      This is the server default.",
+      "  --semantic          Force pure cosine retrieval for diagnostics/evals.",
+      "",
+      "Example:",
+      '  memlin resolve "wire OAuth callback between API and SPA"'
+    ].join("\n")
+  );
+}
+function readGitRemote4(cwd) {
+  try {
+    const url = execSync4("git remote get-url origin", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    return normalizeGitRemote(url);
+  } catch {
+    return null;
+  }
 }
 async function main11() {
   const argv = process.argv.slice(2);
@@ -11729,6 +11753,7 @@ var init_resolve = __esm({
     init_client();
     init_project_resolver();
     init_state();
+    init_compile_bundle();
     main11().catch((err2) => {
       console.error("memlin resolve failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
