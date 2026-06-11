@@ -11715,7 +11715,11 @@ async function main11() {
       audit_id: result.audit_id,
       resolved_at: Date.now(),
       cwd,
-      had_content: bundleHasContent
+      had_content: bundleHasContent,
+      // Every adapter spawns this CLI with MEMLIN_HOST set; the Claude Code
+      // plugin is the unset default. The continuity check matches on this so
+      // hosts never consume each other's cache entries.
+      host: process.env.MEMLIN_HOST ?? "claude-code"
     });
   }
 }

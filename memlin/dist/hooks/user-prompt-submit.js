@@ -31,6 +31,39 @@ async function writeState(state) {
   await fs.rename(tmp, STATE_FILE);
 }
 
+// packages/plugin-core/dist/continuity.js
+var CONTINUITY_WINDOW_MS = 10 * 60 * 1e3;
+var CONTINUATION_PATTERNS = [
+  /^\s*(and|also|then|now|next|plus|but|or|so)\b/i,
+  /^\s*(what about|how about|tell me more|go on|continue|keep going)\b/i,
+  /^\s*(explain|show me|expand|elaborate)\s+(that|this|it|the|more)\b/i,
+  /^\s*(yes|yeah|ok|sure|right),?\s+(now|and|so|continue|keep)\b/i,
+  /^\s*(can you|could you)\s+(also|now|then|continue|elaborate)\b/i,
+  /\b(the one|that|those|these)\b.*\?$/i
+  // referential question
+];
+function isContinuation(prompt, cwd, host, last) {
+  if (last.host !== host) return false;
+  if (last.cwd !== cwd) return false;
+  if (Date.now() - last.resolved_at > CONTINUITY_WINDOW_MS) return false;
+  if (!last.had_content) return false;
+  const trimmed = prompt.trim();
+  if (trimmed.length <= 80) return true;
+  for (const re of CONTINUATION_PATTERNS) {
+    if (re.test(trimmed)) return true;
+  }
+  return false;
+}
+function buildContinuityMarker(auditId) {
+  return [
+    "<memlin-context-unchanged>",
+    `# This turn is a follow-up to the prior turn. The same Memlin context applies.`,
+    `# Refer to the bundle injected on the previous turn (audit_id: ${auditId}).`,
+    "# If you need fresh context, ask the user to rephrase or invoke memlin_resolve_task directly.",
+    "</memlin-context-unchanged>"
+  ].join("\n");
+}
+
 // packages/plugin-core/dist/scribe-notice.js
 async function takeScribeNotice(currentSessionId) {
   let state;
@@ -99,27 +132,6 @@ function firePlanSync(cwd) {
     child.unref();
   } catch {
   }
-}
-var CONTINUITY_WINDOW_MS = 10 * 60 * 1e3;
-var CONTINUATION_PATTERNS = [
-  /^\s*(and|also|then|now|next|plus|but|or|so)\b/i,
-  /^\s*(what about|how about|tell me more|go on|continue|keep going)\b/i,
-  /^\s*(explain|show me|expand|elaborate)\s+(that|this|it|the|more)\b/i,
-  /^\s*(yes|yeah|ok|sure|right),?\s+(now|and|so|continue|keep)\b/i,
-  /^\s*(can you|could you)\s+(also|now|then|continue|elaborate)\b/i,
-  /\b(the one|that|those|these)\b.*\?$/i
-  // referential question
-];
-function isContinuation(prompt, cwd, last) {
-  if (last.cwd !== cwd) return false;
-  if (Date.now() - last.resolved_at > CONTINUITY_WINDOW_MS) return false;
-  if (!last.had_content) return false;
-  const trimmed = prompt.trim();
-  if (trimmed.length <= 80) return true;
-  for (const re of CONTINUATION_PATTERNS) {
-    if (re.test(trimmed)) return true;
-  }
-  return false;
 }
 var TRIVIAL_PATTERNS = [
   /^\s*(hi|hey|hello|yo|sup|thanks?|thx|ty|ok|okay|cool|nice|got it|sounds good)[!.\s]*$/i,
@@ -218,16 +230,8 @@ async function main() {
   const scribeNotice = await takeCorrectionNotice(payload.session_id) + await takeScribeNotice(payload.session_id);
   try {
     const state = await readState();
-    if (state.last_resolve && isContinuation(prompt, cwd, state.last_resolve)) {
-      process.stdout.write(
-        scribeNotice + [
-          "<memlin-context-unchanged>",
-          `# This turn is a follow-up to the prior turn. The same Memlin context applies.`,
-          `# Refer to the bundle injected on the previous turn (audit_id: ${state.last_resolve.audit_id}).`,
-          "# If you need fresh context, ask the user to rephrase or invoke memlin_resolve_task directly.",
-          "</memlin-context-unchanged>"
-        ].join("\n")
-      );
+    if (state.last_resolve && isContinuation(prompt, cwd, "claude-code", state.last_resolve)) {
+      process.stdout.write(scribeNotice + buildContinuityMarker(state.last_resolve.audit_id));
       process.exit(0);
     }
   } catch {
