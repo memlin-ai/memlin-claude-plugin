@@ -11341,6 +11341,9 @@ function renderArchitecture(a) {
 function renderItem(label, item, extra = []) {
   const lines = [];
   const metaParts = [`similarity ${item.similarity.toFixed(2)}`, ...extra];
+  if (item.collapsed_duplicates && item.collapsed_duplicates > 0) {
+    metaParts.push(`+${item.collapsed_duplicates} corroborating`);
+  }
   if (item.component_name) metaParts.push(`component: ${item.component_name}`);
   lines.push(`## ${label}: ${item.title} (${metaParts.join(", ")})`);
   lines.push(`# source: ${formatCitation3(item)}`);
@@ -11400,9 +11403,10 @@ function bundleSummary(r) {
 }
 function renderItemXml(tagName, item, attributes = {}) {
   const attrs = Object.entries(attributes).map(([k, v]) => ` ${k}="${v}"`).join("");
+  const corroborating = item.collapsed_duplicates && item.collapsed_duplicates > 0 ? ` corroborating="${item.collapsed_duplicates}"` : "";
   const lines = [];
   lines.push(
-    `<${tagName}${attrs} title="${item.title}" similarity="${item.similarity.toFixed(2)}">`
+    `<${tagName}${attrs} title="${item.title}" similarity="${item.similarity.toFixed(2)}"${corroborating}>`
   );
   lines.push(
     `  <citation path="${item.citation.path ?? "(no path)"}" version="v${item.citation.version_number}" updated="${item.citation.updated_at}" />`
