@@ -3522,10 +3522,10 @@ var require_gray_matter = __commonJS({
 });
 
 // apps/cli-plugin/src/hooks/post-tool-use.ts
-import { execSync as execSync3 } from "node:child_process";
+import { execSync as execSync4 } from "node:child_process";
 import { promises as fs6 } from "node:fs";
-import path8 from "node:path";
-import os6 from "node:os";
+import path9 from "node:path";
+import os7 from "node:os";
 
 // packages/plugin-core/dist/client.js
 import { promises as fs3 } from "node:fs";
@@ -3849,11 +3849,12 @@ var MemlinApiClient = class {
   }
   /** POST /usage/event — write a usage_events row from the client.
    *  Server-side enforces an allowlist of event_types (today:
-   *  tool.guardrail, action.invoke) and re-derives account_id and
-   *  user_id from the auth context so callers can't forge rows for
-   *  other workspaces. */
-  async writeUsageEvent(input) {
-    return this.request("POST", "/usage/event", input);
+   *  tool.guardrail, action.invoke, resolve.outcome, edit.activity) and
+   *  re-derives account_id and user_id from the auth context so callers
+   *  can't forge rows for other workspaces. `opts.accountId` routes the
+   *  write to a non-default account (multi-account workspaces). */
+  async writeUsageEvent(input, opts = {}) {
+    return this.request("POST", "/usage/event", input, { accountId: opts.accountId });
   }
   /** GET /documents — list, filtered. */
   async listDocuments(opts = {}) {
@@ -4881,8 +4882,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path9, errorMaps, issueData } = params;
-  const fullPath = [...path9, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4998,11 +4999,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path9, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path9;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -8851,6 +8852,61 @@ async function releaseDeployLease(ctx, args) {
   }
 }
 
+// packages/plugin-core/dist/edit-activity.js
+import { execSync as execSync3 } from "node:child_process";
+import path8 from "node:path";
+import os6 from "node:os";
+var EDIT_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+function editedPathsFromHook(toolName, toolInput) {
+  if (!toolName || !EDIT_TOOLS.has(toolName) || !toolInput) return [];
+  const p = typeof toolInput.file_path === "string" && toolInput.file_path || typeof toolInput.notebook_path === "string" && toolInput.notebook_path || null;
+  return p ? [p] : [];
+}
+function repoRelativePath(absPath, cwd) {
+  try {
+    const top = execSync3("git rev-parse --show-toplevel", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+      timeout: 250
+    }).trim();
+    if (top) {
+      const rel = path8.relative(top, absPath);
+      if (rel && !rel.startsWith("..") && !path8.isAbsolute(rel)) return rel;
+    }
+  } catch {
+  }
+  return path8.basename(absPath);
+}
+async function recordEditActivity(ctx, payload) {
+  try {
+    const rawPaths = editedPathsFromHook(payload.tool_name, payload.tool_input);
+    if (rawPaths.length === 0) return;
+    const cwd = payload.cwd ?? process.cwd();
+    const plansDir = path8.join(os6.homedir(), ".claude", "plans");
+    const abs = rawPaths.map((p) => path8.resolve(cwd, p));
+    const codePaths = abs.filter((p) => !p.startsWith(plansDir + path8.sep));
+    if (codePaths.length === 0) return;
+    const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
+    if (!resolved.project_id) return;
+    const accountOverride = resolved.account_id && resolved.account_id !== ctx.config.account_id ? resolved.account_id : void 0;
+    const relPaths = [...new Set(codePaths.map((p) => repoRelativePath(p, cwd)))];
+    await ctx.api.writeUsageEvent(
+      {
+        event_type: "edit.activity",
+        metadata: {
+          project_id: resolved.project_id,
+          session_id: payload.session_id ?? null,
+          paths: relPaths
+        }
+      },
+      accountOverride ? { accountId: accountOverride } : {}
+    );
+  } catch (err) {
+    log(`edit-activity: record failed (ignored): ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // apps/cli-plugin/src/hooks/post-tool-use.ts
 async function readStdin() {
   let data = "";
@@ -8889,15 +8945,15 @@ async function captureApprovedPlan(ctx, payload) {
   }
   const firstLine = planText.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "Plan";
   const title = firstLine.replace(/^#+\s*/, "").slice(0, 200) || "Plan";
-  const plansDir = path8.join(os6.homedir(), ".claude", "plans");
+  const plansDir = path9.join(os7.homedir(), ".claude", "plans");
   await fs6.mkdir(plansDir, { recursive: true });
   let fileName = `${slugify(title)}.md`;
-  let abs = path8.join(plansDir, fileName);
+  let abs = path9.join(plansDir, fileName);
   try {
     const existing = await fs6.readFile(abs, "utf8");
     if (existing.trim() !== planText) {
       fileName = `${slugify(title)}-${shortHash(planText)}.md`;
-      abs = path8.join(plansDir, fileName);
+      abs = path9.join(plansDir, fileName);
     }
   } catch {
   }
@@ -8924,7 +8980,7 @@ ${planText}`;
 }
 function readGitRemoteFor(cwd) {
   try {
-    const url = execSync3("git remote get-url origin", {
+    const url = execSync4("git remote get-url origin", {
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -8946,10 +9002,10 @@ async function maybeScribeCommit(ctx, payload) {
   let diffStat = "";
   let diffBody = "";
   try {
-    commitSha = execSync3("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
-    commitMessage = execSync3("git log -1 --format=%B HEAD", { cwd, encoding: "utf8" }).trim();
-    diffStat = execSync3("git show --stat --format= HEAD", { cwd, encoding: "utf8" }).trim();
-    const buf = execSync3("git show --format= HEAD", {
+    commitSha = execSync4("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
+    commitMessage = execSync4("git log -1 --format=%B HEAD", { cwd, encoding: "utf8" }).trim();
+    diffStat = execSync4("git show --stat --format= HEAD", { cwd, encoding: "utf8" }).trim();
+    const buf = execSync4("git show --format= HEAD", {
       cwd,
       encoding: "utf8",
       maxBuffer: DIFF_MAX_BYTES * 2
@@ -8970,7 +9026,7 @@ async function maybeScribeCommit(ctx, payload) {
       accountOverride = resolved.account_id;
     }
     try {
-      const remoteUrl = execSync3("git remote get-url origin", {
+      const remoteUrl = execSync4("git remote get-url origin", {
         cwd,
         stdio: ["ignore", "pipe", "ignore"],
         encoding: "utf8"
@@ -9010,6 +9066,7 @@ async function main() {
   } catch {
     return;
   }
+  await recordEditActivity(ctx, payload);
   if (payload.tool_name === "Bash") {
     await releaseDeployLease(ctx, {
       command: payload.tool_input?.command ?? "",
@@ -9025,9 +9082,9 @@ async function main() {
   }
   const file = payload.tool_input?.file_path;
   if (!file) return;
-  const abs = path8.resolve(file);
-  const plansDir = path8.join(os6.homedir(), ".claude", "plans");
-  if (!abs.startsWith(plansDir + path8.sep)) return;
+  const abs = path9.resolve(file);
+  const plansDir = path9.join(os7.homedir(), ".claude", "plans");
+  if (!abs.startsWith(plansDir + path9.sep)) return;
   if (!abs.endsWith(".md")) return;
   try {
     const st = await fs6.stat(abs);
@@ -9042,8 +9099,8 @@ async function main() {
   );
   let gitRemote = null;
   try {
-    const { execSync: execSync4 } = await import("node:child_process");
-    const url = execSync4("git remote get-url origin", {
+    const { execSync: execSync5 } = await import("node:child_process");
+    const url = execSync5("git remote get-url origin", {
       cwd: payload.cwd ?? process.cwd(),
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -9057,7 +9114,7 @@ async function main() {
       gitRemote
     });
     log(
-      `pushed plan ${path8.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
+      `pushed plan ${path9.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
     );
   } catch (err) {
     log(`plan push failed: ${err instanceof Error ? err.message : String(err)}`);
