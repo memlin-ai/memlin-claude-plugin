@@ -112,6 +112,7 @@ __export(plan_sync_exports, {
   pullPlans: () => pullPlans,
   pushPlanFile: () => pushPlanFile,
   reconcileKnownPlans: () => reconcileKnownPlans,
+  resolveTargetDocId: () => resolveTargetDocId,
   setLastPlanPullCursor: () => setLastPlanPullCursor,
   stampPlanFile: () => stampPlanFile
 });
@@ -180,6 +181,9 @@ async function pullPlans(api, opts = {}) {
   await writeState(state);
   return { pulled, unchanged, removed };
 }
+function resolveTargetDocId(stateEntry, binding) {
+  return stateEntry?.document_id || binding?.documentId || void 0;
+}
 async function pushPlanFile(api, file, opts = {}) {
   const raw = await fs7.readFile(file, "utf8");
   const { title, body, binding: existingBinding } = parsePlanFile(raw);
@@ -189,8 +193,9 @@ async function pushPlanFile(api, file, opts = {}) {
   const relPath = path9.relative(homeBase(), file);
   const state = await readState();
   const existing = state.documents[relPath];
-  if (existing?.document_id) {
-    const result2 = await api.updatePlan(existing.document_id, {
+  const targetDocId = resolveTargetDocId(existing, existingBinding);
+  if (targetDocId) {
+    const result2 = await api.updatePlan(targetDocId, {
       body,
       title,
       commit_message: "edit from claude-code"
@@ -201,10 +206,13 @@ async function pushPlanFile(api, file, opts = {}) {
     });
     const stampedUpdate = await fs7.readFile(file, "utf8").catch(() => raw);
     state.documents[relPath] = {
-      ...existing,
+      document_id: result2.document_id,
+      version_id: existing?.version_id ?? "",
       version_number: result2.version_number,
       content_hash: hash(stampedUpdate),
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString()
+      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+      scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
+      kind: "plan"
     };
     await writeState(state);
     return {
