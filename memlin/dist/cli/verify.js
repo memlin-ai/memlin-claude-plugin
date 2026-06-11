@@ -687,7 +687,8 @@ function parseVerifyArgs(argv) {
     verdict: null,
     metrics: {},
     artifacts: [],
-    notes: null
+    notes: null,
+    modelAttribution: {}
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -717,6 +718,24 @@ function parseVerifyArgs(argv) {
       const n = argv[++i];
       if (n === void 0) return { error: "--notes needs text" };
       out.notes = n;
+    } else if (a === "--provider") {
+      const provider = argv[++i];
+      if (!provider) return { error: "--provider needs a value" };
+      out.modelAttribution.provider = provider;
+    } else if (a === "--model") {
+      const model = argv[++i];
+      if (!model) return { error: "--model needs a value" };
+      out.modelAttribution.model = model;
+    } else if (a === "--agent") {
+      const agent = argv[++i];
+      if (!agent) return { error: "--agent needs a value" };
+      out.modelAttribution.agent = agent;
+    } else if (a === "--role") {
+      const role = argv[++i];
+      if (role !== "decision_maker" && role !== "verifier" && role !== "panel_member" && role !== "reviewer") {
+        return { error: "--role must be decision_maker, verifier, panel_member, or reviewer" };
+      }
+      out.modelAttribution.role = role;
     } else if (!a.startsWith("-") && !out.decisionId) {
       out.decisionId = a;
     } else {
@@ -762,7 +781,8 @@ async function main() {
     verdict: parsed.verdict,
     ...Object.keys(parsed.metrics).length > 0 ? { measured: parsed.metrics } : {},
     ...parsed.artifacts.length > 0 ? { artifacts: parsed.artifacts } : {},
-    ...parsed.notes ? { notes: parsed.notes } : {}
+    ...parsed.notes ? { notes: parsed.notes } : {},
+    ...Object.keys(parsed.modelAttribution).length > 0 ? { model_attribution: parsed.modelAttribution } : {}
   });
   console.log(
     `recorded: ${result.verdict} on decision ${parsed.decisionId.slice(0, 8)} (${result.observed_at.slice(0, 19)}Z)`

@@ -11345,8 +11345,9 @@ function renderItem(label, item, extra = []) {
   }
   if (item.verification) {
     const v = item.verification;
+    const modelLabel = verificationModelLabel(v.model_attribution);
     metaParts.push(
-      `verified: ${v.verdict} (${v.observed_at.slice(0, 10)}${v.count > 1 ? `, ${v.count} checks` : ""})`
+      `verified: ${v.verdict} (${v.observed_at.slice(0, 10)}${v.count > 1 ? `, ${v.count} checks` : ""}${modelLabel ? `, ${modelLabel}` : ""})`
     );
   }
   if (item.component_name) metaParts.push(`component: ${item.component_name}`);
@@ -11356,6 +11357,16 @@ function renderItem(label, item, extra = []) {
   lines.push(item.body.trimEnd());
   lines.push("");
   return lines.join("\n");
+}
+function verificationModelLabel(value) {
+  if (!value || typeof value !== "object") return null;
+  const attr = value;
+  const provider = typeof attr.provider === "string" && attr.provider ? attr.provider : null;
+  const model = typeof attr.model === "string" && attr.model ? attr.model : null;
+  const agent = typeof attr.agent === "string" && attr.agent ? attr.agent : null;
+  const agentKind = typeof attr.agent_kind === "string" && attr.agent_kind ? attr.agent_kind : null;
+  const modelPart = [provider, model].filter(Boolean).join(":");
+  return [agent ?? agentKind, modelPart || null].filter(Boolean).join(" \xB7 ") || null;
 }
 function renderPinned(items) {
   const lines = [];
@@ -11398,9 +11409,11 @@ function renderItemXml(tagName, item, attributes = {}) {
   const attrs = Object.entries(attributes).map(([k, v]) => ` ${k}="${v}"`).join("");
   const corroborating = item.collapsed_duplicates && item.collapsed_duplicates > 0 ? ` corroborating="${item.collapsed_duplicates}"` : "";
   const verified = item.verification ? ` verified="${item.verification.verdict}" verified_at="${item.verification.observed_at}"` : "";
+  const verifiedModel = item.verification ? verificationModelLabel(item.verification.model_attribution) : null;
+  const verifiedModelAttr = verifiedModel ? ` verified_model="${verifiedModel}"` : "";
   const lines = [];
   lines.push(
-    `<${tagName}${attrs} title="${item.title}" similarity="${item.similarity.toFixed(2)}"${corroborating}${verified}>`
+    `<${tagName}${attrs} title="${item.title}" similarity="${item.similarity.toFixed(2)}"${corroborating}${verified}${verifiedModelAttr}>`
   );
   lines.push(
     `  <citation path="${item.citation.path ?? "(no path)"}" version="v${item.citation.version_number}" updated="${item.citation.updated_at}" />`
@@ -12056,7 +12069,8 @@ function parseVerifyArgs(argv) {
     verdict: null,
     metrics: {},
     artifacts: [],
-    notes: null
+    notes: null,
+    modelAttribution: {}
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -12086,6 +12100,24 @@ function parseVerifyArgs(argv) {
       const n = argv[++i];
       if (n === void 0) return { error: "--notes needs text" };
       out2.notes = n;
+    } else if (a === "--provider") {
+      const provider = argv[++i];
+      if (!provider) return { error: "--provider needs a value" };
+      out2.modelAttribution.provider = provider;
+    } else if (a === "--model") {
+      const model = argv[++i];
+      if (!model) return { error: "--model needs a value" };
+      out2.modelAttribution.model = model;
+    } else if (a === "--agent") {
+      const agent = argv[++i];
+      if (!agent) return { error: "--agent needs a value" };
+      out2.modelAttribution.agent = agent;
+    } else if (a === "--role") {
+      const role = argv[++i];
+      if (role !== "decision_maker" && role !== "verifier" && role !== "panel_member" && role !== "reviewer") {
+        return { error: "--role must be decision_maker, verifier, panel_member, or reviewer" };
+      }
+      out2.modelAttribution.role = role;
     } else if (!a.startsWith("-") && !out2.decisionId) {
       out2.decisionId = a;
     } else {
@@ -12131,7 +12163,8 @@ async function main13() {
     verdict: parsed.verdict,
     ...Object.keys(parsed.metrics).length > 0 ? { measured: parsed.metrics } : {},
     ...parsed.artifacts.length > 0 ? { artifacts: parsed.artifacts } : {},
-    ...parsed.notes ? { notes: parsed.notes } : {}
+    ...parsed.notes ? { notes: parsed.notes } : {},
+    ...Object.keys(parsed.modelAttribution).length > 0 ? { model_attribution: parsed.modelAttribution } : {}
   });
   console.log(
     `recorded: ${result.verdict} on decision ${parsed.decisionId.slice(0, 8)} (${result.observed_at.slice(0, 19)}Z)`
