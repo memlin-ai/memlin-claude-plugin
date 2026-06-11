@@ -8005,9 +8005,10 @@ var ActionMetadataSchema = external_exports.object({
 // packages/shared/dist/task-classifier.js
 var DEPLOY_TOOL_RE = /\b(?:vercel\s+(?:deploy|--?prod\w*)|fly(?:ctl)?\s+deploy|wrangler\s+(?:deploy|publish)|sst\s+deploy|serverless\s+deploy|sls\s+deploy|(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy|make\s+deploy|git\s+push\s+\S*(?:deploy|prod|production|heroku))\b/i;
 var DEPLOY_CMD_RE = /(?:^|;|&&|\|\||&|\|)\s*(?:[\w./-]*\/)?deploy(?:\.[a-z]+)?(?=\s|$)/i;
+var DEPLOY_TRIGGER_CMD_RE = /\bgh\s+pr\s+merge\b|\bgh\s+workflow\s+run\b[^;&|]*\b(?:deploy|prod|production|release)\b|\bgit\s+push\b[^;&|]*?[\s:](?:main|master|prod|production|release\/\S+)(?=\s|$)/i;
 function isDeployCommand(command) {
   if (!command) return false;
-  return DEPLOY_TOOL_RE.test(command) || DEPLOY_CMD_RE.test(command);
+  return DEPLOY_TOOL_RE.test(command) || DEPLOY_CMD_RE.test(command) || DEPLOY_TRIGGER_CMD_RE.test(command);
 }
 
 // packages/shared/dist/skill-frontmatter.js
