@@ -3,6 +3,9 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
+// packages/plugin-core/src/cli/attach-path.ts
+import path7 from "node:path";
+
 // packages/plugin-core/src/client.ts
 import { promises as fs3 } from "node:fs";
 import path4 from "node:path";
@@ -651,6 +654,22 @@ async function findWorkspaceBinding(startDir) {
   }
   return null;
 }
+async function writeWorkspaceBinding(workspaceRoot, binding) {
+  const dir = path3.join(path3.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
+  await fs2.mkdir(dir, { recursive: true });
+  const file = path3.join(dir, WORKSPACE_BINDING_FILE);
+  const body = JSON.stringify(
+    {
+      account_id: binding.account_id,
+      project_id: binding.project_id ?? null,
+      account_name: binding.account_name
+    },
+    null,
+    2
+  );
+  await fs2.writeFile(file, body + "\n", "utf8");
+  return file;
+}
 
 // packages/plugin-core/src/client.ts
 var CONFIG_DIR = path4.join(os4.homedir(), ".config", "memlin");
@@ -719,194 +738,189 @@ function runtimeCwd(fallback = process.cwd()) {
   }
   return path5.resolve(fallback);
 }
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path5.resolve(cwd);
-  const remote = readGitRemote(cwd);
-  try {
-    const result = await api.resolveProject({
-      git_remote: remote,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason
-      };
-    }
-  } catch {
-  }
-  if (configProjectId) {
-    return {
-      project_id: configProjectId,
-      project_name: null,
-      account_id: null,
-      reason: "config"
-    };
-  }
-  return { project_id: null, project_name: null, account_id: null, reason: "none" };
-}
-function readGitRemote(cwd) {
-  try {
-    const url = execSync("git remote get-url origin", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
-}
 
-// packages/plugin-core/src/plan-sync.ts
-import { promises as fs5 } from "node:fs";
-import path7 from "node:path";
-
-// packages/plugin-core/src/state.ts
-import { promises as fs4 } from "node:fs";
+// packages/plugin-core/src/sibling-detect.ts
+import { readdirSync, existsSync } from "node:fs";
+import { execSync as execSync2 } from "node:child_process";
 import path6 from "node:path";
-import os5 from "node:os";
-import crypto from "node:crypto";
-var STATE_FILE = path6.join(os5.homedir(), ".config", "memlin", "state.json");
-var EMPTY = { documents: {} };
-async function readState() {
-  try {
-    const raw = await fs4.readFile(STATE_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return { ...EMPTY };
-  }
-}
-async function writeState(state) {
-  await fs4.mkdir(path6.dirname(STATE_FILE), { recursive: true });
-  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs4.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await fs4.rename(tmp, STATE_FILE);
-}
-function hash(content) {
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-// packages/plugin-core/src/plan-sync.ts
-function plansDir() {
-  return resolveHost().plansDir();
-}
-async function pullPlans(api, opts = {}) {
-  const fetchOpts = {};
-  if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
-  if (opts.since) fetchOpts.updated_after = opts.since;
-  const list = await api.listPlans(fetchOpts);
-  await fs5.mkdir(plansDir(), { recursive: true });
-  const state = await readState();
-  const pulled = [];
-  const unchanged = [];
-  const removed = [];
-  const isFullSync = !opts.since;
-  const seenPaths = /* @__PURE__ */ new Set();
-  for (const p of list) {
-    const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
-    const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path7.join("plans", filename);
-    const full = path7.join(plansDir(), filename);
-    seenPaths.add(localPath);
-    let body;
+var MAX_CHILD_DIRS = 32;
+var MAX_REMOTE_PROBES = 5;
+function childGitRemotes(cwd, deps = {}) {
+  const listDirs = deps.listDirs ?? ((p) => {
     try {
-      const detail = await api.getPlan(p.document_id);
-      body = detail.body;
+      return readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules").map((e) => e.name);
     } catch {
-      continue;
+      return [];
     }
-    const fileContent = formatPlanFile(p.title, body, p.status, {
-      documentId: p.document_id,
-      projectId: p.project_id
-    });
-    const contentHash = hash(fileContent);
-    const existing = state.documents[localPath];
-    if (existing?.content_hash === contentHash) {
-      unchanged.push(localPath);
-      continue;
+  });
+  const readRemote = deps.readRemote ?? ((repoPath) => {
+    try {
+      if (!existsSync(path6.join(repoPath, ".git"))) return null;
+      const url = execSync2("git remote get-url origin", {
+        cwd: repoPath,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8"
+      }).trim();
+      return normalizeGitRemote(url);
+    } catch {
+      return null;
     }
-    await fs5.writeFile(full, fileContent, "utf8");
-    pulled.push(localPath);
-    state.documents[localPath] = {
-      document_id: p.document_id,
-      version_id: "",
-      version_number: p.version_number,
-      content_hash: contentHash,
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: p.scope ?? "personal",
-      kind: "plan"
-    };
+  });
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const dir of listDirs(cwd).slice(0, MAX_CHILD_DIRS)) {
+    const remote = readRemote(path6.join(cwd, dir));
+    if (!remote || seen.has(remote)) continue;
+    seen.add(remote);
+    out.push({ dir, remote });
+    if (out.length >= MAX_REMOTE_PROBES) break;
   }
-  if (isFullSync) {
-    for (const tracked of Object.keys(state.documents)) {
-      if (!tracked.startsWith("plans/")) continue;
-      if (seenPaths.has(tracked)) continue;
-      delete state.documents[tracked];
+  return out;
+}
+async function detectSiblingProject(cwd, resolveProject, deps = {}) {
+  for (const { dir, remote } of childGitRemotes(cwd, deps)) {
+    try {
+      const resolved = await resolveProject({ git_remote: remote });
+      if (resolved.project_id && resolved.account_id) {
+        return {
+          project_id: resolved.project_id,
+          account_id: resolved.account_id,
+          name: resolved.name ?? null,
+          via: dir
+        };
+      }
+    } catch {
     }
   }
-  await writeState(state);
-  return { pulled, unchanged, removed };
-}
-function formatPlanFile(title, body, status, binding) {
-  const trimmedBody = body.replace(/^\s*#\s+.+\n+/, "").trimEnd();
-  const lines = [`# ${title}`, "", `<!-- memlin-plan-status: ${status} -->`];
-  if (binding) {
-    lines.push(
-      `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`
-    );
-  }
-  lines.push("", trimmedBody, "");
-  return lines.join("\n");
-}
-function getLastPlanPullCursor(state) {
-  return state.last_plan_pull_at;
-}
-function setLastPlanPullCursor(state, at) {
-  state.last_plan_pull_at = at;
+  return null;
 }
 
-// packages/plugin-core/src/cli/pull-plans.ts
+// packages/plugin-core/src/cli/attach-path.ts
 function parseArgs(argv) {
-  let full = false;
-  let planId;
-  for (const a of argv) {
-    if (a === "--full") {
-      full = true;
-    } else if (!a.startsWith("--")) {
-      planId = a;
+  const out = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--project" || a === "-p") {
+      out.project = argv[++i];
+      if (!out.project) return { error: "--project requires a value" };
+    } else if (a === "--org" || a === "-o") {
+      out.org = argv[++i];
+      if (!out.org) return { error: "--org requires a value" };
+    } else if (a === "--help" || a === "-h") {
+      return { error: "help" };
+    } else if (a?.startsWith("--")) {
+      return { error: `unknown flag: ${a}` };
+    } else if (a) {
+      if (out.targetPath) return { error: "only one path argument allowed" };
+      out.targetPath = a;
     }
   }
-  return { full, ...planId !== void 0 ? { planId } : {} };
+  return out;
+}
+function printHelp() {
+  console.log(
+    [
+      "memlin attach-path \u2014 attach a directory to an existing project",
+      "",
+      "Usage:",
+      "  memlin attach-path [path] [options]",
+      "",
+      "Options:",
+      "  --project <id|name>   Target project (default: detect via child repos)",
+      "  --org <name|uuid>     Account to search when using --project <name>",
+      "",
+      "After this, sessions in the directory (and subdirectories) resolve",
+      "to the project automatically \u2014 no per-session setup."
+    ].join("\n")
+  );
 }
 async function main() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs(argv);
+  const parsed = parseArgs(process.argv.slice(2));
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      printHelp();
+      process.exit(0);
+    }
+    console.error(`memlin attach-path: ${parsed.error}`);
+    printHelp();
+    process.exit(2);
+  }
   const ctx = await getApi();
-  if (!ctx) return;
-  const resolved = await resolveProject(ctx.api, runtimeCwd(), ctx.config.project_id).catch(() => ({
-    project_id: null
-  }));
-  const state = await readState();
-  const cursor = getLastPlanPullCursor(state);
+  if (!ctx) {
+    console.error("memlin attach-path: not configured. Run `memlin login` first.");
+    process.exit(1);
+  }
+  const { api, config } = ctx;
+  const targetPath = path7.resolve(parsed.targetPath ?? runtimeCwd());
+  let accountId = config.account_id;
+  if (parsed.org) {
+    const me = await api.me();
+    const lower = parsed.org.toLowerCase();
+    const match = me.accounts.find((a) => a.id === parsed.org) ?? me.accounts.find((a) => a.name.toLowerCase().includes(lower));
+    if (!match) {
+      console.error(`memlin attach-path: no account matching "${parsed.org}".`);
+      process.exit(2);
+    }
+    accountId = match.id;
+  }
+  let projectId = null;
+  if (parsed.project) {
+    const projects = await api.listProjects({ accountId });
+    const byId = projects.find((p) => p.id === parsed.project);
+    const lower = parsed.project.toLowerCase();
+    const byName = projects.filter((p) => p.name.toLowerCase().includes(lower));
+    const target = byId ?? (byName.length === 1 ? byName[0] : null);
+    if (!target) {
+      console.error(
+        byName.length > 1 ? `memlin attach-path: "${parsed.project}" matches ${byName.length} projects \u2014 use the id.` : `memlin attach-path: no project matching "${parsed.project}" in this account.`
+      );
+      for (const p of projects.slice(0, 20)) console.error(`  ${p.id}  ${p.name}`);
+      process.exit(2);
+    }
+    projectId = target.id;
+  } else {
+    const sibling = await detectSiblingProject(targetPath, (input) => api.resolveProject(input));
+    if (sibling) {
+      projectId = sibling.project_id;
+      accountId = sibling.account_id;
+      console.log(`Detected project via child repo ${sibling.via}/: "${sibling.name ?? sibling.project_id}"`);
+    }
+  }
+  if (!projectId) {
+    console.error(
+      "memlin attach-path: could not determine a target project. Pass --project <id|name>."
+    );
+    const projects = await api.listProjects({ accountId });
+    for (const p of projects.slice(0, 20)) console.error(`  ${p.id}  ${p.name}`);
+    process.exit(2);
+  }
   try {
-    const opts = {
-      projectId: resolved.project_id
-    };
-    if (!parsed.full && !parsed.planId && cursor) {
-      opts.since = cursor;
+    const updated = await api.patchProject(
+      projectId,
+      { add_local_paths: [targetPath] },
+      { accountId }
+    );
+    const pin = await writeWorkspaceBinding(targetPath, {
+      account_id: accountId,
+      project_id: projectId
+    });
+    console.log(`Attached ${targetPath} \u2192 project "${updated.name}"`);
+    console.log(`  local_paths: ${JSON.stringify(updated.local_paths)}`);
+    console.log(`  wrote ${pin}`);
+    console.log("\nSessions in this directory (and subdirectories) now resolve to the project.");
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/404|405/.test(msg)) {
+      console.error(
+        "memlin attach-path: the server does not support project editing yet \u2014 an update is rolling out. Try again shortly."
+      );
+    } else {
+      console.error(`memlin attach-path: attach failed: ${msg}`);
     }
-    const result = await pullPlans(ctx.api, opts);
-    setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
-    await writeState(state);
-    if (parsed.full || parsed.planId) {
-      const pulled = result.pulled.length;
-      const removed = result.removed.length;
-      console.log(`plans: pulled ${pulled}, removed ${removed}`);
-    }
-  } catch {
+    process.exit(1);
   }
 }
-void main();
+main().catch((err) => {
+  console.error("memlin attach-path failed:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});
