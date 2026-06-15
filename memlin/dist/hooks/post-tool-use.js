@@ -3524,7 +3524,7 @@ var require_gray_matter = __commonJS({
 // apps/cli-plugin/src/hooks/post-tool-use.ts
 import { execSync as execSync4 } from "node:child_process";
 import { promises as fs6 } from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 import os7 from "node:os";
 
 // packages/plugin-core/dist/client.js
@@ -3746,7 +3746,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.16";
+  return "0.2.17";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -4005,6 +4005,19 @@ var MemlinApiClient = class {
    */
   async deployGuard(input, opts = {}) {
     return this.request("POST", "/deploy-guard", input, { accountId: opts.accountId });
+  }
+  /**
+   * POST /edit-guard — real-time, pre-edit file-collision check.
+   *
+   * The PreToolUse hook calls this before an Edit/Write/MultiEdit, passing the
+   * repo-relative path(s) about to change. The server reads the same
+   * `edit.activity` feed the resolver's recent_file_edits uses and returns any
+   * LIVE collisions — other sessions that edited the same path within the last
+   * ~10 min — so the hook can warn or block. Read-only; never mutates.
+   * project_id is passed explicitly (the hook resolves it from cwd first).
+   */
+  async editGuard(input, opts = {}) {
+    return this.request("POST", "/edit-guard", input, { accountId: opts.accountId });
   }
   /** GET /audit/<id>/replay — reconstruct a past resolve's exact bundle. */
   async replayAudit(auditId) {
@@ -4430,7 +4443,8 @@ function parsePlanFile(raw) {
 }
 
 // packages/plugin-core/dist/pre-tool-use-handler.js
-import { execSync as execSync2 } from "node:child_process";
+import { execSync as execSync3 } from "node:child_process";
+import path9 from "node:path";
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -4910,8 +4924,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path10, errorMaps, issueData } = params;
-  const fullPath = [...path10, ...issueData.path || []];
+  const { data, path: path11, errorMaps, issueData } = params;
+  const fullPath = [...path11, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -5027,11 +5041,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path10, key) {
+  constructor(parent, value, path11, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path10;
+    this._path = path11;
     this._key = key;
   }
   get path() {
@@ -8869,26 +8883,8 @@ var MODEL_PRICES = {
 var SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
 var SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
 
-// packages/plugin-core/dist/pre-tool-use-handler.js
-async function releaseDeployLease(ctx, args) {
-  if (!args.session_id || !isDeployCommand(args.command)) return;
-  try {
-    const resolved = await resolveProject(ctx.api, args.cwd, ctx.config.project_id);
-    if (!resolved.project_id) return;
-    const accountOverride = resolved.account_id && resolved.account_id !== ctx.config.account_id ? resolved.account_id : void 0;
-    await ctx.api.deployGuard(
-      { action: "release", project_id: resolved.project_id, session_id: args.session_id },
-      accountOverride ? { accountId: accountOverride } : {}
-    );
-  } catch (err) {
-    log(
-      `deploy-guard: release failed (ignored): ${err instanceof Error ? err.message : String(err)}`
-    );
-  }
-}
-
 // packages/plugin-core/dist/edit-activity.js
-import { execSync as execSync3 } from "node:child_process";
+import { execSync as execSync2 } from "node:child_process";
 import path8 from "node:path";
 import os6 from "node:os";
 var EDIT_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -8899,7 +8895,7 @@ function editedPathsFromHook(toolName, toolInput) {
 }
 function repoRelativePath(absPath, cwd) {
   try {
-    const top = execSync3("git rev-parse --show-toplevel", {
+    const top = execSync2("git rev-parse --show-toplevel", {
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8",
@@ -8942,6 +8938,24 @@ async function recordEditActivity(ctx, payload) {
   }
 }
 
+// packages/plugin-core/dist/pre-tool-use-handler.js
+async function releaseDeployLease(ctx, args) {
+  if (!args.session_id || !isDeployCommand(args.command)) return;
+  try {
+    const resolved = await resolveProject(ctx.api, args.cwd, ctx.config.project_id);
+    if (!resolved.project_id) return;
+    const accountOverride = resolved.account_id && resolved.account_id !== ctx.config.account_id ? resolved.account_id : void 0;
+    await ctx.api.deployGuard(
+      { action: "release", project_id: resolved.project_id, session_id: args.session_id },
+      accountOverride ? { accountId: accountOverride } : {}
+    );
+  } catch (err) {
+    log(
+      `deploy-guard: release failed (ignored): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
 // apps/cli-plugin/src/hooks/post-tool-use.ts
 async function readStdin() {
   let data = "";
@@ -8980,15 +8994,15 @@ async function captureApprovedPlan(ctx, payload) {
   }
   const firstLine = planText.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "Plan";
   const title = firstLine.replace(/^#+\s*/, "").slice(0, 200) || "Plan";
-  const plansDir = path9.join(os7.homedir(), ".claude", "plans");
+  const plansDir = path10.join(os7.homedir(), ".claude", "plans");
   await fs6.mkdir(plansDir, { recursive: true });
   let fileName = `${slugify(title)}.md`;
-  let abs = path9.join(plansDir, fileName);
+  let abs = path10.join(plansDir, fileName);
   try {
     const existing = await fs6.readFile(abs, "utf8");
     if (existing.trim() !== planText) {
       fileName = `${slugify(title)}-${shortHash(planText)}.md`;
-      abs = path9.join(plansDir, fileName);
+      abs = path10.join(plansDir, fileName);
     }
   } catch {
   }
@@ -9117,9 +9131,9 @@ async function main() {
   }
   const file = payload.tool_input?.file_path;
   if (!file) return;
-  const abs = path9.resolve(file);
-  const plansDir = path9.join(os7.homedir(), ".claude", "plans");
-  if (!abs.startsWith(plansDir + path9.sep)) return;
+  const abs = path10.resolve(file);
+  const plansDir = path10.join(os7.homedir(), ".claude", "plans");
+  if (!abs.startsWith(plansDir + path10.sep)) return;
   if (!abs.endsWith(".md")) return;
   try {
     const st = await fs6.stat(abs);
@@ -9149,7 +9163,7 @@ async function main() {
       gitRemote
     });
     log(
-      `pushed plan ${path9.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
+      `pushed plan ${path10.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
     );
   } catch (err) {
     log(`plan push failed: ${err instanceof Error ? err.message : String(err)}`);
