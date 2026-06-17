@@ -41,2376 +41,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/plugin-core/src/host.ts
-import os from "node:os";
-import path from "node:path";
-function resolveHost() {
-  const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
-  const make = HOSTS[envHost];
-  return (make ?? HOSTS["claude-code"])();
-}
-var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, HOSTS;
-var init_host = __esm({
-  "packages/plugin-core/src/host.ts"() {
-    "use strict";
-    BaseHost = class {
-      constructor(kind, home) {
-        this.kind = kind;
-        this.home = home;
-      }
-      kind;
-      home;
-      homeDir() {
-        return this.home;
-      }
-      plansDir() {
-        return path.join(this.home, "plans");
-      }
-    };
-    ClaudeCodeHost = class extends BaseHost {
-      constructor() {
-        super("claude-code", path.join(os.homedir(), ".claude"));
-      }
-    };
-    CursorHost = class extends BaseHost {
-      constructor() {
-        super("cursor", path.join(os.homedir(), ".config", "memlin"));
-      }
-    };
-    CodexHost = class extends BaseHost {
-      constructor() {
-        super("codex", path.join(os.homedir(), ".config", "memlin"));
-      }
-    };
-    WindsurfHost = class extends BaseHost {
-      constructor() {
-        super("windsurf", path.join(os.homedir(), ".config", "memlin"));
-      }
-    };
-    AntigravityHost = class extends BaseHost {
-      constructor() {
-        super("antigravity", path.join(os.homedir(), ".config", "memlin"));
-      }
-    };
-    HOSTS = {
-      "claude-code": () => new ClaudeCodeHost(),
-      cursor: () => new CursorHost(),
-      codex: () => new CodexHost(),
-      windsurf: () => new WindsurfHost(),
-      antigravity: () => new AntigravityHost()
-    };
-  }
-});
-
-// packages/plugin-core/src/cli/command-guide.ts
-function printCommandGuide(opts = {}) {
-  const write = opts.write ?? ((line) => console.log(line));
-  const host = resolveHost().kind;
-  const isSlashHost = host === "claude-code" || host === "cursor";
-  const fmt = (cmd) => isSlashHost ? `/memlin-${cmd}` : `memlin ${cmd}`;
-  const helpRef = isSlashHost ? "`/memlin-help`" : "`memlin help`";
-  const cmdCol = Math.max(...ROWS.map((r) => fmt(r[1]).length));
-  if (opts.intro) {
-    write("");
-    write(`  What you can do from here (run ${helpRef} for this list anytime):`);
-    write("");
-  } else {
-    write("memlin \u2014 Memlin commands");
-    write("");
-  }
-  for (const [section, cmd, blurb] of ROWS) {
-    const sectionCol = section.padEnd(16);
-    const cmdStr = fmt(cmd).padEnd(cmdCol);
-    write(`    ${sectionCol} ${cmdStr}  ${blurb}`);
-  }
-}
-var ROWS;
-var init_command_guide = __esm({
-  "packages/plugin-core/src/cli/command-guide.ts"() {
-    "use strict";
-    init_host();
-    ROWS = [
-      ["Discovery", "ask", "ask your workspace anything"],
-      ["", "inbox", "review scribe proposals"],
-      ["", "scribe", "extract from this session"],
-      ["Sync", "sync", "pull + push in one shot"],
-      ["", "pull", "server \u2192 local"],
-      ["", "push", "local \u2192 server"],
-      ["", "revert", "roll a doc back a version"],
-      ["Plans", "push-plan", "upload a Claude Code plan"],
-      ["", "pull-plans", "refresh local plans"],
-      ["", "bind-plans", "assign unbound local plans"],
-      ["Actions", "actions-list", "callable workspace tools"],
-      ["", "actions-execute", "invoke one by id"],
-      ["Audit", "audit-replay", "see the bundle an agent saw"],
-      ["", "audit-explain", "why each item ranked there"],
-      ["Coordination", "handoffs", "pass work between agents"],
-      ["", "role", "assign roles to members/docs"],
-      ["Setup & health", "status", "auth, account, project, sync state"],
-      ["", "doctor", "diagnose why status is broken"],
-      ["", "add-project", "register this workspace"],
-      ["", "link", "pin a different account"]
-    ];
-  }
-});
-
-// packages/plugin-core/src/auth.ts
-import { promises as fs2 } from "node:fs";
-import path2 from "node:path";
-import os2 from "node:os";
-function tokenFilePath() {
-  return process.env.MEMLIN_TOKEN_FILE || path2.join(os2.homedir(), ".config", "memlin", "token.json");
-}
-async function readPersistedToken() {
-  try {
-    const raw = await fs2.readFile(tokenFilePath(), "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
-async function writePersistedToken(t) {
-  const file = tokenFilePath();
-  await fs2.mkdir(path2.dirname(file), { recursive: true });
-  const tmp = path2.join(path2.dirname(file), `token.json.tmp-${process.pid}`);
-  await fs2.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
-  await fs2.chmod(tmp, 384).catch(() => {
-  });
-  await fs2.rename(tmp, file);
-}
-async function startDeviceFlow() {
-  requireClientId();
-  const body2 = new URLSearchParams({
-    client_id: AUTH0_CLIENT_ID,
-    scope: SCOPE,
-    audience: AUTH0_AUDIENCE
-  });
-  const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/device/code`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body2.toString()
-  });
-  if (!res.ok) {
-    throw new Error(`device code request ${res.status}: ${await res.text()}`);
-  }
-  return await res.json();
-}
-async function pollForToken(deviceCode, intervalSec, onTick) {
-  let interval = intervalSec;
-  const startedAt = Date.now();
-  while (true) {
-    await new Promise((r) => setTimeout(r, interval * 1e3));
-    onTick?.(Math.floor((Date.now() - startedAt) / 1e3));
-    const body2 = new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-      device_code: deviceCode,
-      client_id: AUTH0_CLIENT_ID
-    });
-    const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: body2.toString()
-    });
-    const json = await res.json();
-    if (res.ok && json.access_token) {
-      return toPersisted(json);
-    }
-    if (json.error === "authorization_pending") continue;
-    if (json.error === "slow_down") {
-      interval += 1;
-      continue;
-    }
-    throw new Error(`token poll: ${json.error_description ?? json.error ?? "unknown error"}`);
-  }
-}
-async function refreshAccessToken(refreshToken) {
-  requireClientId();
-  const body2 = new URLSearchParams({
-    grant_type: "refresh_token",
-    refresh_token: refreshToken,
-    client_id: AUTH0_CLIENT_ID
-  });
-  const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body2.toString()
-  });
-  if (!res.ok) {
-    throw new Error(`refresh: ${res.status} ${await res.text()}`);
-  }
-  const json = await res.json();
-  return toPersisted(json, refreshToken);
-}
-async function getValidAccessToken() {
-  const persisted = await readPersistedToken();
-  if (!persisted) throw new Error("not signed in \u2014 run `memlin login`");
-  if (Date.now() < persisted.expires_at - 6e4) return persisted.access_token;
-  if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = doRefresh(persisted).finally(() => {
-    refreshInFlight = null;
-  });
-  return refreshInFlight;
-}
-async function doRefresh(stale) {
-  const latest = await readPersistedToken();
-  if (latest && Date.now() < latest.expires_at - 6e4) return latest.access_token;
-  const refreshToken = latest?.refresh_token ?? stale.refresh_token;
-  if (!refreshToken) {
-    throw new Error("access token expired and no refresh token saved \u2014 run `memlin login`");
-  }
-  try {
-    const fresh = await refreshAccessToken(refreshToken);
-    await writePersistedToken(fresh);
-    return fresh.access_token;
-  } catch (err2) {
-    const after = await readPersistedToken();
-    if (after && after.access_token !== stale.access_token && Date.now() < after.expires_at - 6e4) {
-      return after.access_token;
-    }
-    throw new Error(
-      `access token refresh failed (${err2 instanceof Error ? err2.message : String(err2)}) \u2014 run \`memlin login\``
-    );
-  }
-}
-function toPersisted(json, fallbackRefresh) {
-  return {
-    access_token: json.access_token,
-    refresh_token: json.refresh_token ?? fallbackRefresh,
-    expires_at: Date.now() + json.expires_in * 1e3
-  };
-}
-function requireClientId() {
-  if (!AUTH0_CLIENT_ID) {
-    throw new Error(
-      "Auth0 client id not configured. Set MEMLIN_AUTH0_CLIENT_ID env var (and optionally MEMLIN_AUTH0_DOMAIN / MEMLIN_AUTH0_AUDIENCE for self-hosted setups)."
-    );
-  }
-}
-var MEMLIN_PROD_AUTH0_DOMAIN, MEMLIN_PROD_AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_CLIENT_ID, AUTH0_AUDIENCE, SCOPE, refreshInFlight;
-var init_auth = __esm({
-  "packages/plugin-core/src/auth.ts"() {
-    "use strict";
-    MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
-    MEMLIN_PROD_AUTH0_CLIENT_ID = "fyYMQ4Cxc6Nu5juVwL8Ihqq4fgAFecG9";
-    AUTH0_DOMAIN = process.env.MEMLIN_AUTH0_DOMAIN || MEMLIN_PROD_AUTH0_DOMAIN;
-    AUTH0_CLIENT_ID = process.env.MEMLIN_AUTH0_CLIENT_ID || MEMLIN_PROD_AUTH0_CLIENT_ID;
-    AUTH0_AUDIENCE = process.env.MEMLIN_AUTH0_AUDIENCE ?? "https://api.memlin.ai";
-    SCOPE = "openid profile email offline_access";
-    refreshInFlight = null;
-  }
-});
-
-// packages/plugin-core/src/runtime-shared.ts
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash);
-    const rest = s.slice(slash);
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
-}
-function formatDurationCompact(absoluteMs) {
-  const abs = Math.abs(absoluteMs);
-  if (abs < 6e4) return `${Math.max(1, Math.round(abs / 1e3))} s`;
-  if (abs < 36e5) return `${Math.round(abs / 6e4)} min`;
-  if (abs < 864e5) return `${Math.round(abs / 36e5)} h`;
-  return `${Math.round(abs / 864e5)} d`;
-}
-function formatRelativeSigned(signedMs) {
-  if (signedMs >= 0) return `${formatDurationCompact(signedMs)} ago`;
-  return `in ${formatDurationCompact(signedMs)}`;
-}
-var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
-var init_runtime_shared = __esm({
-  "packages/plugin-core/src/runtime-shared.ts"() {
-    "use strict";
-    AGENT_KIND_HEADER = "Memlin-Agent-Kind";
-    AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
-    AGENT_VERSION_HEADER = "Memlin-Agent-Version";
-    AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
-    AGENT_EXPECTED_CAPABILITIES = {
-      "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
-      cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
-      codex: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
-      windsurf: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
-      // VS Code (apps/vscode-extension): MCP + CLI + copilot-instructions; plain
-      // VS Code has no lifecycle-hook or slash-command surface.
-      vscode: ["mcp", "cli", "rules", "resolve"],
-      gemini: ["mcp", "rules", "resolve"],
-      grok: ["mcp", "rules", "resolve"],
-      hermes: ["mcp", "resolve"],
-      openclaw: ["mcp", "rules", "resolve"],
-      antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
-      mcp: ["mcp", "resolve"],
-      "claude-ai": ["mcp", "resolve"]
-    };
-    PROVIDER_HOSTS = [
-      "github.com",
-      "gitlab.com",
-      "bitbucket.org",
-      "dev.azure.com",
-      "ssh.dev.azure.com",
-      "codeberg.org",
-      "sr.ht",
-      "git.sr.ht"
-    ];
-  }
-});
-
-// packages/plugin-core/src/memlin-api-client.ts
-import os3 from "node:os";
-function agentDevice() {
-  return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
-}
-function agentVersion() {
-  return "0.2.18";
-}
-function agentCapabilities() {
-  return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
-}
-function resolveApiUrl() {
-  return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
-}
-var DEFAULT_API_URL, MemlinApiClient;
-var init_memlin_api_client = __esm({
-  "packages/plugin-core/src/memlin-api-client.ts"() {
-    "use strict";
-    init_runtime_shared();
-    init_host();
-    DEFAULT_API_URL = "https://memlin.ai/api/v1";
-    MemlinApiClient = class {
-      constructor(cfg) {
-        this.cfg = cfg;
-      }
-      cfg;
-      // ---------- low-level ----------
-      async authHeaders(includeAccount = true) {
-        const token = await this.cfg.getAccessToken();
-        const h = {
-          Authorization: `Bearer ${token}`,
-          [AGENT_KIND_HEADER]: resolveHost().kind,
-          [AGENT_DEVICE_HEADER]: agentDevice(),
-          [AGENT_VERSION_HEADER]: agentVersion(),
-          [AGENT_CAPABILITIES_HEADER]: agentCapabilities().join(",")
-        };
-        if (includeAccount && this.cfg.accountId) {
-          h["Memlin-Account-Id"] = this.cfg.accountId;
-        }
-        return h;
-      }
-      async request(method, pathAndQuery, body2, opts = {}) {
-        const url = `${this.cfg.baseUrl.replace(/\/+$/, "")}${pathAndQuery}`;
-        const baseHeaders = await this.authHeaders(opts.includeAccount ?? true);
-        if (opts.accountId) {
-          baseHeaders["Memlin-Account-Id"] = opts.accountId;
-        }
-        const headers = {
-          ...baseHeaders,
-          Accept: "application/json"
-        };
-        if (body2 !== void 0) headers["Content-Type"] = "application/json";
-        const res = await fetch(url, {
-          method,
-          headers,
-          ...body2 !== void 0 ? { body: JSON.stringify(body2) } : {}
-        });
-        const text = await res.text();
-        let parsed = null;
-        if (text) {
-          try {
-            parsed = JSON.parse(text);
-          } catch {
-          }
-        }
-        if (!res.ok) {
-          const errMsg = parsed?.error ?? text ?? `HTTP ${res.status}`;
-          throw new Error(`${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`);
-        }
-        return parsed;
-      }
-      // ---------- endpoints ----------
-      /** GET /me — identity + account list. No account header sent (this is the discovery call). */
-      async me() {
-        return this.request("GET", "/me", void 0, { includeAccount: false });
-      }
-      /**
-       * POST /roles/assign — set a member's functional roles (backend, sre,
-       * ...). Defaults to the caller; pass user_id to assign another member
-       * (owner/admin only). Replaces the member's set wholesale.
-       */
-      async assignRoles(input, opts = {}) {
-        return this.request("POST", "/roles/assign", input, {
-          accountId: opts.accountId
-        });
-      }
-      /**
-       * POST /roles/tag — tag a document into one or more role packs. The
-       * resolver boosts the document for members holding a matching role.
-       * Replaces the document's role tags wholesale.
-       */
-      async tagDocumentRoles(input, opts = {}) {
-        return this.request("POST", "/roles/tag", input, {
-          accountId: opts.accountId
-        });
-      }
-      /**
-       * POST /documents/pin — force-include ("pin") a document, or unpin it.
-       * A pinned doc is fetched out-of-band by the resolver on every resolve in
-       * scope (no similarity threshold) and reserved budget off the top — a
-       * standing directive, not a similarity hit. Owner/admin-only server-side.
-       */
-      async setDocumentPinned(input, opts = {}) {
-        return this.request("POST", "/documents/pin", input, {
-          accountId: opts.accountId
-        });
-      }
-      /** GET /decisions/enforce — pull the guardrail rules currently
-       *  in effect for the caller's account (and optionally a project).
-       *  Returns kind='decision' docs whose `metadata.enforce` is set —
-       *  the PreToolUse handler in plugin-core's pre-tool-use-handler
-       *  module is the primary caller. */
-      async listEnforceDecisions(opts = {}) {
-        const qs = new URLSearchParams();
-        if (opts.project_id !== void 0) {
-          qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
-        }
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
-        return this.request("GET", `/decisions/enforce${suffix}`);
-      }
-      /** POST /usage/event — write a usage_events row from the client.
-       *  Server-side enforces an allowlist of event_types (today:
-       *  tool.guardrail, action.invoke, resolve.outcome, edit.activity) and
-       *  re-derives account_id and user_id from the auth context so callers
-       *  can't forge rows for other workspaces. `opts.accountId` routes the
-       *  write to a non-default account (multi-account workspaces). */
-      async writeUsageEvent(input, opts = {}) {
-        return this.request("POST", "/usage/event", input, { accountId: opts.accountId });
-      }
-      /** GET /documents — list, filtered. */
-      async listDocuments(opts = {}) {
-        const qs = new URLSearchParams();
-        if (opts.kinds) for (const k of opts.kinds) qs.append("kind", k);
-        if (opts.scopes) for (const s of opts.scopes) qs.append("scope", s);
-        if (opts.statuses) for (const s of opts.statuses) qs.append("status", s);
-        if (opts.project_id !== void 0) {
-          qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
-        }
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
-        const res = await this.request("GET", `/documents${suffix}`);
-        return res.documents.map((d) => {
-          const { status, ...rest } = d;
-          return status == null ? rest : { ...rest, status };
-        });
-      }
-      /** POST /documents — create or update a document. */
-      async writeDocument(input) {
-        return this.request("POST", "/documents", input);
-      }
-      /** GET /documents/{id}/versions — history. */
-      async listVersions(documentId) {
-        const res = await this.request(
-          "GET",
-          `/documents/${encodeURIComponent(documentId)}/versions`
-        );
-        return res.versions;
-      }
-      /** POST /documents/{id}/revert — non-destructive revert to an older version. */
-      async revertDocument(documentId, targetVersionId, commitMessage) {
-        const res = await this.request(
-          "POST",
-          `/documents/${encodeURIComponent(documentId)}/revert`,
-          {
-            target_version_id: targetVersionId,
-            ...commitMessage ? { commit_message: commitMessage } : {}
-          }
-        );
-        return res.new_version_id;
-      }
-      /** GET /inbox — pending scribe proposals (newest first), plus recently
-       *  auto-activated correction rules (so the user can see what stuck + undo).
-       *  Pass `opts.accountId` to read a different account's inbox than the pinned
-       *  one (e.g. `memlin status` showing the resolver-effective account). */
-      async listInbox(opts = {}) {
-        return this.request("GET", "/inbox", void 0, { accountId: opts.accountId });
-      }
-      /** GET /insights — pending derived insights, including auto-memory proposals. */
-      async listInsights(params = {}, opts = {}) {
-        const search = new URLSearchParams();
-        if (params.kind) search.set("kind", params.kind);
-        if (params.status) search.set("status", params.status);
-        if (params.limit) search.set("limit", String(params.limit));
-        const qs = search.toString();
-        return this.request(
-          "GET",
-          `/insights${qs ? `?${qs}` : ""}`,
-          void 0,
-          { accountId: opts.accountId }
-        );
-      }
-      async resolveInsight(insightId, action) {
-        return this.request("POST", `/insights/${encodeURIComponent(insightId)}/resolve`, { action });
-      }
-      /** POST /inbox/{id} — accept or reject a proposal. */
-      async resolveProposal(proposalId, action) {
-        return this.request("POST", `/inbox/${encodeURIComponent(proposalId)}`, {
-          action
-        });
-      }
-      async listHandoffs(opts = {}) {
-        const qs = new URLSearchParams();
-        if (opts.project_id) qs.set("project_id", opts.project_id);
-        if (opts.target_agent_kind) qs.set("target_agent_kind", opts.target_agent_kind);
-        if (opts.status) qs.set("status", opts.status);
-        if (opts.limit) qs.set("limit", String(opts.limit));
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
-        return this.request("GET", `/handoffs${suffix}`);
-      }
-      async updateHandoff(handoffId, action) {
-        return this.request("PATCH", `/handoffs/${encodeURIComponent(handoffId)}`, {
-          action
-        });
-      }
-      async createHandoff(input) {
-        return this.request("POST", "/handoffs", input);
-      }
-      /** POST /documents/search — semantic + text. */
-      async search(query, opts = {}) {
-        const res = await this.request("POST", "/documents/search", {
-          query,
-          ...opts
-        });
-        return res.hits;
-      }
-      /** GET /documents?q=... — fuzzy title/path lookup. Used by `memlin revert`. */
-      async findDocumentsByName(needle, limit = 10) {
-        const qs = new URLSearchParams({ q: needle, limit: String(limit) });
-        const res = await this.request("GET", `/documents?${qs.toString()}`);
-        return res.documents;
-      }
-      /**
-       * POST /resolve — the marquee context-assembly endpoint.
-       *
-       * `cwd` and `git_remote` let the server infer the caller's active component
-       * (when the project has any defined) and apply a soft +0.15 boost to
-       * docs tagged to that component. Both are optional; omitting them yields
-       * the same project-wide ranking we used pre-component-awareness.
-       */
-      async resolve(args2, opts = {}) {
-        return this.request("POST", "/resolve", args2, {
-          accountId: opts.accountId
-        });
-      }
-      /**
-       * GET /account — name/tier/kind for the current account.
-       *
-       * Pass `opts.accountId` to target an account other than the pinned one.
-       * `memlin status` uses this to show the resolver-effective account in a
-       * multi-account workspace, so the returned `id` and `name` always describe
-       * the same account (no global-default/pinned-name mismatch).
-       */
-      async getAccount(opts = {}) {
-        return this.request("GET", "/account", void 0, { accountId: opts.accountId });
-      }
-      /**
-       * POST /projects/resolve — server-side project resolution.
-       *
-       * Returns `account_id` when a project matches in any account the user
-       * has access to (via the JWT's memlin_account_ids claim) — not just the
-       * one pinned in config. Callers use the returned account_id to retarget
-       * the actual resolve / write call to the right backend.
-       */
-      async resolveProject(input) {
-        return this.request("POST", "/projects/resolve", input);
-      }
-      /**
-       * POST /deploy-guard — acquire or release the per-project deploy lease.
-       *
-       * The PreToolUse deploy hook calls `acquire` before a deploy command runs;
-       * the PostToolUse hook calls `release` after. `acquired: false` means another
-       * session already holds an active lease (the hook then warns or blocks).
-       * project_id is passed explicitly — the hook resolves it from cwd first.
-       */
-      async deployGuard(input, opts = {}) {
-        return this.request("POST", "/deploy-guard", input, { accountId: opts.accountId });
-      }
-      /**
-       * POST /edit-guard — real-time, pre-edit file-collision check.
-       *
-       * The PreToolUse hook calls this before an Edit/Write/MultiEdit, passing the
-       * repo-relative path(s) about to change. The server reads the same
-       * `edit.activity` feed the resolver's recent_file_edits uses and returns any
-       * LIVE collisions — other sessions that edited the same path within the last
-       * ~10 min — so the hook can warn or block. Read-only; never mutates.
-       * project_id is passed explicitly (the hook resolves it from cwd first).
-       */
-      async editGuard(input, opts = {}) {
-        return this.request("POST", "/edit-guard", input, { accountId: opts.accountId });
-      }
-      /** GET /audit/<id>/replay — reconstruct a past resolve's exact bundle. */
-      async replayAudit(auditId) {
-        return this.request("GET", `/audit/${auditId}/replay`);
-      }
-      /** GET /audit/<id>/explain — per-item decomposition of a past resolve's
-       *  ranking arithmetic (similarity, kind weight, component boost, rerank,
-       *  decay) plus human-readable reasons. The "homework, shown" companion
-       *  to /replay. */
-      async explainAudit(auditId) {
-        return this.request("GET", `/audit/${auditId}/explain`);
-      }
-      /** GET /actions — list approved actions in the workspace. Same shape
-       *  the memlin_actions_list MCP tool returns. */
-      async listActions(opts = {}) {
-        const q = [];
-        if (opts.filter) q.push(`filter=${encodeURIComponent(opts.filter)}`);
-        if (opts.limit !== void 0) q.push(`limit=${opts.limit}`);
-        const qs = q.length > 0 ? `?${q.join("&")}` : "";
-        const { actions } = await this.request("GET", `/actions${qs}`);
-        return actions;
-      }
-      /** POST /actions/<id>/execute — invoke a callable action by id with
-       *  validated input. Returns the result + audit_id. */
-      async executeAction(actionId, input) {
-        return this.request("POST", `/actions/${actionId}/execute`, { input });
-      }
-      /** POST /prompt-ci — run Prompt CI regression tests for a skill. */
-      async runPromptCi(skillId, content) {
-        return this.request("POST", "/prompt-ci", { skill_id: skillId, content });
-      }
-      /**
-       * POST /memory/propose — extract memory candidates from a recent agent
-       * turn and queue them for user accept/dismiss. Fire-and-forget from the
-       * Stop hook's perspective; the server runs a cheap Haiku extraction and
-       * silently no-ops if it finds nothing worth remembering.
-       */
-      async proposeMemory(input, opts = {}) {
-        return this.request("POST", "/memory/propose", input, { accountId: opts.accountId });
-      }
-      /**
-       * POST /scribe/diff — Phase 2 auto-capture from a single git commit.
-       *
-       * Called by the PostToolUse hook after the agent runs `git commit`.
-       * The server reads the commit message + diff, asks Haiku to extract
-       * any decision/memory/skill baked into the change, and persists
-       * results as documents with metadata.status='proposed'. They appear
-       * in the user's inbox until accepted.
-       */
-      async scribeDiff(input, opts = {}) {
-        return this.request("POST", "/scribe/diff", input, { accountId: opts.accountId });
-      }
-      /**
-       * POST /scribe/session — Phase 1 auto-capture from a Claude Code
-       * session transcript. Server slices the transcript (tail-biased
-       * when too large), runs Haiku extraction, persists proposals.
-       *
-       * Triggered manually by /memlin-scribe today; an auto-triggered
-       * variant on Stop with a 15-min debounce is a fast follow-up.
-       */
-      async scribeSession(input, opts = {}) {
-        return this.request("POST", "/scribe/session", input, { accountId: opts.accountId });
-      }
-      /**
-       * POST /plans — upload a Claude Code plan as a first-class plan document.
-       *
-       * Server resolves project from cwd/git_remote (when not pinned), writes
-       * the document via writeDocument (auto-embedding), and inserts a
-       * companion plans row with status='drafted'. Returns the document_id
-       * + version metadata for downstream URL construction.
-       */
-      async pushPlan(input) {
-        return this.request("POST", "/plans", input);
-      }
-      /**
-       * GET /plans — list plans for the account, optionally filtered by
-       * `updated_after` (epoch ms) for cheap delta polling. Used by the
-       * UserPromptSubmit + SessionStart hooks to keep ~/.claude/plans/ in
-       * sync with the server.
-       */
-      async listPlans(opts = {}) {
-        const qs = new URLSearchParams();
-        if (opts.status) qs.set("status", opts.status);
-        if (opts.project_id !== void 0) {
-          qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
-        }
-        if (opts.updated_after) qs.set("updated_after", opts.updated_after);
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
-        const res = await this.request(
-          "GET",
-          `/plans${suffix}`
-        );
-        return res.plans;
-      }
-      /** GET /plans/<id> — full plan detail (status + body + bundle ref). */
-      async getPlan(id) {
-        return this.request("GET", `/plans/${encodeURIComponent(id)}`);
-      }
-      /**
-       * PATCH /plans/<id> — replace the plan's body (creates a new
-       * document_version, auto-embeds). Used by the PostToolUse hook to push
-       * Claude Code edits back up to Memlin.
-       */
-      async updatePlan(id, input) {
-        return this.request("PATCH", `/plans/${encodeURIComponent(id)}`, input);
-      }
-      /**
-       * POST /projects — create a project in the caller's current account.
-       * Used by `memlin init` to register a Claude Code workspace.
-       */
-      async createProject(input, opts = {}) {
-        return this.request("POST", "/projects", input, { accountId: opts.accountId });
-      }
-      /**
-       * PATCH /projects/{id} — attach/detach local paths, set/clear the git
-       * remote, or rename. Owner/admin only; 409 when a path or remote is
-       * already attached to another project in the account. Backs
-       * `memlin attach-path` and add-project's attach-instead-of-fork offer.
-       */
-      async patchProject(projectId, input, opts = {}) {
-        return this.request("PATCH", `/projects/${encodeURIComponent(projectId)}`, input, {
-          accountId: opts.accountId
-        });
-      }
-      /** POST /decisions/{id}/verify — record an outcome on the decision
-       *  ledger. Verdicts surface on every future resolve of the decision. */
-      async verifyDecision(decisionId, input, opts = {}) {
-        return this.request("POST", `/decisions/${encodeURIComponent(decisionId)}/verify`, input, {
-          accountId: opts.accountId
-        });
-      }
-      /** GET /decisions/review-due — decisions whose review date arrived. */
-      async listReviewDueDecisions(opts = {}) {
-        const qs = opts.projectId ? `?project_id=${encodeURIComponent(opts.projectId)}` : "";
-        return this.request("GET", `/decisions/review-due${qs}`, void 0, {
-          accountId: opts.accountId
-        });
-      }
-      /**
-       * POST /ask — natural-language Q&A over the team's workspace memory.
-       * Server resolves a bundle, sends it to Claude, returns answer +
-       * citations + audit_id. Used by `memlin ask` CLI and the web /ask
-       * panel.
-       */
-      async ask(input, opts = {}) {
-        return this.request("POST", "/ask", input, { accountId: opts.accountId });
-      }
-      /** GET /projects — list every project in the current account. */
-      async listProjects(opts = {}) {
-        const res = await this.request("GET", "/projects", void 0, { accountId: opts.accountId });
-        return res.projects;
-      }
-    };
-  }
-});
-
-// packages/plugin-core/src/resolver-skill.ts
-var RESOLVER_SKILL_MD;
-var init_resolver_skill = __esm({
-  "packages/plugin-core/src/resolver-skill.ts"() {
-    "use strict";
-    RESOLVER_SKILL_MD = `---
-name: Memlin
-description: Memlin auto-resolves project context (skills, memory, approved goals, schemas) into your prompt before you process it. This skill tells you how to *use* that context, and when to fall back to invoking memlin_resolve_task manually.
----
-
-# Memlin Resolver
-
-The Memlin plugin's UserPromptSubmit hook auto-injects a \`<memlin-resolved-context>\`
-block into every non-trivial user prompt \u2014 *before* you see the prompt. The
-block contains the same scope-correct, citation-bearing bundle that
-\`memlin_resolve_task\` would return: top skills, memory, approved goals,
-schemas, kind-weighted and threshold-filtered to ~4k tokens.
-
-## How to use the pre-resolved bundle
-
-1. **Read it as authoritative project context.** It's already scope-filtered
-   (project + workspace, RLS-enforced server-side) \u2014 you don't need to ask the
-   user for access.
-2. **Apply the primary skill's framework** first. Use supporting skills for
-   complementary perspectives. **Treat memory facts as project ground truth**
-   (more authoritative than your training data when they conflict). **Honor
-   goals as constraints.** **Validate against any schemas.**
-3. **Cite your sources.** When stating a fact or following a constraint from
-   the bundle, mention the source path + version. Example: "Per
-   \`goals/auth-required.md\` v1, every new endpoint requires authn."
-4. **Don't re-invoke \`memlin_resolve_task\`** for the current user message \u2014
-   the bundle is already in your context. Re-invoking just wastes a tool call.
-
-## When to invoke memlin_search or memlin_read_memory yourself
-
-The auto-resolve covers the task at hand. Use the MCP tools directly when you
-need to *explore* beyond the resolved bundle:
-
-- The user asks "what does Memlin know about X?" where X is broader than the
-  current task \u2192 \`memlin_search\` with X as the query.
-- You need ALL of something (e.g. "list all approved goals in this project")
-  \u2192 \`memlin_read_memory\` with the appropriate filter.
-- You want to read the full body of a doc the bundle only cited a snippet of
-  \u2192 \`memlin_get_document\` with the doc id.
-
-## Empty bundle
-
-If the resolved-context block is missing or empty, it means either (a) the
-user's prompt was trivial enough that the hook skipped it, or (b) nothing in
-the workspace cleared the per-kind similarity threshold for this task.
-Proceed with your general expertise and note that you didn't find specialized
-context for this task.
-`;
-  }
-});
-
-// packages/plugin-core/src/plugin-install.ts
-import { promises as fs3 } from "node:fs";
-import { existsSync } from "node:fs";
-import path3 from "node:path";
-import os4 from "node:os";
-function defaultUserSettingsPaths() {
-  const claudeDir = path3.join(os4.homedir(), ".claude");
-  return { claudeDir, settingsFile: path3.join(claudeDir, "settings.json") };
-}
-async function readClaudeUserSettings(paths) {
-  const p = paths ?? defaultUserSettingsPaths();
-  if (!existsSync(p.settingsFile)) return null;
-  let raw;
-  try {
-    raw = await fs3.readFile(p.settingsFile, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-async function ensureUserScopePluginEnabled(paths) {
-  const p = paths ?? defaultUserSettingsPaths();
-  try {
-    await fs3.mkdir(p.claudeDir, { recursive: true });
-    let current = {};
-    if (existsSync(p.settingsFile)) {
-      const raw = await fs3.readFile(p.settingsFile, "utf8");
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") current = parsed;
-      } catch (err2) {
-        return {
-          status: "failed",
-          settingsFile: p.settingsFile,
-          detail: `existing settings.json isn't valid JSON: ${err2 instanceof Error ? err2.message : String(err2)}`
-        };
-      }
-    }
-    const alreadyEnabled = current.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
-    const marketplaceKnown = !!current.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
-    if (alreadyEnabled && marketplaceKnown) {
-      return {
-        status: "already-enabled",
-        settingsFile: p.settingsFile,
-        detail: "plugin already enabled at user scope"
-      };
-    }
-    const next = {
-      ...current,
-      enabledPlugins: {
-        ...current.enabledPlugins ?? {},
-        [MEMLIN_PLUGIN_KEY]: true
-      }
-    };
-    let touchedMarketplace = false;
-    if (!marketplaceKnown) {
-      next.extraKnownMarketplaces = {
-        ...current.extraKnownMarketplaces ?? {},
-        [MEMLIN_MARKETPLACE_KEY]: { source: { ...MEMLIN_MARKETPLACE_SOURCE } }
-      };
-      touchedMarketplace = true;
-    }
-    await fs3.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
-    return {
-      status: touchedMarketplace ? "enabled-with-marketplace" : "enabled",
-      settingsFile: p.settingsFile,
-      detail: touchedMarketplace ? "enabled plugin + registered Memlin marketplace" : "enabled plugin (marketplace already registered)"
-    };
-  } catch (err2) {
-    return {
-      status: "failed",
-      settingsFile: p.settingsFile,
-      detail: err2 instanceof Error ? err2.message : String(err2)
-    };
-  }
-}
-function inspectUserScopePlugin(settings) {
-  if (!settings) return { status: "unconfigured", marketplaceRegistered: false };
-  const enabled = settings.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
-  const market = !!settings.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
-  return { status: enabled ? "enabled" : "disabled", marketplaceRegistered: market };
-}
-var MEMLIN_PLUGIN_KEY, MEMLIN_MARKETPLACE_KEY, MEMLIN_MARKETPLACE_SOURCE;
-var init_plugin_install = __esm({
-  "packages/plugin-core/src/plugin-install.ts"() {
-    "use strict";
-    MEMLIN_PLUGIN_KEY = "memlin@memlin-ai";
-    MEMLIN_MARKETPLACE_KEY = "memlin-ai";
-    MEMLIN_MARKETPLACE_SOURCE = {
-      source: "github",
-      repo: "memlin-ai/memlin-claude-plugin"
-    };
-  }
-});
-
-// packages/plugin-core/src/cli/login.ts
-var login_exports = {};
-import { promises as fs4 } from "node:fs";
-import path4 from "node:path";
-import os5 from "node:os";
-async function installResolverSkill() {
-  try {
-    try {
-      const stat = await fs4.stat(RESOLVER_SKILL_FILE);
-      if (stat.size > 0) {
-        return { status: "kept", path: RESOLVER_SKILL_FILE };
-      }
-    } catch {
-    }
-    await fs4.mkdir(RESOLVER_SKILL_DIR, { recursive: true });
-    await fs4.writeFile(RESOLVER_SKILL_FILE, RESOLVER_SKILL_MD, "utf8");
-    return { status: "installed", path: RESOLVER_SKILL_FILE };
-  } catch (e) {
-    return {
-      status: "failed",
-      path: RESOLVER_SKILL_FILE,
-      error: e instanceof Error ? e.message : String(e)
-    };
-  }
-}
-function parseLoginArgs(argv) {
-  const out2 = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--account" || a === "-a") {
-      const v = argv[++i];
-      if (!v) return { error: "--account requires a value" };
-      out2.requestedAccount = v;
-    } else if (a === "--help" || a === "-h") {
-      return { error: "help" };
-    } else if (a?.startsWith("--")) {
-      return { error: `unknown flag: ${a}` };
-    }
-  }
-  return out2;
-}
-function pickAccount(accounts, needle) {
-  const exact = accounts.find((a) => a.id === needle);
-  if (exact) return exact;
-  const lower = needle.toLowerCase();
-  const matches = accounts.filter((a) => a.name.toLowerCase().includes(lower));
-  if (matches.length === 1) return matches[0];
-  return null;
-}
-async function main() {
-  const parsed = parseLoginArgs(process.argv.slice(2));
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      console.log("memlin login [--account <uuid-or-name>]");
-      console.log("");
-      console.log("Authenticate to Memlin and pin the active account.");
-      console.log("  --account <v>   Override server-side default_account_id with this account");
-      console.log("                  (must be one you're a member of)");
-      process.exit(0);
-    }
-    console.error(`memlin login: ${parsed.error}`);
-    process.exit(2);
-  }
-  const { requestedAccount } = parsed;
-  console.log("memlin login");
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  const device = await startDeviceFlow();
-  console.log("");
-  console.log("  Open this URL in your browser to sign in:");
-  console.log("");
-  console.log(`    \x1B[1m${device.verification_uri_complete}\x1B[0m`);
-  console.log("");
-  console.log(`  Verification code: \x1B[1m${device.user_code}\x1B[0m`);
-  console.log(`  Expires in ${Math.floor(device.expires_in / 60)} min.`);
-  console.log("");
-  process.stdout.write("  waiting for approval");
-  const token = await pollForToken(device.device_code, device.interval, (elapsed) => {
-    process.stdout.write(elapsed % 5 === 0 ? "." : "");
-  });
-  process.stdout.write("\n\n");
-  await writePersistedToken(token);
-  const apiUrl = resolveApiUrl();
-  const probe = new MemlinApiClient({
-    baseUrl: apiUrl,
-    getAccessToken: async () => token.access_token,
-    accountId: "00000000-0000-0000-0000-000000000000"
-  });
-  let me;
-  try {
-    me = await probe.me();
-  } catch (err2) {
-    console.error(
-      "memlin login: signed in to Auth0, but the Memlin API rejected the token.\n  Endpoint: " + apiUrl + "\n  Error: " + (err2 instanceof Error ? err2.message : String(err2))
-    );
-    process.exit(1);
-  }
-  if (me.accounts.length === 0) {
-    console.error(
-      "No Memlin workspaces on this user. Open https://memlin.ai once to bootstrap a personal workspace, then re-run `memlin login`."
-    );
-    process.exit(1);
-  }
-  let accountId;
-  let accountName;
-  if (requestedAccount) {
-    const picked = pickAccount(
-      me.accounts.map((a) => ({ id: a.id, name: a.name })),
-      requestedAccount
-    );
-    if (!picked) {
-      console.error(
-        `memlin login: --account "${requestedAccount}" doesn't match any account you're a member of.`
-      );
-      console.error("Your accounts:");
-      for (const a of me.accounts) {
-        console.error(`  ${a.id}  ${a.name}`);
-      }
-      process.exit(1);
-    }
-    accountId = picked.id;
-    accountName = picked.name;
-  } else {
-    accountId = me.default_account_id ?? me.accounts[0].id;
-    accountName = me.accounts.find((a) => a.id === accountId)?.name ?? "(unknown)";
-  }
-  const config = {
-    api_url: apiUrl,
-    account_id: accountId,
-    user_id: me.user_id,
-    project_id: null
-  };
-  await fs4.mkdir(CONFIG_DIR, { recursive: true });
-  await fs4.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
-  const displayName = me.display_name ?? me.email ?? me.user_id.slice(0, 8) + "\u2026";
-  console.log(`  \u2713 signed in as ${displayName}`);
-  console.log(`  \u2713 workspace "${accountName}"`);
-  const installed = await installResolverSkill();
-  if (installed.status === "installed") {
-    console.log(`  \u2713 installed Memlin resolver skill (${installed.path})`);
-  } else if (installed.status === "kept") {
-    console.log(`  \u2713 Memlin resolver skill already present (${installed.path})`);
-  } else {
-    console.log(
-      `  ! couldn't install Memlin resolver skill at ${installed.path}: ${installed.error ?? "unknown error"}`
-    );
-  }
-  const pluginInstall = await ensureUserScopePluginEnabled();
-  if (pluginInstall.status === "enabled") {
-    console.log(`  \u2713 enabled Memlin plugin user-wide (${pluginInstall.settingsFile})`);
-    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
-  } else if (pluginInstall.status === "enabled-with-marketplace") {
-    console.log(`  \u2713 enabled Memlin plugin + registered marketplace (${pluginInstall.settingsFile})`);
-    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
-  } else if (pluginInstall.status === "already-enabled") {
-    console.log(`  \u2713 Memlin plugin already enabled user-wide (${pluginInstall.settingsFile})`);
-  } else {
-    console.log(`  ! couldn't enable Memlin plugin user-wide: ${pluginInstall.detail}`);
-    console.log(`    Run \`/plugin install memlin@memlin-ai\` in any workspace to enable manually.`);
-  }
-  console.log("");
-  console.log("  Run `memlin pull` to fetch your memory, skills, and goals.");
-  printCommandGuide({ intro: true });
-}
-var CONFIG_DIR, CONFIG_FILE, RESOLVER_SKILL_DIR, RESOLVER_SKILL_FILE;
-var init_login = __esm({
-  "packages/plugin-core/src/cli/login.ts"() {
-    "use strict";
-    init_auth();
-    init_memlin_api_client();
-    init_resolver_skill();
-    init_plugin_install();
-    init_command_guide();
-    CONFIG_DIR = path4.join(os5.homedir(), ".config", "memlin");
-    CONFIG_FILE = path4.join(CONFIG_DIR, "config.json");
-    RESOLVER_SKILL_DIR = path4.join(os5.homedir(), ".claude", "skills", "memlin");
-    RESOLVER_SKILL_FILE = path4.join(RESOLVER_SKILL_DIR, "SKILL.md");
-    main().catch((err2) => {
-      console.error("memlin login failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
-    });
-  }
-});
-
-// packages/plugin-core/src/workspace-binding.ts
-import { promises as fs5 } from "node:fs";
-import path5 from "node:path";
-async function findWorkspaceBinding(startDir) {
-  let dir = path5.resolve(startDir);
-  for (let i = 0; i < 64; i++) {
-    const candidate = path5.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
-    try {
-      const raw = await fs5.readFile(candidate, "utf8");
-      const parsed = JSON.parse(raw);
-      if (typeof parsed.account_id === "string" && parsed.account_id) {
-        return {
-          binding: {
-            account_id: parsed.account_id,
-            project_id: parsed.project_id ?? null,
-            account_name: parsed.account_name
-          },
-          workspaceRoot: dir
-        };
-      }
-    } catch {
-    }
-    const parent = path5.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-  return null;
-}
-async function writeWorkspaceBinding(workspaceRoot, binding) {
-  const dir = path5.join(path5.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
-  await fs5.mkdir(dir, { recursive: true });
-  const file = path5.join(dir, WORKSPACE_BINDING_FILE);
-  const body2 = JSON.stringify(
-    {
-      account_id: binding.account_id,
-      project_id: binding.project_id ?? null,
-      account_name: binding.account_name
-    },
-    null,
-    2
-  );
-  await fs5.writeFile(file, body2 + "\n", "utf8");
-  return file;
-}
-async function clearWorkspaceBinding(workspaceRoot) {
-  const file = path5.join(path5.resolve(workspaceRoot), WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
-  try {
-    await fs5.unlink(file);
-    return true;
-  } catch {
-    return false;
-  }
-}
-var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE;
-var init_workspace_binding = __esm({
-  "packages/plugin-core/src/workspace-binding.ts"() {
-    "use strict";
-    WORKSPACE_DIR_NAME = ".memlin";
-    WORKSPACE_BINDING_FILE = "config.json";
-  }
-});
-
-// packages/plugin-core/src/client.ts
-import { promises as fs6 } from "node:fs";
-import path6 from "node:path";
-import os6 from "node:os";
-async function readConfig() {
-  try {
-    const raw = await fs6.readFile(CONFIG_FILE2, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed.account_id || !parsed.user_id) return null;
-    return {
-      api_url: parsed.api_url ?? DEFAULT_API_URL,
-      account_id: parsed.account_id,
-      user_id: parsed.user_id,
-      project_id: parsed.project_id ?? null
-    };
-  } catch {
-    return null;
-  }
-}
-async function writeToken(token) {
-  const persisted = {
-    access_token: token.access_token,
-    refresh_token: token.refresh_token,
-    expires_at: token.expires_at ?? Date.now() + 24 * 36e5
-    // 24h fallback
-  };
-  await writePersistedToken(persisted);
-}
-async function getApi(opts = {}) {
-  const config = await readConfig();
-  if (!config) return null;
-  try {
-    await getValidAccessToken();
-  } catch {
-    return null;
-  }
-  const cwd = opts.cwd ?? process.cwd();
-  const overlay = await findWorkspaceBinding(cwd);
-  const { workspaceBound, workspaceRoot } = applyWorkspaceOverlay(config, overlay);
-  const apiUrl = process.env.MEMLIN_API_URL?.trim() || config.api_url || resolveApiUrl();
-  const api = new MemlinApiClient({
-    baseUrl: apiUrl,
-    getAccessToken: getValidAccessToken,
-    accountId: config.account_id
-  });
-  return { api, config, workspaceBound, workspaceRoot };
-}
-function applyWorkspaceOverlay(config, overlay) {
-  if (!overlay) return { workspaceBound: false, workspaceRoot: null };
-  config.account_id = overlay.binding.account_id;
-  if (overlay.binding.project_id !== void 0) {
-    config.project_id = overlay.binding.project_id;
-  }
-  return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
-}
-var CONFIG_DIR2, CONFIG_FILE2, TOKEN_FILE;
-var init_client = __esm({
-  "packages/plugin-core/src/client.ts"() {
-    "use strict";
-    init_auth();
-    init_memlin_api_client();
-    init_workspace_binding();
-    CONFIG_DIR2 = path6.join(os6.homedir(), ".config", "memlin");
-    CONFIG_FILE2 = path6.join(CONFIG_DIR2, "config.json");
-    TOKEN_FILE = path6.join(CONFIG_DIR2, "token.json");
-  }
-});
-
-// packages/plugin-core/src/cli/init.ts
-var init_exports = {};
-import readline from "node:readline/promises";
-import { promises as fs7 } from "node:fs";
-import path7 from "node:path";
-import os7 from "node:os";
-async function main2() {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  async function ask(prompt, fallback) {
-    const hint = fallback ? ` [${fallback}]` : "";
-    const ans = (await rl.question(`${prompt}${hint}: `)).trim();
-    return ans || fallback || "";
-  }
-  console.log("memlin init  (paste-a-token fallback \u2014 prefer `memlin login`)");
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  console.log("");
-  const apiUrl = await ask("Memlin API URL", process.env.MEMLIN_API_URL ?? DEFAULT_API_URL);
-  const access_token = await ask("Access token (Auth0 JWT)");
-  let account_id = "";
-  let user_id = "";
-  try {
-    const parts = access_token.split(".");
-    if (parts.length < 2 || !parts[1]) throw new Error("not a JWT");
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    const ids = payload.memlin_account_ids;
-    account_id = payload.memlin_default_account_id ?? ids?.[0] ?? "";
-    user_id = payload.sub ?? "";
-  } catch {
-    console.error("couldn't decode access token JWT \u2014 paste it raw, no surrounding quotes.");
-    rl.close();
-    process.exit(1);
-  }
-  if (!account_id || !user_id) {
-    console.error(
-      "token is missing memlin_account_ids / sub. Make sure the Auth0 Action is deployed."
-    );
-    rl.close();
-    process.exit(1);
-  }
-  rl.close();
-  const config = {
-    api_url: apiUrl,
-    account_id,
-    user_id,
-    project_id: null
-  };
-  await fs7.mkdir(CONFIG_DIR3, { recursive: true });
-  await fs7.writeFile(CONFIG_FILE3, JSON.stringify(config, null, 2), "utf8");
-  await writeToken({ access_token });
-  console.log("");
-  console.log(`\u2713 wrote ${CONFIG_FILE3}`);
-  console.log(`\u2713 account ${account_id.slice(0, 8)}\u2026  user ${user_id.slice(0, 12)}\u2026`);
-  console.log("");
-  console.log("Try: `node ~/.claude/plugins/memlin/dist/cli/status.js`");
-}
-var CONFIG_DIR3, CONFIG_FILE3;
-var init_init = __esm({
-  "packages/plugin-core/src/cli/init.ts"() {
-    "use strict";
-    init_client();
-    init_memlin_api_client();
-    CONFIG_DIR3 = path7.join(os7.homedir(), ".config", "memlin");
-    CONFIG_FILE3 = path7.join(CONFIG_DIR3, "config.json");
-    main2().catch((err2) => {
-      console.error("memlin init failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
-    });
-  }
-});
-
-// packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import path8 from "node:path";
-function looksLikePluginCache(cwd) {
-  return cwd.includes("/.claude/plugins/cache/") || cwd.includes("/.cursor/plugins/cache/");
-}
-function runtimeCwd(fallback = process.cwd()) {
-  for (const name of WORKSPACE_ENV_VARS) {
-    const raw = process.env[name]?.trim();
-    if (raw && path8.isAbsolute(raw)) return path8.resolve(raw);
-  }
-  return path8.resolve(fallback);
-}
-function runtimeCwdForDisplay(fallback = process.cwd()) {
-  const processCwd = path8.resolve(fallback);
-  const cwd = runtimeCwd(fallback);
-  return {
-    cwd,
-    source: cwd !== processCwd ? "env" : "process",
-    processCwd,
-    pluginCache: looksLikePluginCache(processCwd)
-  };
-}
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path8.resolve(cwd);
-  const remote = readGitRemote(cwd);
-  try {
-    const result = await api.resolveProject({
-      git_remote: remote,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason
-      };
-    }
-  } catch {
-  }
-  if (configProjectId) {
-    return {
-      project_id: configProjectId,
-      project_name: null,
-      account_id: null,
-      reason: "config"
-    };
-  }
-  return { project_id: null, project_name: null, account_id: null, reason: "none" };
-}
-function readGitRemote(cwd) {
-  try {
-    const url = execSync("git remote get-url origin", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
-}
-function isWorkspaceActive(input) {
-  return Boolean(input.resolvedProjectId) || input.workspaceBound;
-}
-function effectiveAccountId(input) {
-  return input.resolvedAccountId ?? input.configAccountId;
-}
-var WORKSPACE_ENV_VARS;
-var init_project_resolver = __esm({
-  "packages/plugin-core/src/project-resolver.ts"() {
-    "use strict";
-    init_runtime_shared();
-    WORKSPACE_ENV_VARS = [
-      // Claude Code exposes the original project dir to hooks/plugin commands.
-      "CLAUDE_PROJECT_DIR",
-      // Cursor/plugin shims and local tests can set this explicitly.
-      "CURSOR_WORKSPACE_ROOT",
-      "CURSOR_PROJECT_ROOT",
-      "MEMLIN_WORKSPACE_ROOT",
-      // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
-      "INIT_CWD"
-    ];
-  }
-});
-
-// packages/plugin-core/src/state.ts
-import { promises as fs8 } from "node:fs";
-import path9 from "node:path";
-import os8 from "node:os";
-import crypto from "node:crypto";
-async function readState() {
-  try {
-    const raw = await fs8.readFile(STATE_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return { ...EMPTY };
-  }
-}
-async function writeState(state) {
-  await fs8.mkdir(path9.dirname(STATE_FILE), { recursive: true });
-  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs8.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await fs8.rename(tmp, STATE_FILE);
-}
-function hash(content) {
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-async function recordLastResolve(entry) {
-  try {
-    const state = await readState();
-    state.last_resolve = entry;
-    await writeState(state);
-  } catch {
-  }
-}
-function diffStates(prev, current) {
-  const currentByPath = new Map(current.map((c) => [c.path, c.hash]));
-  const prevByPath = new Map(Object.entries(prev.documents).map(([p, s]) => [p, s.content_hash]));
-  const added = [];
-  const modified = [];
-  const deleted = [];
-  for (const [p, h] of currentByPath) {
-    const prevHash = prevByPath.get(p);
-    if (!prevHash) added.push(p);
-    else if (prevHash !== h) modified.push(p);
-  }
-  for (const p of prevByPath.keys()) {
-    if (!currentByPath.has(p)) deleted.push(p);
-  }
-  return { added, modified, deleted };
-}
-var STATE_FILE, EMPTY;
-var init_state = __esm({
-  "packages/plugin-core/src/state.ts"() {
-    "use strict";
-    STATE_FILE = path9.join(os8.homedir(), ".config", "memlin", "state.json");
-    EMPTY = { documents: {} };
-  }
-});
-
-// packages/plugin-core/src/local-scan.ts
-import { promises as fs9 } from "node:fs";
-import { existsSync as existsSync2 } from "node:fs";
-import path10 from "node:path";
-async function scanLocal(opts = {}) {
-  const out2 = [];
-  const root = opts.rootOverride ?? resolveHost().homeDir();
-  const memDir = path10.join(root, "memory");
-  if (existsSync2(memDir)) {
-    for (const file of await fs9.readdir(memDir)) {
-      if (!file.endsWith(".md") || file === "MEMORY.md") continue;
-      const abs = path10.join(memDir, file);
-      const content = await fs9.readFile(abs, "utf8");
-      out2.push({
-        path: `memory/${file}`,
-        abs_path: abs,
-        kind: "memory",
-        content,
-        hash: hash(content)
-      });
-    }
-  }
-  const skillsDir = path10.join(root, "skills");
-  if (existsSync2(skillsDir)) {
-    const entries = await fs9.readdir(skillsDir, { withFileTypes: true });
-    for (const e of entries) {
-      if (!e.isDirectory()) continue;
-      const skillMd = path10.join(skillsDir, e.name, "SKILL.md");
-      if (!existsSync2(skillMd)) continue;
-      const content = await fs9.readFile(skillMd, "utf8");
-      out2.push({
-        path: `skills/${e.name}/SKILL.md`,
-        abs_path: skillMd,
-        kind: "skill",
-        content,
-        hash: hash(content)
-      });
-    }
-  }
-  if (opts.includePlans) {
-    const plansDir2 = resolveHost().plansDir();
-    if (existsSync2(plansDir2)) {
-      for (const file of await fs9.readdir(plansDir2)) {
-        if (!file.endsWith(".md")) continue;
-        const abs = path10.join(plansDir2, file);
-        const content = await fs9.readFile(abs, "utf8");
-        out2.push({
-          path: `plans/${file}`,
-          abs_path: abs,
-          kind: "plan",
-          content,
-          hash: hash(content)
-        });
-      }
-    }
-  }
-  return out2;
-}
-var init_local_scan = __esm({
-  "packages/plugin-core/src/local-scan.ts"() {
-    "use strict";
-    init_state();
-    init_host();
-  }
-});
-
-// packages/plugin-core/src/plan-sync.ts
-import { promises as fs10 } from "node:fs";
-import path11 from "node:path";
-function homeBase() {
-  return resolveHost().homeDir();
-}
-function plansDir() {
-  return resolveHost().plansDir();
-}
-async function pullPlans(api, opts = {}) {
-  const fetchOpts = {};
-  if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
-  if (opts.since) fetchOpts.updated_after = opts.since;
-  const list = await api.listPlans(fetchOpts);
-  await fs10.mkdir(plansDir(), { recursive: true });
-  const state = await readState();
-  const pulled = [];
-  const unchanged = [];
-  const removed = [];
-  const isFullSync = !opts.since;
-  const seenPaths = /* @__PURE__ */ new Set();
-  for (const p of list) {
-    const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
-    const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path11.join("plans", filename);
-    const full = path11.join(plansDir(), filename);
-    seenPaths.add(localPath);
-    let body2;
-    try {
-      const detail = await api.getPlan(p.document_id);
-      body2 = detail.body;
-    } catch {
-      continue;
-    }
-    const fileContent = formatPlanFile(p.title, body2, p.status, {
-      documentId: p.document_id,
-      projectId: p.project_id
-    });
-    const contentHash = hash(fileContent);
-    const existing = state.documents[localPath];
-    if (existing?.content_hash === contentHash) {
-      unchanged.push(localPath);
-      continue;
-    }
-    await fs10.writeFile(full, fileContent, "utf8");
-    pulled.push(localPath);
-    state.documents[localPath] = {
-      document_id: p.document_id,
-      version_id: "",
-      version_number: p.version_number,
-      content_hash: contentHash,
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: p.scope ?? "personal",
-      kind: "plan"
-    };
-  }
-  if (isFullSync) {
-    for (const tracked of Object.keys(state.documents)) {
-      if (!tracked.startsWith("plans/")) continue;
-      if (seenPaths.has(tracked)) continue;
-      delete state.documents[tracked];
-    }
-  }
-  await writeState(state);
-  return { pulled, unchanged, removed };
-}
-function resolveTargetDocId(stateEntry, binding) {
-  return stateEntry?.document_id || binding?.documentId || void 0;
-}
-async function pushPlanFile(api, file, opts = {}) {
-  const raw = await fs10.readFile(file, "utf8");
-  const { title, body: body2, binding: existingBinding } = parsePlanFile(raw);
-  if (!body2.trim()) {
-    throw new Error("plan body is empty");
-  }
-  const relPath = path11.relative(homeBase(), file);
-  const state = await readState();
-  const existing = state.documents[relPath];
-  const targetDocId = resolveTargetDocId(existing, existingBinding);
-  if (targetDocId) {
-    const result2 = await api.updatePlan(targetDocId, {
-      body: body2,
-      title,
-      commit_message: "edit from claude-code"
-    });
-    await stampPlanFile(file, {
-      documentId: result2.document_id,
-      projectId: existingBinding?.projectId ?? null
-    });
-    const stampedUpdate = await fs10.readFile(file, "utf8").catch(() => raw);
-    state.documents[relPath] = {
-      document_id: result2.document_id,
-      version_id: existing?.version_id ?? "",
-      version_number: result2.version_number,
-      content_hash: hash(stampedUpdate),
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
-      kind: "plan"
-    };
-    await writeState(state);
-    return {
-      document_id: result2.document_id,
-      version_number: result2.version_number,
-      created: false
-    };
-  }
-  const result = await api.pushPlan({
-    title,
-    body: body2,
-    cwd: opts.cwd ?? null,
-    git_remote: opts.gitRemote ?? null
-  });
-  state.documents[relPath] = {
-    document_id: result.document_id,
-    version_id: "",
-    version_number: result.version_number,
-    content_hash: hash(raw),
-    last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-    scope: result.project_id ? "project" : "personal",
-    kind: "plan"
-  };
-  await writeState(state);
-  await stampPlanFile(file, {
-    documentId: result.document_id,
-    projectId: result.project_id
-  });
-  const stamped = await fs10.readFile(file, "utf8").catch(() => raw);
-  state.documents[relPath].content_hash = hash(stamped);
-  await writeState(state);
-  return {
-    document_id: result.document_id,
-    version_number: result.version_number,
-    created: true
-  };
-}
-async function listUnboundPlans() {
-  const out2 = [];
-  let entries;
-  try {
-    entries = await fs10.readdir(plansDir());
-  } catch {
-    return out2;
-  }
-  const state = await readState();
-  for (const f of entries) {
-    if (!f.endsWith(".md")) continue;
-    const abs = path11.join(plansDir(), f);
-    let raw;
-    let size = 0;
-    try {
-      const st = await fs10.stat(abs);
-      if (!st.isFile() || st.size === 0) continue;
-      size = st.size;
-      raw = await fs10.readFile(abs, "utf8");
-    } catch {
-      continue;
-    }
-    const relPath = path11.relative(homeBase(), abs);
-    const { title, binding } = parsePlanFile(raw);
-    if (state.documents[relPath]?.document_id || binding?.documentId) continue;
-    out2.push({ file: f, title, size });
-  }
-  return out2;
-}
-async function stampPlanFile(file, binding) {
-  let raw;
-  try {
-    raw = await fs10.readFile(file, "utf8");
-  } catch {
-    return;
-  }
-  const parsed = parsePlanFile(raw);
-  const stampLine = `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`;
-  const bodyNoStamp = parsed.body.replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "");
-  const composed = [
-    `# ${parsed.title}`,
-    "",
-    parsed.status ? `<!-- memlin-plan-status: ${parsed.status} -->` : null,
-    stampLine,
-    "",
-    bodyNoStamp.trim(),
-    ""
-  ].filter((l) => l !== null).join("\n");
-  await fs10.writeFile(file, composed, "utf8");
-}
-function formatPlanFile(title, body2, status, binding) {
-  const trimmedBody = body2.replace(/^\s*#\s+.+\n+/, "").trimEnd();
-  const lines = [`# ${title}`, "", `<!-- memlin-plan-status: ${status} -->`];
-  if (binding) {
-    lines.push(
-      `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`
-    );
-  }
-  lines.push("", trimmedBody, "");
-  return lines.join("\n");
-}
-function parsePlanFile(raw) {
-  const firstNl = raw.indexOf("\n");
-  const first = firstNl === -1 ? raw : raw.slice(0, firstNl);
-  const title = first.replace(/^#\s+/, "").trim() || "(untitled plan)";
-  const rest = firstNl === -1 ? "" : raw.slice(firstNl + 1).trim();
-  const statusMatch = rest.match(/<!--\s*memlin-plan-status:\s*([a-z_]+)\s*-->/);
-  const status = statusMatch ? statusMatch[1] ?? null : null;
-  const bindMatch = rest.match(/<!--\s*memlin-binding:\s*doc=([0-9a-f-]+)\s+project=(\S+)\s*-->/i);
-  const binding = bindMatch ? {
-    documentId: bindMatch[1],
-    projectId: bindMatch[2] === "none" ? null : bindMatch[2] ?? null
-  } : null;
-  const body2 = rest.replace(/<!--\s*memlin-plan-status:[^>]*-->\s*\n?/g, "").replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "").trim();
-  return { title, body: body2, status, binding };
-}
-function getLastPlanPullCursor(state) {
-  return state.last_plan_pull_at;
-}
-function setLastPlanPullCursor(state, at) {
-  state.last_plan_pull_at = at;
-}
-var init_plan_sync = __esm({
-  "packages/plugin-core/src/plan-sync.ts"() {
-    "use strict";
-    init_state();
-    init_host();
-  }
-});
-
-// packages/plugin-core/src/cli/status.ts
-var status_exports = {};
-async function main3() {
-  console.log("memlin status");
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  const config = await readConfig();
-  const token = await readPersistedToken();
-  if (!config || !token) {
-    console.log("  not configured. Run `memlin login`.");
-    return;
-  }
-  const ctx = await getApi();
-  printAuth(token);
-  if (!ctx) {
-    console.log("");
-    console.log("  could not connect (token may be expired and unrefreshable).");
-    return;
-  }
-  const cwdInfo = runtimeCwdForDisplay();
-  const resolved = await resolveProject(ctx.api, cwdInfo.cwd, ctx.config.project_id);
-  await printAccount(ctx.api, ctx.config, resolved);
-  printProject(resolved, cwdInfo);
-  printRouting(ctx.config.api_url);
-  await printLocalState();
-}
-function printAuth(token) {
-  console.log("");
-  console.log("Auth");
-  if (!Number.isFinite(token.expires_at) || token.expires_at <= 0) {
-    console.log("  access token: present (no expiry recorded \u2014 legacy `memlin init` token)");
-  } else {
-    const remaining = token.expires_at - Date.now();
-    const expiresAt = new Date(token.expires_at);
-    if (remaining <= 0) {
-      console.log(
-        `  access token: expired ${formatDurationCompact(-remaining)} ago (auto-refresh on next call)`
-      );
-    } else {
-      console.log(
-        `  access token: valid for ${formatDurationCompact(remaining)} (until ${expiresAt.toLocaleString()})`
-      );
-    }
-  }
-  console.log(
-    `  refresh token: ${token.refresh_token ? "present (auto-rotates)" : "absent (re-run `memlin login` when token expires)"}`
-  );
-}
-async function printAccount(api, config, resolved) {
-  const accountId = effectiveAccountId({
-    configAccountId: config.account_id,
-    resolvedAccountId: resolved.account_id
-  });
-  console.log("");
-  console.log("Account");
-  try {
-    const account = await api.getAccount({ accountId });
-    console.log(
-      `  workspace:   ${account.name}  (${account.kind}${account.tier ? `, ${account.tier}` : ""})`
-    );
-    console.log(`  account_id:  ${account.id}`);
-    console.log(`  role:        ${account.role}`);
-  } catch (err2) {
-    console.log(`  account_id:  ${accountId}`);
-    console.log(`  (could not fetch account info: ${err2 instanceof Error ? err2.message : err2})`);
-  }
-  try {
-    const [{ count }, { insights }] = await Promise.all([
-      api.listInbox({ accountId }),
-      api.listInsights({ kind: "memory_proposal", status: "pending", limit: 100 }, { accountId })
-    ]);
-    const total = count + insights.length;
-    console.log(
-      total > 0 ? `  inbox:       ${total} proposal${total === 1 ? "" : "s"} waiting \u2014 run /memlin-inbox` : "  inbox:       clear"
-    );
-  } catch {
-  }
-}
-function printProject(resolved, cwdInfo) {
-  console.log("");
-  console.log("Project");
-  console.log(`  cwd:         ${cwdInfo.cwd}`);
-  if (cwdInfo.source === "env") console.log(`  cwd source:  host workspace env`);
-  else if (cwdInfo.pluginCache) console.log(`  cwd source:  plugin cache (workspace env missing)`);
-  if (resolved.project_id) {
-    console.log(`  project:     ${resolved.project_id.slice(0, 8)}\u2026`);
-    console.log(`  resolved by: ${resolved.reason}`);
-  } else {
-    console.log(`  project:     (none) \u2014 running against account-scope only`);
-    console.log(`  resolved by: ${resolved.reason}`);
-  }
-}
-function printRouting(apiUrl) {
-  console.log("");
-  console.log("Routing");
-  console.log(`  api:         ${apiUrl}`);
-  const mcpUrl = process.env.MEMLIN_MCP_URL;
-  if (mcpUrl) {
-    console.log(`  mcp:         ${mcpUrl} (legacy override; CLI uses /v1 by default)`);
-  }
-}
-async function printLocalState() {
-  console.log("");
-  console.log("Local state");
-  const state = await readState();
-  const allLocal = await scanLocal({ includePlans: true });
-  const local = allLocal.filter((doc) => doc.kind !== "plan");
-  const localPlanCount = allLocal.length - local.length;
-  const trackedPlanCount = Object.keys(state.documents).filter(
-    (p) => p.startsWith("plans/")
-  ).length;
-  const trackedDocs = {
-    ...state,
-    documents: Object.fromEntries(
-      Object.entries(state.documents).filter(([p]) => !p.startsWith("plans/"))
-    )
-  };
-  const { added, modified, deleted } = diffStates(
-    trackedDocs,
-    local.map((l) => ({ path: l.path, hash: l.hash }))
-  );
-  const unboundPlans = await listUnboundPlans();
-  const trackedCount = Object.keys(trackedDocs.documents).length;
-  console.log(`  tracked:     ${trackedCount} document${trackedCount === 1 ? "" : "s"}`);
-  console.log(
-    `  plans:       ${localPlanCount} local, ${trackedPlanCount} tracked, ${unboundPlans.length} unbound`
-  );
-  const lastSyncMs = mostRecentSync(state);
-  if (lastSyncMs) {
-    const age = Date.now() - lastSyncMs;
-    console.log(
-      `  last sync:   ${formatRelativeSigned(age)} (${new Date(lastSyncMs).toLocaleString()})`
-    );
-  } else {
-    console.log(`  last sync:   never`);
-  }
-  console.log(
-    `  changes:     ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`
-  );
-  const all = [
-    ...added.map((p) => ({ p, k: "A" })),
-    ...modified.map((p) => ({ p, k: "M" })),
-    ...deleted.map((p) => ({ p, k: "D" }))
-  ];
-  if (all.length > 0) {
-    console.log("");
-    for (const { p, k } of all.slice(0, 50)) {
-      console.log(`  ${k}  ${p}`);
-    }
-    if (all.length > 50) console.log(`  \u2026 +${all.length - 50} more`);
-  } else if (trackedCount > 0) {
-    console.log("");
-    console.log("  clean.");
-  }
-}
-function mostRecentSync(state) {
-  let max = 0;
-  for (const doc of Object.values(state.documents)) {
-    const t = Date.parse(doc.last_synced_at);
-    if (!Number.isNaN(t) && t > max) max = t;
-  }
-  return max > 0 ? max : null;
-}
-var init_status = __esm({
-  "packages/plugin-core/src/cli/status.ts"() {
-    "use strict";
-    init_runtime_shared();
-    init_project_resolver();
-    init_local_scan();
-    init_state();
-    init_client();
-    init_auth();
-    init_plan_sync();
-    main3().catch((err2) => {
-      console.error("memlin status failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
-    });
-  }
-});
-
-// packages/plugin-core/src/check-evaluators.ts
-function evaluateConfig(config, configPath) {
-  if (!config) {
-    return { status: "fail", detail: `no config at ${configPath} \u2014 run \`memlin login\`` };
-  }
-  const missing = [];
-  if (!config.account_id) missing.push("account_id");
-  if (!config.user_id) missing.push("user_id");
-  if (!config.api_url) missing.push("api_url");
-  if (missing.length > 0) {
-    return { status: "fail", detail: `config missing fields: ${missing.join(", ")}` };
-  }
-  return {
-    status: "pass",
-    detail: `account ${config.account_id.slice(0, 8)}\u2026, api ${config.api_url}`
-  };
-}
-function evaluateToken(token, now) {
-  if (!token) return { status: "fail", detail: "no token \u2014 run `memlin login`" };
-  if (!Number.isFinite(token.expires_at)) {
-    return { status: "warn", detail: "token has no expiry recorded (legacy init)" };
-  }
-  const remaining = token.expires_at - now;
-  if (remaining <= 0) {
-    if (!token.refresh_token) {
-      return {
-        status: "fail",
-        detail: "access token expired and no refresh token \u2014 re-run `memlin login`"
-      };
-    }
-    return { status: "warn", detail: "access token expired; refresh will fire on next call" };
-  }
-  if (!token.refresh_token) {
-    return {
-      status: "warn",
-      detail: `valid for ${Math.round(remaining / 6e4)} min, but no refresh token saved`
-    };
-  }
-  return { status: "pass", detail: `valid for ${Math.round(remaining / 6e4)} min` };
-}
-function evaluateApiReachable(url, probe) {
-  if (!probe.ok) {
-    return { status: "fail", detail: probe.errorMessage };
-  }
-  if (probe.status >= 500) {
-    return { status: "fail", detail: `${url} returned ${probe.status}` };
-  }
-  return { status: "pass", detail: `${url} reachable (HTTP ${probe.status})` };
-}
-function evaluateMcpReachable(url, result) {
-  if (!url) {
-    return { status: "warn", detail: "MEMLIN_MCP_URL not set \u2014 routing is direct Supabase" };
-  }
-  if (!result) {
-    return { status: "fail", detail: "no response from MCP endpoint" };
-  }
-  if (!result.ok) {
-    return { status: "fail", detail: result.errorMessage };
-  }
-  if (result.status >= 400) {
-    return { status: "fail", detail: `${url} returned ${result.status}` };
-  }
-  if (result.service !== "memlin-mcp") {
-    return {
-      status: "warn",
-      detail: `endpoint responded but service header is "${result.service ?? "<missing>"}" not "memlin-mcp"`
-    };
-  }
-  return {
-    status: "pass",
-    detail: `${url} reachable (${result.toolCount ?? 0} tools)`
-  };
-}
-function evaluateProjectResolve(resolved, cwd) {
-  if (resolved.project_id) {
-    return {
-      status: "pass",
-      detail: `project ${resolved.project_id.slice(0, 8)}\u2026 (via ${resolved.reason})`
-    };
-  }
-  return {
-    status: "warn",
-    detail: `no project bound to ${cwd} (via ${resolved.reason}) \u2014 account-scope only`
-  };
-}
-function evaluateWritable(dir, result) {
-  if (result.ok) return { status: "pass", detail: `writable: ${dir}` };
-  return { status: "fail", detail: `${dir} not writable: ${result.errorMessage}` };
-}
-function evaluatePluginPresence(presence, settingsFile) {
-  if (presence.status === "enabled") {
-    return { status: "pass", detail: `memlin@memlin-ai enabled in ${settingsFile}` };
-  }
-  if (presence.status === "unconfigured") {
-    return {
-      status: "warn",
-      detail: `no ${settingsFile} \u2014 re-run \`memlin login\` to enable Memlin in every workspace (otherwise capture is dark outside the one workspace where the plugin was installed).`
-    };
-  }
-  return {
-    status: "warn",
-    detail: `${settingsFile} present but Memlin plugin not enabled \u2014 capture is dark in unbound workspaces. Re-run \`memlin login\` to fix.`
-  };
-}
-var init_check_evaluators = __esm({
-  "packages/plugin-core/src/check-evaluators.ts"() {
-    "use strict";
-  }
-});
-
-// packages/plugin-core/src/cli/doctor.ts
-var doctor_exports = {};
-import { promises as fs11 } from "node:fs";
-import path12 from "node:path";
-import os9 from "node:os";
-async function probeUrl(url) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { method: "HEAD", signal: ctrl.signal });
-    return { ok: true, status: res.status };
-  } catch (err2) {
-    return {
-      ok: false,
-      errorMessage: err2 instanceof Error ? err2.message : "request failed"
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function probeMcp(url) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, { method: "GET", signal: ctrl.signal });
-    if (!res.ok) {
-      return { ok: true, status: res.status };
-    }
-    const body2 = await res.json();
-    return {
-      ok: true,
-      status: res.status,
-      service: body2.service,
-      toolCount: body2.tools?.length
-    };
-  } catch (err2) {
-    return {
-      ok: false,
-      errorMessage: err2 instanceof Error ? err2.message : "request failed"
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-async function probeWritable(dir) {
-  try {
-    await fs11.mkdir(dir, { recursive: true });
-    const probe = path12.join(dir, `.memlin-doctor-${Date.now()}.tmp`);
-    await fs11.writeFile(probe, "ok", "utf8");
-    await fs11.unlink(probe);
-    return { ok: true };
-  } catch (err2) {
-    return {
-      ok: false,
-      errorMessage: err2 instanceof Error ? err2.message : String(err2)
-    };
-  }
-}
-async function runCheck(name, fn) {
-  try {
-    return { name, ...await fn() };
-  } catch (err2) {
-    return {
-      name,
-      status: "fail",
-      detail: err2 instanceof Error ? err2.message : String(err2)
-    };
-  }
-}
-async function main4() {
-  console.log("memlin doctor");
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  const config = await readConfig();
-  const token = await readPersistedToken();
-  const results = [];
-  results.push({
-    name: "Config file",
-    ...evaluateConfig(config, CONFIG_FILE4)
-  });
-  results.push({
-    name: "Token shape",
-    ...evaluateToken(token, Date.now())
-  });
-  if (config) {
-    if (token) {
-      results.push(
-        await runCheck("Token refresh", async () => {
-          try {
-            const t = await getValidAccessToken();
-            return {
-              status: "pass",
-              detail: `live access token obtained (len=${t.length})`
-            };
-          } catch (err2) {
-            return {
-              status: "fail",
-              detail: err2 instanceof Error ? err2.message : "refresh failed"
-            };
-          }
-        })
-      );
-      results.push(
-        await runCheck("Memlin API reachable", async () => {
-          const probe = await probeUrl(`${config.api_url}/me`);
-          return evaluateApiReachable(config.api_url, probe);
-        })
-      );
-      results.push(
-        await runCheck("Project resolution", async () => {
-          const ctx = await getApi();
-          if (!ctx) {
-            return {
-              status: "fail",
-              detail: "API client unavailable (see previous checks)"
-            };
-          }
-          const cwd = runtimeCwd();
-          const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
-          return evaluateProjectResolve(resolved, cwd);
-        })
-      );
-    }
-    const mcpUrl = process.env.MEMLIN_MCP_URL;
-    results.push(
-      await runCheck("MCP endpoint", async () => {
-        if (!mcpUrl) return evaluateMcpReachable(void 0, null);
-        const result = await probeMcp(mcpUrl);
-        return evaluateMcpReachable(mcpUrl, result);
-      })
-    );
-  }
-  results.push(
-    await runCheck(`Writable: ${CONFIG_DIR4}`, async () => {
-      const result = await probeWritable(CONFIG_DIR4);
-      return evaluateWritable(CONFIG_DIR4, result);
-    })
-  );
-  results.push(
-    await runCheck(`Writable: ${CLAUDE_DIR}`, async () => {
-      const result = await probeWritable(CLAUDE_DIR);
-      return evaluateWritable(CLAUDE_DIR, result);
-    })
-  );
-  results.push(
-    await runCheck("Claude Code plugin (user scope)", async () => {
-      const paths = defaultUserSettingsPaths();
-      const settings = await readClaudeUserSettings(paths);
-      return evaluatePluginPresence(inspectUserScopePlugin(settings), paths.settingsFile);
-    })
-  );
-  let nameWidth = 0;
-  for (const r of results) nameWidth = Math.max(nameWidth, r.name.length);
-  console.log("");
-  for (const r of results) {
-    const icon = r.status === "pass" ? "\u2713" : r.status === "warn" ? "\u26A0" : "\u2717";
-    const colorOpen = r.status === "pass" ? "\x1B[32m" : r.status === "warn" ? "\x1B[33m" : "\x1B[31m";
-    const colorClose = "\x1B[0m";
-    const padding = " ".repeat(nameWidth - r.name.length + 2);
-    console.log(`  ${colorOpen}${icon}${colorClose} ${r.name}${padding}${r.detail}`);
-  }
-  const failed = results.filter((r) => r.status === "fail").length;
-  const warned = results.filter((r) => r.status === "warn").length;
-  console.log("");
-  if (failed === 0 && warned === 0) {
-    console.log("  all checks pass.");
-    process.exit(0);
-  }
-  console.log(`  ${results.length - failed - warned} pass \xB7 ${warned} warn \xB7 ${failed} fail`);
-  process.exit(failed > 0 ? 1 : 0);
-}
-var NET_TIMEOUT_MS, CONFIG_DIR4, CONFIG_FILE4, CLAUDE_DIR;
-var init_doctor = __esm({
-  "packages/plugin-core/src/cli/doctor.ts"() {
-    "use strict";
-    init_project_resolver();
-    init_client();
-    init_auth();
-    init_check_evaluators();
-    init_plugin_install();
-    NET_TIMEOUT_MS = 5e3;
-    CONFIG_DIR4 = path12.join(os9.homedir(), ".config", "memlin");
-    CONFIG_FILE4 = path12.join(CONFIG_DIR4, "config.json");
-    CLAUDE_DIR = path12.join(os9.homedir(), ".claude");
-    main4().catch((err2) => {
-      console.error("memlin doctor failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
-    });
-  }
-});
-
-// packages/plugin-core/src/paths.ts
-function slugify(s) {
-  const cleaned = s.toLowerCase().replace(SLUG, "-").replace(/^-|-$/g, "");
-  return cleaned || "untitled";
-}
-function inferLocalPath(kind, title, existing) {
-  if (kind === "skill") {
-    if (existing && existing.endsWith("/SKILL.md")) return existing;
-    if (existing) {
-      const stripped = existing.replace(/\.md$/i, "");
-      return `${stripped}/SKILL.md`;
-    }
-    return `skills/${slugify(title)}/SKILL.md`;
-  }
-  if (existing) return existing;
-  switch (kind) {
-    case "goal":
-      return `goals/${slugify(title)}.md`;
-    case "schema":
-      return `schemas/${slugify(title)}.json`;
-    case "memory":
-      return `memory/${slugify(title)}.md`;
-    default:
-      return `${kind}/${slugify(title)}.md`;
-  }
-}
-var SLUG;
-var init_paths = __esm({
-  "packages/plugin-core/src/paths.ts"() {
-    "use strict";
-    SLUG = /[^a-z0-9]+/g;
-  }
-});
-
-// packages/plugin-core/src/apply.ts
-import { promises as fs12 } from "node:fs";
-import { existsSync as existsSync3 } from "node:fs";
-import os10 from "node:os";
-import path13 from "node:path";
-function archiveRoot() {
-  return path13.join(os10.homedir(), ".config", "memlin", "archive");
-}
-async function archiveDestination(trackedRelPath) {
-  const base = path13.join(archiveRoot(), trackedRelPath);
-  if (!existsSync3(base)) return base;
-  const ext = path13.extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  for (let i = 1; i < 1e3; i++) {
-    const candidate = `${stem}.${i}${ext}`;
-    if (!existsSync3(candidate)) return candidate;
-  }
-  return `${stem}.${Date.now()}${ext}`;
-}
-async function applyPullToLocal(docs, state, now, rootOverride) {
-  const out2 = {
-    written: [],
-    unchanged: [],
-    removed: [],
-    archived: [],
-    keptEdited: [],
-    citations: {}
-  };
-  const currentPaths = /* @__PURE__ */ new Set();
-  const root = rootOverride ?? resolveHost().homeDir();
-  for (const d of docs) {
-    if (d.kind === "brand_guidelines") continue;
-    const localPath = inferLocalPath(d.kind, d.title, d.path);
-    currentPaths.add(localPath);
-    const full = path13.join(root, localPath);
-    const contentHash = hash(d.content);
-    let needsWrite = true;
-    try {
-      const local = await fs12.readFile(full, "utf8");
-      if (hash(local) === contentHash) needsWrite = false;
-    } catch {
-    }
-    if (needsWrite) {
-      await fs12.mkdir(path13.dirname(full), { recursive: true });
-      await fs12.writeFile(full, d.content, "utf8");
-      out2.written.push(localPath);
-    } else {
-      out2.unchanged.push(localPath);
-    }
-    state.documents[localPath] = stateRow(d, contentHash, now);
-    out2.citations[localPath] = {
-      localPath,
-      sourcePath: d.path ?? null,
-      version_number: d.version_number ?? state.documents[localPath]?.version_number ?? 1,
-      updated_at: d.updated_at ?? null
-    };
-  }
-  for (const tracked of Object.keys(state.documents)) {
-    if (currentPaths.has(tracked)) continue;
-    const full = path13.join(root, tracked);
-    if (existsSync3(full)) {
-      let userEdited = false;
-      try {
-        const local = await fs12.readFile(full, "utf8");
-        const prior = state.documents[tracked]?.content_hash;
-        userEdited = !prior || hash(local) !== prior;
-      } catch {
-        userEdited = true;
-      }
-      if (userEdited) {
-        out2.keptEdited.push(tracked);
-        out2.removed.push(`${tracked} (kept \u2014 locally edited)`);
-      } else {
-        const dest = await archiveDestination(tracked);
-        try {
-          await fs12.mkdir(path13.dirname(dest), { recursive: true });
-          await fs12.rename(full, dest);
-          out2.archived.push(tracked);
-          out2.removed.push(`${tracked} (archived)`);
-        } catch {
-          out2.keptEdited.push(tracked);
-          out2.removed.push(`${tracked} (kept \u2014 archive failed)`);
-        }
-      }
-    }
-    delete state.documents[tracked];
-  }
-  return out2;
-}
-function stateRow(d, h, at) {
-  return {
-    document_id: d.id,
-    version_id: "",
-    version_number: d.version_number ?? 0,
-    content_hash: h,
-    last_synced_at: at,
-    scope: d.scope,
-    kind: d.kind
-  };
-}
-var init_apply = __esm({
-  "packages/plugin-core/src/apply.ts"() {
-    "use strict";
-    init_state();
-    init_paths();
-    init_host();
-  }
-});
-
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/util.js
 var util, objectUtil, ZodParsedType, getParsedType;
 var init_util = __esm({
@@ -10504,7 +8134,7 @@ var init_feedback_signals = __esm({
 
 // packages/shared/dist/skill-frontmatter.js
 function parseSkill(content) {
-  if (!content.trim()) return { frontmatter: { ...EMPTY2 }, body: "" };
+  if (!content.trim()) return { frontmatter: { ...EMPTY }, body: "" };
   try {
     const parsed = (0, import_gray_matter2.default)(content);
     const fmRaw = parsed.data;
@@ -10524,16 +8154,16 @@ function parseSkill(content) {
       body: parsed.content.replace(/^\n+/, "")
     };
   } catch {
-    return { frontmatter: { ...EMPTY2 }, body: content };
+    return { frontmatter: { ...EMPTY }, body: content };
   }
 }
-var import_gray_matter2, EMPTY2;
+var import_gray_matter2, EMPTY;
 var init_skill_frontmatter = __esm({
   "packages/shared/dist/skill-frontmatter.js"() {
     "use strict";
     import_gray_matter2 = __toESM(require_gray_matter(), 1);
     init_schemas();
-    EMPTY2 = { name: "", description: "" };
+    EMPTY = { name: "", description: "" };
   }
 });
 
@@ -10669,6 +8299,36 @@ var init_credit_math = __esm({
   }
 });
 
+// packages/shared/dist/memlin-commands.js
+var MEMLIN_COMMANDS;
+var init_memlin_commands = __esm({
+  "packages/shared/dist/memlin-commands.js"() {
+    "use strict";
+    MEMLIN_COMMANDS = [
+      { section: "Discovery", cmd: "ask", blurb: "ask your workspace anything" },
+      { section: "", cmd: "inbox", blurb: "review scribe proposals" },
+      { section: "", cmd: "scribe", blurb: "extract from this session" },
+      { section: "Sync", cmd: "sync", blurb: "pull + push in one shot" },
+      { section: "", cmd: "pull", blurb: "server \u2192 local" },
+      { section: "", cmd: "push", blurb: "local \u2192 server" },
+      { section: "", cmd: "revert", blurb: "roll a doc back a version" },
+      { section: "Plans", cmd: "push-plan", blurb: "upload a Claude Code plan" },
+      { section: "", cmd: "pull-plans", blurb: "refresh local plans" },
+      { section: "", cmd: "bind-plans", blurb: "assign unbound local plans" },
+      { section: "Actions", cmd: "actions-list", blurb: "callable workspace tools" },
+      { section: "", cmd: "actions-execute", blurb: "invoke one by id" },
+      { section: "Audit", cmd: "audit-replay", blurb: "see the bundle an agent saw" },
+      { section: "", cmd: "audit-explain", blurb: "why each item ranked there" },
+      { section: "Coordination", cmd: "handoffs", blurb: "pass work between agents" },
+      { section: "", cmd: "role", blurb: "assign roles to members/docs" },
+      { section: "Setup & health", cmd: "status", blurb: "auth, account, project, sync state" },
+      { section: "", cmd: "doctor", blurb: "diagnose why status is broken" },
+      { section: "", cmd: "add-project", blurb: "register this workspace" },
+      { section: "", cmd: "link", blurb: "pin a different account" }
+    ];
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -10695,6 +8355,2355 @@ var init_dist = __esm({
     init_usage_stats();
     init_model_prices();
     init_credit_math();
+    init_memlin_commands();
+  }
+});
+
+// packages/plugin-core/src/host.ts
+import os from "node:os";
+import path from "node:path";
+function resolveHost() {
+  const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
+  const make = HOSTS[envHost];
+  return (make ?? HOSTS["claude-code"])();
+}
+var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, HOSTS;
+var init_host = __esm({
+  "packages/plugin-core/src/host.ts"() {
+    "use strict";
+    BaseHost = class {
+      constructor(kind, home) {
+        this.kind = kind;
+        this.home = home;
+      }
+      kind;
+      home;
+      homeDir() {
+        return this.home;
+      }
+      plansDir() {
+        return path.join(this.home, "plans");
+      }
+    };
+    ClaudeCodeHost = class extends BaseHost {
+      constructor() {
+        super("claude-code", path.join(os.homedir(), ".claude"));
+      }
+    };
+    CursorHost = class extends BaseHost {
+      constructor() {
+        super("cursor", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    CodexHost = class extends BaseHost {
+      constructor() {
+        super("codex", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    WindsurfHost = class extends BaseHost {
+      constructor() {
+        super("windsurf", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    AntigravityHost = class extends BaseHost {
+      constructor() {
+        super("antigravity", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    HOSTS = {
+      "claude-code": () => new ClaudeCodeHost(),
+      cursor: () => new CursorHost(),
+      codex: () => new CodexHost(),
+      windsurf: () => new WindsurfHost(),
+      antigravity: () => new AntigravityHost()
+    };
+  }
+});
+
+// packages/plugin-core/src/cli/command-guide.ts
+function printCommandGuide(opts = {}) {
+  const write = opts.write ?? ((line) => console.log(line));
+  const host = resolveHost().kind;
+  const isSlashHost = host === "claude-code" || host === "cursor";
+  const fmt = (cmd) => isSlashHost ? `/memlin-${cmd}` : `memlin ${cmd}`;
+  const helpRef = isSlashHost ? "`/memlin-help`" : "`memlin help`";
+  const cmdCol = Math.max(...MEMLIN_COMMANDS.map((c) => fmt(c.cmd).length));
+  if (opts.intro) {
+    write("");
+    write(`  What you can do from here (run ${helpRef} for this list anytime):`);
+    write("");
+  } else {
+    write("memlin \u2014 Memlin commands");
+    write("");
+  }
+  for (const { section, cmd, blurb } of MEMLIN_COMMANDS) {
+    const sectionCol = section.padEnd(16);
+    const cmdStr = fmt(cmd).padEnd(cmdCol);
+    write(`    ${sectionCol} ${cmdStr}  ${blurb}`);
+  }
+}
+var init_command_guide = __esm({
+  "packages/plugin-core/src/cli/command-guide.ts"() {
+    "use strict";
+    init_dist();
+    init_host();
+  }
+});
+
+// packages/plugin-core/src/auth.ts
+import { promises as fs2 } from "node:fs";
+import path2 from "node:path";
+import os2 from "node:os";
+function tokenFilePath() {
+  return process.env.MEMLIN_TOKEN_FILE || path2.join(os2.homedir(), ".config", "memlin", "token.json");
+}
+async function readPersistedToken() {
+  try {
+    const raw = await fs2.readFile(tokenFilePath(), "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+async function writePersistedToken(t) {
+  const file = tokenFilePath();
+  await fs2.mkdir(path2.dirname(file), { recursive: true });
+  const tmp = path2.join(path2.dirname(file), `token.json.tmp-${process.pid}`);
+  await fs2.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  await fs2.chmod(tmp, 384).catch(() => {
+  });
+  await fs2.rename(tmp, file);
+}
+async function startDeviceFlow() {
+  requireClientId();
+  const body2 = new URLSearchParams({
+    client_id: AUTH0_CLIENT_ID,
+    scope: SCOPE,
+    audience: AUTH0_AUDIENCE
+  });
+  const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/device/code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body2.toString()
+  });
+  if (!res.ok) {
+    throw new Error(`device code request ${res.status}: ${await res.text()}`);
+  }
+  return await res.json();
+}
+async function pollForToken(deviceCode, intervalSec, onTick) {
+  let interval = intervalSec;
+  const startedAt = Date.now();
+  while (true) {
+    await new Promise((r) => setTimeout(r, interval * 1e3));
+    onTick?.(Math.floor((Date.now() - startedAt) / 1e3));
+    const body2 = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      device_code: deviceCode,
+      client_id: AUTH0_CLIENT_ID
+    });
+    const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body2.toString()
+    });
+    const json = await res.json();
+    if (res.ok && json.access_token) {
+      return toPersisted(json);
+    }
+    if (json.error === "authorization_pending") continue;
+    if (json.error === "slow_down") {
+      interval += 1;
+      continue;
+    }
+    throw new Error(`token poll: ${json.error_description ?? json.error ?? "unknown error"}`);
+  }
+}
+async function refreshAccessToken(refreshToken) {
+  requireClientId();
+  const body2 = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: AUTH0_CLIENT_ID
+  });
+  const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body2.toString()
+  });
+  if (!res.ok) {
+    throw new Error(`refresh: ${res.status} ${await res.text()}`);
+  }
+  const json = await res.json();
+  return toPersisted(json, refreshToken);
+}
+async function getValidAccessToken() {
+  const persisted = await readPersistedToken();
+  if (!persisted) throw new Error("not signed in \u2014 run `memlin login`");
+  if (Date.now() < persisted.expires_at - 6e4) return persisted.access_token;
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefresh(persisted).finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+async function doRefresh(stale) {
+  const latest = await readPersistedToken();
+  if (latest && Date.now() < latest.expires_at - 6e4) return latest.access_token;
+  const refreshToken = latest?.refresh_token ?? stale.refresh_token;
+  if (!refreshToken) {
+    throw new Error("access token expired and no refresh token saved \u2014 run `memlin login`");
+  }
+  try {
+    const fresh = await refreshAccessToken(refreshToken);
+    await writePersistedToken(fresh);
+    return fresh.access_token;
+  } catch (err2) {
+    const after = await readPersistedToken();
+    if (after && after.access_token !== stale.access_token && Date.now() < after.expires_at - 6e4) {
+      return after.access_token;
+    }
+    throw new Error(
+      `access token refresh failed (${err2 instanceof Error ? err2.message : String(err2)}) \u2014 run \`memlin login\``
+    );
+  }
+}
+function toPersisted(json, fallbackRefresh) {
+  return {
+    access_token: json.access_token,
+    refresh_token: json.refresh_token ?? fallbackRefresh,
+    expires_at: Date.now() + json.expires_in * 1e3
+  };
+}
+function requireClientId() {
+  if (!AUTH0_CLIENT_ID) {
+    throw new Error(
+      "Auth0 client id not configured. Set MEMLIN_AUTH0_CLIENT_ID env var (and optionally MEMLIN_AUTH0_DOMAIN / MEMLIN_AUTH0_AUDIENCE for self-hosted setups)."
+    );
+  }
+}
+var MEMLIN_PROD_AUTH0_DOMAIN, MEMLIN_PROD_AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_CLIENT_ID, AUTH0_AUDIENCE, SCOPE, refreshInFlight;
+var init_auth = __esm({
+  "packages/plugin-core/src/auth.ts"() {
+    "use strict";
+    MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
+    MEMLIN_PROD_AUTH0_CLIENT_ID = "fyYMQ4Cxc6Nu5juVwL8Ihqq4fgAFecG9";
+    AUTH0_DOMAIN = process.env.MEMLIN_AUTH0_DOMAIN || MEMLIN_PROD_AUTH0_DOMAIN;
+    AUTH0_CLIENT_ID = process.env.MEMLIN_AUTH0_CLIENT_ID || MEMLIN_PROD_AUTH0_CLIENT_ID;
+    AUTH0_AUDIENCE = process.env.MEMLIN_AUTH0_AUDIENCE ?? "https://api.memlin.ai";
+    SCOPE = "openid profile email offline_access";
+    refreshInFlight = null;
+  }
+});
+
+// packages/plugin-core/src/runtime-shared.ts
+function normalizeGitRemote(raw) {
+  if (!raw) return null;
+  let s = raw.trim();
+  if (!s) return null;
+  s = s.replace(/^git@([^:]+):/, "https://$1/");
+  s = s.replace(/^ssh:\/\//, "");
+  s = s.replace(/^https?:\/\//, "");
+  s = s.replace(/^git@/, "");
+  s = s.replace(/\.git$/, "");
+  s = s.replace(/\/$/, "");
+  const slash = s.indexOf("/");
+  if (slash > 0) {
+    const host = s.slice(0, slash);
+    const rest = s.slice(slash);
+    for (const provider of PROVIDER_HOSTS) {
+      if (host === provider) break;
+      if (host.startsWith(provider + "-")) {
+        s = provider + rest;
+        break;
+      }
+    }
+  }
+  return s || null;
+}
+function formatDurationCompact(absoluteMs) {
+  const abs = Math.abs(absoluteMs);
+  if (abs < 6e4) return `${Math.max(1, Math.round(abs / 1e3))} s`;
+  if (abs < 36e5) return `${Math.round(abs / 6e4)} min`;
+  if (abs < 864e5) return `${Math.round(abs / 36e5)} h`;
+  return `${Math.round(abs / 864e5)} d`;
+}
+function formatRelativeSigned(signedMs) {
+  if (signedMs >= 0) return `${formatDurationCompact(signedMs)} ago`;
+  return `in ${formatDurationCompact(signedMs)}`;
+}
+var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
+var init_runtime_shared = __esm({
+  "packages/plugin-core/src/runtime-shared.ts"() {
+    "use strict";
+    AGENT_KIND_HEADER = "Memlin-Agent-Kind";
+    AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
+    AGENT_VERSION_HEADER = "Memlin-Agent-Version";
+    AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
+    AGENT_EXPECTED_CAPABILITIES = {
+      "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
+      cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
+      codex: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
+      windsurf: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
+      // VS Code (apps/vscode-extension): MCP + CLI + copilot-instructions; plain
+      // VS Code has no lifecycle-hook or slash-command surface.
+      vscode: ["mcp", "cli", "rules", "resolve"],
+      gemini: ["mcp", "rules", "resolve"],
+      grok: ["mcp", "rules", "resolve"],
+      hermes: ["mcp", "resolve"],
+      openclaw: ["mcp", "rules", "resolve"],
+      antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
+      mcp: ["mcp", "resolve"],
+      "claude-ai": ["mcp", "resolve"]
+    };
+    PROVIDER_HOSTS = [
+      "github.com",
+      "gitlab.com",
+      "bitbucket.org",
+      "dev.azure.com",
+      "ssh.dev.azure.com",
+      "codeberg.org",
+      "sr.ht",
+      "git.sr.ht"
+    ];
+  }
+});
+
+// packages/plugin-core/src/memlin-api-client.ts
+import os3 from "node:os";
+function agentDevice() {
+  return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
+}
+function agentVersion() {
+  return "0.2.18";
+}
+function agentCapabilities() {
+  return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
+}
+function resolveApiUrl() {
+  return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
+}
+var DEFAULT_API_URL, MemlinApiClient;
+var init_memlin_api_client = __esm({
+  "packages/plugin-core/src/memlin-api-client.ts"() {
+    "use strict";
+    init_runtime_shared();
+    init_host();
+    DEFAULT_API_URL = "https://memlin.ai/api/v1";
+    MemlinApiClient = class {
+      constructor(cfg) {
+        this.cfg = cfg;
+      }
+      cfg;
+      // ---------- low-level ----------
+      async authHeaders(includeAccount = true) {
+        const token = await this.cfg.getAccessToken();
+        const h = {
+          Authorization: `Bearer ${token}`,
+          [AGENT_KIND_HEADER]: resolveHost().kind,
+          [AGENT_DEVICE_HEADER]: agentDevice(),
+          [AGENT_VERSION_HEADER]: agentVersion(),
+          [AGENT_CAPABILITIES_HEADER]: agentCapabilities().join(",")
+        };
+        if (includeAccount && this.cfg.accountId) {
+          h["Memlin-Account-Id"] = this.cfg.accountId;
+        }
+        return h;
+      }
+      async request(method, pathAndQuery, body2, opts = {}) {
+        const url = `${this.cfg.baseUrl.replace(/\/+$/, "")}${pathAndQuery}`;
+        const baseHeaders = await this.authHeaders(opts.includeAccount ?? true);
+        if (opts.accountId) {
+          baseHeaders["Memlin-Account-Id"] = opts.accountId;
+        }
+        const headers = {
+          ...baseHeaders,
+          Accept: "application/json"
+        };
+        if (body2 !== void 0) headers["Content-Type"] = "application/json";
+        const res = await fetch(url, {
+          method,
+          headers,
+          ...body2 !== void 0 ? { body: JSON.stringify(body2) } : {}
+        });
+        const text = await res.text();
+        let parsed = null;
+        if (text) {
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+          }
+        }
+        if (!res.ok) {
+          const errMsg = parsed?.error ?? text ?? `HTTP ${res.status}`;
+          throw new Error(`${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`);
+        }
+        return parsed;
+      }
+      // ---------- endpoints ----------
+      /** GET /me — identity + account list. No account header sent (this is the discovery call). */
+      async me() {
+        return this.request("GET", "/me", void 0, { includeAccount: false });
+      }
+      /**
+       * POST /roles/assign — set a member's functional roles (backend, sre,
+       * ...). Defaults to the caller; pass user_id to assign another member
+       * (owner/admin only). Replaces the member's set wholesale.
+       */
+      async assignRoles(input, opts = {}) {
+        return this.request("POST", "/roles/assign", input, {
+          accountId: opts.accountId
+        });
+      }
+      /**
+       * POST /roles/tag — tag a document into one or more role packs. The
+       * resolver boosts the document for members holding a matching role.
+       * Replaces the document's role tags wholesale.
+       */
+      async tagDocumentRoles(input, opts = {}) {
+        return this.request("POST", "/roles/tag", input, {
+          accountId: opts.accountId
+        });
+      }
+      /**
+       * POST /documents/pin — force-include ("pin") a document, or unpin it.
+       * A pinned doc is fetched out-of-band by the resolver on every resolve in
+       * scope (no similarity threshold) and reserved budget off the top — a
+       * standing directive, not a similarity hit. Owner/admin-only server-side.
+       */
+      async setDocumentPinned(input, opts = {}) {
+        return this.request("POST", "/documents/pin", input, {
+          accountId: opts.accountId
+        });
+      }
+      /** GET /decisions/enforce — pull the guardrail rules currently
+       *  in effect for the caller's account (and optionally a project).
+       *  Returns kind='decision' docs whose `metadata.enforce` is set —
+       *  the PreToolUse handler in plugin-core's pre-tool-use-handler
+       *  module is the primary caller. */
+      async listEnforceDecisions(opts = {}) {
+        const qs = new URLSearchParams();
+        if (opts.project_id !== void 0) {
+          qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
+        }
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        return this.request("GET", `/decisions/enforce${suffix}`);
+      }
+      /** POST /usage/event — write a usage_events row from the client.
+       *  Server-side enforces an allowlist of event_types (today:
+       *  tool.guardrail, action.invoke, resolve.outcome, edit.activity) and
+       *  re-derives account_id and user_id from the auth context so callers
+       *  can't forge rows for other workspaces. `opts.accountId` routes the
+       *  write to a non-default account (multi-account workspaces). */
+      async writeUsageEvent(input, opts = {}) {
+        return this.request("POST", "/usage/event", input, { accountId: opts.accountId });
+      }
+      /** GET /documents — list, filtered. */
+      async listDocuments(opts = {}) {
+        const qs = new URLSearchParams();
+        if (opts.kinds) for (const k of opts.kinds) qs.append("kind", k);
+        if (opts.scopes) for (const s of opts.scopes) qs.append("scope", s);
+        if (opts.statuses) for (const s of opts.statuses) qs.append("status", s);
+        if (opts.project_id !== void 0) {
+          qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
+        }
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        const res = await this.request("GET", `/documents${suffix}`);
+        return res.documents.map((d) => {
+          const { status, ...rest } = d;
+          return status == null ? rest : { ...rest, status };
+        });
+      }
+      /** POST /documents — create or update a document. */
+      async writeDocument(input) {
+        return this.request("POST", "/documents", input);
+      }
+      /** GET /documents/{id}/versions — history. */
+      async listVersions(documentId) {
+        const res = await this.request(
+          "GET",
+          `/documents/${encodeURIComponent(documentId)}/versions`
+        );
+        return res.versions;
+      }
+      /** POST /documents/{id}/revert — non-destructive revert to an older version. */
+      async revertDocument(documentId, targetVersionId, commitMessage) {
+        const res = await this.request(
+          "POST",
+          `/documents/${encodeURIComponent(documentId)}/revert`,
+          {
+            target_version_id: targetVersionId,
+            ...commitMessage ? { commit_message: commitMessage } : {}
+          }
+        );
+        return res.new_version_id;
+      }
+      /** GET /inbox — pending scribe proposals (newest first), plus recently
+       *  auto-activated correction rules (so the user can see what stuck + undo).
+       *  Pass `opts.accountId` to read a different account's inbox than the pinned
+       *  one (e.g. `memlin status` showing the resolver-effective account). */
+      async listInbox(opts = {}) {
+        return this.request("GET", "/inbox", void 0, { accountId: opts.accountId });
+      }
+      /** GET /insights — pending derived insights, including auto-memory proposals. */
+      async listInsights(params = {}, opts = {}) {
+        const search = new URLSearchParams();
+        if (params.kind) search.set("kind", params.kind);
+        if (params.status) search.set("status", params.status);
+        if (params.limit) search.set("limit", String(params.limit));
+        const qs = search.toString();
+        return this.request(
+          "GET",
+          `/insights${qs ? `?${qs}` : ""}`,
+          void 0,
+          { accountId: opts.accountId }
+        );
+      }
+      async resolveInsight(insightId, action) {
+        return this.request("POST", `/insights/${encodeURIComponent(insightId)}/resolve`, { action });
+      }
+      /** POST /inbox/{id} — accept or reject a proposal. */
+      async resolveProposal(proposalId, action) {
+        return this.request("POST", `/inbox/${encodeURIComponent(proposalId)}`, {
+          action
+        });
+      }
+      async listHandoffs(opts = {}) {
+        const qs = new URLSearchParams();
+        if (opts.project_id) qs.set("project_id", opts.project_id);
+        if (opts.target_agent_kind) qs.set("target_agent_kind", opts.target_agent_kind);
+        if (opts.status) qs.set("status", opts.status);
+        if (opts.limit) qs.set("limit", String(opts.limit));
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        return this.request("GET", `/handoffs${suffix}`);
+      }
+      async updateHandoff(handoffId, action) {
+        return this.request("PATCH", `/handoffs/${encodeURIComponent(handoffId)}`, {
+          action
+        });
+      }
+      async createHandoff(input) {
+        return this.request("POST", "/handoffs", input);
+      }
+      /** POST /documents/search — semantic + text. */
+      async search(query, opts = {}) {
+        const res = await this.request("POST", "/documents/search", {
+          query,
+          ...opts
+        });
+        return res.hits;
+      }
+      /** GET /documents?q=... — fuzzy title/path lookup. Used by `memlin revert`. */
+      async findDocumentsByName(needle, limit = 10) {
+        const qs = new URLSearchParams({ q: needle, limit: String(limit) });
+        const res = await this.request("GET", `/documents?${qs.toString()}`);
+        return res.documents;
+      }
+      /**
+       * POST /resolve — the marquee context-assembly endpoint.
+       *
+       * `cwd` and `git_remote` let the server infer the caller's active component
+       * (when the project has any defined) and apply a soft +0.15 boost to
+       * docs tagged to that component. Both are optional; omitting them yields
+       * the same project-wide ranking we used pre-component-awareness.
+       */
+      async resolve(args2, opts = {}) {
+        return this.request("POST", "/resolve", args2, {
+          accountId: opts.accountId
+        });
+      }
+      /**
+       * GET /account — name/tier/kind for the current account.
+       *
+       * Pass `opts.accountId` to target an account other than the pinned one.
+       * `memlin status` uses this to show the resolver-effective account in a
+       * multi-account workspace, so the returned `id` and `name` always describe
+       * the same account (no global-default/pinned-name mismatch).
+       */
+      async getAccount(opts = {}) {
+        return this.request("GET", "/account", void 0, { accountId: opts.accountId });
+      }
+      /**
+       * POST /projects/resolve — server-side project resolution.
+       *
+       * Returns `account_id` when a project matches in any account the user
+       * has access to (via the JWT's memlin_account_ids claim) — not just the
+       * one pinned in config. Callers use the returned account_id to retarget
+       * the actual resolve / write call to the right backend.
+       */
+      async resolveProject(input) {
+        return this.request("POST", "/projects/resolve", input);
+      }
+      /**
+       * POST /deploy-guard — acquire or release the per-project deploy lease.
+       *
+       * The PreToolUse deploy hook calls `acquire` before a deploy command runs;
+       * the PostToolUse hook calls `release` after. `acquired: false` means another
+       * session already holds an active lease (the hook then warns or blocks).
+       * project_id is passed explicitly — the hook resolves it from cwd first.
+       */
+      async deployGuard(input, opts = {}) {
+        return this.request("POST", "/deploy-guard", input, { accountId: opts.accountId });
+      }
+      /**
+       * POST /edit-guard — real-time, pre-edit file-collision check.
+       *
+       * The PreToolUse hook calls this before an Edit/Write/MultiEdit, passing the
+       * repo-relative path(s) about to change. The server reads the same
+       * `edit.activity` feed the resolver's recent_file_edits uses and returns any
+       * LIVE collisions — other sessions that edited the same path within the last
+       * ~10 min — so the hook can warn or block. Read-only; never mutates.
+       * project_id is passed explicitly (the hook resolves it from cwd first).
+       */
+      async editGuard(input, opts = {}) {
+        return this.request("POST", "/edit-guard", input, { accountId: opts.accountId });
+      }
+      /** GET /audit/<id>/replay — reconstruct a past resolve's exact bundle. */
+      async replayAudit(auditId) {
+        return this.request("GET", `/audit/${auditId}/replay`);
+      }
+      /** GET /audit/<id>/explain — per-item decomposition of a past resolve's
+       *  ranking arithmetic (similarity, kind weight, component boost, rerank,
+       *  decay) plus human-readable reasons. The "homework, shown" companion
+       *  to /replay. */
+      async explainAudit(auditId) {
+        return this.request("GET", `/audit/${auditId}/explain`);
+      }
+      /** GET /actions — list approved actions in the workspace. Same shape
+       *  the memlin_actions_list MCP tool returns. */
+      async listActions(opts = {}) {
+        const q = [];
+        if (opts.filter) q.push(`filter=${encodeURIComponent(opts.filter)}`);
+        if (opts.limit !== void 0) q.push(`limit=${opts.limit}`);
+        const qs = q.length > 0 ? `?${q.join("&")}` : "";
+        const { actions } = await this.request("GET", `/actions${qs}`);
+        return actions;
+      }
+      /** POST /actions/<id>/execute — invoke a callable action by id with
+       *  validated input. Returns the result + audit_id. */
+      async executeAction(actionId, input) {
+        return this.request("POST", `/actions/${actionId}/execute`, { input });
+      }
+      /** POST /prompt-ci — run Prompt CI regression tests for a skill. */
+      async runPromptCi(skillId, content) {
+        return this.request("POST", "/prompt-ci", { skill_id: skillId, content });
+      }
+      /**
+       * POST /memory/propose — extract memory candidates from a recent agent
+       * turn and queue them for user accept/dismiss. Fire-and-forget from the
+       * Stop hook's perspective; the server runs a cheap Haiku extraction and
+       * silently no-ops if it finds nothing worth remembering.
+       */
+      async proposeMemory(input, opts = {}) {
+        return this.request("POST", "/memory/propose", input, { accountId: opts.accountId });
+      }
+      /**
+       * POST /scribe/diff — Phase 2 auto-capture from a single git commit.
+       *
+       * Called by the PostToolUse hook after the agent runs `git commit`.
+       * The server reads the commit message + diff, asks Haiku to extract
+       * any decision/memory/skill baked into the change, and persists
+       * results as documents with metadata.status='proposed'. They appear
+       * in the user's inbox until accepted.
+       */
+      async scribeDiff(input, opts = {}) {
+        return this.request("POST", "/scribe/diff", input, { accountId: opts.accountId });
+      }
+      /**
+       * POST /scribe/session — Phase 1 auto-capture from a Claude Code
+       * session transcript. Server slices the transcript (tail-biased
+       * when too large), runs Haiku extraction, persists proposals.
+       *
+       * Triggered manually by /memlin-scribe today; an auto-triggered
+       * variant on Stop with a 15-min debounce is a fast follow-up.
+       */
+      async scribeSession(input, opts = {}) {
+        return this.request("POST", "/scribe/session", input, { accountId: opts.accountId });
+      }
+      /**
+       * POST /plans — upload a Claude Code plan as a first-class plan document.
+       *
+       * Server resolves project from cwd/git_remote (when not pinned), writes
+       * the document via writeDocument (auto-embedding), and inserts a
+       * companion plans row with status='drafted'. Returns the document_id
+       * + version metadata for downstream URL construction.
+       */
+      async pushPlan(input) {
+        return this.request("POST", "/plans", input);
+      }
+      /**
+       * GET /plans — list plans for the account, optionally filtered by
+       * `updated_after` (epoch ms) for cheap delta polling. Used by the
+       * UserPromptSubmit + SessionStart hooks to keep ~/.claude/plans/ in
+       * sync with the server.
+       */
+      async listPlans(opts = {}) {
+        const qs = new URLSearchParams();
+        if (opts.status) qs.set("status", opts.status);
+        if (opts.project_id !== void 0) {
+          qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
+        }
+        if (opts.updated_after) qs.set("updated_after", opts.updated_after);
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        const res = await this.request(
+          "GET",
+          `/plans${suffix}`
+        );
+        return res.plans;
+      }
+      /** GET /plans/<id> — full plan detail (status + body + bundle ref). */
+      async getPlan(id) {
+        return this.request("GET", `/plans/${encodeURIComponent(id)}`);
+      }
+      /**
+       * PATCH /plans/<id> — replace the plan's body (creates a new
+       * document_version, auto-embeds). Used by the PostToolUse hook to push
+       * Claude Code edits back up to Memlin.
+       */
+      async updatePlan(id, input) {
+        return this.request("PATCH", `/plans/${encodeURIComponent(id)}`, input);
+      }
+      /**
+       * POST /projects — create a project in the caller's current account.
+       * Used by `memlin init` to register a Claude Code workspace.
+       */
+      async createProject(input, opts = {}) {
+        return this.request("POST", "/projects", input, { accountId: opts.accountId });
+      }
+      /**
+       * PATCH /projects/{id} — attach/detach local paths, set/clear the git
+       * remote, or rename. Owner/admin only; 409 when a path or remote is
+       * already attached to another project in the account. Backs
+       * `memlin attach-path` and add-project's attach-instead-of-fork offer.
+       */
+      async patchProject(projectId, input, opts = {}) {
+        return this.request("PATCH", `/projects/${encodeURIComponent(projectId)}`, input, {
+          accountId: opts.accountId
+        });
+      }
+      /** POST /decisions/{id}/verify — record an outcome on the decision
+       *  ledger. Verdicts surface on every future resolve of the decision. */
+      async verifyDecision(decisionId, input, opts = {}) {
+        return this.request("POST", `/decisions/${encodeURIComponent(decisionId)}/verify`, input, {
+          accountId: opts.accountId
+        });
+      }
+      /** GET /decisions/review-due — decisions whose review date arrived. */
+      async listReviewDueDecisions(opts = {}) {
+        const qs = opts.projectId ? `?project_id=${encodeURIComponent(opts.projectId)}` : "";
+        return this.request("GET", `/decisions/review-due${qs}`, void 0, {
+          accountId: opts.accountId
+        });
+      }
+      /**
+       * POST /ask — natural-language Q&A over the team's workspace memory.
+       * Server resolves a bundle, sends it to Claude, returns answer +
+       * citations + audit_id. Used by `memlin ask` CLI and the web /ask
+       * panel.
+       */
+      async ask(input, opts = {}) {
+        return this.request("POST", "/ask", input, { accountId: opts.accountId });
+      }
+      /** GET /projects — list every project in the current account. */
+      async listProjects(opts = {}) {
+        const res = await this.request("GET", "/projects", void 0, { accountId: opts.accountId });
+        return res.projects;
+      }
+    };
+  }
+});
+
+// packages/plugin-core/src/resolver-skill.ts
+var RESOLVER_SKILL_MD;
+var init_resolver_skill = __esm({
+  "packages/plugin-core/src/resolver-skill.ts"() {
+    "use strict";
+    RESOLVER_SKILL_MD = `---
+name: Memlin
+description: Memlin auto-resolves project context (skills, memory, approved goals, schemas) into your prompt before you process it. This skill tells you how to *use* that context, and when to fall back to invoking memlin_resolve_task manually.
+---
+
+# Memlin Resolver
+
+The Memlin plugin's UserPromptSubmit hook auto-injects a \`<memlin-resolved-context>\`
+block into every non-trivial user prompt \u2014 *before* you see the prompt. The
+block contains the same scope-correct, citation-bearing bundle that
+\`memlin_resolve_task\` would return: top skills, memory, approved goals,
+schemas, kind-weighted and threshold-filtered to ~4k tokens.
+
+## How to use the pre-resolved bundle
+
+1. **Read it as authoritative project context.** It's already scope-filtered
+   (project + workspace, RLS-enforced server-side) \u2014 you don't need to ask the
+   user for access.
+2. **Apply the primary skill's framework** first. Use supporting skills for
+   complementary perspectives. **Treat memory facts as project ground truth**
+   (more authoritative than your training data when they conflict). **Honor
+   goals as constraints.** **Validate against any schemas.**
+3. **Cite your sources.** When stating a fact or following a constraint from
+   the bundle, mention the source path + version. Example: "Per
+   \`goals/auth-required.md\` v1, every new endpoint requires authn."
+4. **Don't re-invoke \`memlin_resolve_task\`** for the current user message \u2014
+   the bundle is already in your context. Re-invoking just wastes a tool call.
+
+## When to invoke memlin_search or memlin_read_memory yourself
+
+The auto-resolve covers the task at hand. Use the MCP tools directly when you
+need to *explore* beyond the resolved bundle:
+
+- The user asks "what does Memlin know about X?" where X is broader than the
+  current task \u2192 \`memlin_search\` with X as the query.
+- You need ALL of something (e.g. "list all approved goals in this project")
+  \u2192 \`memlin_read_memory\` with the appropriate filter.
+- You want to read the full body of a doc the bundle only cited a snippet of
+  \u2192 \`memlin_get_document\` with the doc id.
+
+## Empty bundle
+
+If the resolved-context block is missing or empty, it means either (a) the
+user's prompt was trivial enough that the hook skipped it, or (b) nothing in
+the workspace cleared the per-kind similarity threshold for this task.
+Proceed with your general expertise and note that you didn't find specialized
+context for this task.
+`;
+  }
+});
+
+// packages/plugin-core/src/plugin-install.ts
+import { promises as fs3 } from "node:fs";
+import { existsSync } from "node:fs";
+import path3 from "node:path";
+import os4 from "node:os";
+function defaultUserSettingsPaths() {
+  const claudeDir = path3.join(os4.homedir(), ".claude");
+  return { claudeDir, settingsFile: path3.join(claudeDir, "settings.json") };
+}
+async function readClaudeUserSettings(paths) {
+  const p = paths ?? defaultUserSettingsPaths();
+  if (!existsSync(p.settingsFile)) return null;
+  let raw;
+  try {
+    raw = await fs3.readFile(p.settingsFile, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+async function ensureUserScopePluginEnabled(paths) {
+  const p = paths ?? defaultUserSettingsPaths();
+  try {
+    await fs3.mkdir(p.claudeDir, { recursive: true });
+    let current = {};
+    if (existsSync(p.settingsFile)) {
+      const raw = await fs3.readFile(p.settingsFile, "utf8");
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") current = parsed;
+      } catch (err2) {
+        return {
+          status: "failed",
+          settingsFile: p.settingsFile,
+          detail: `existing settings.json isn't valid JSON: ${err2 instanceof Error ? err2.message : String(err2)}`
+        };
+      }
+    }
+    const alreadyEnabled = current.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
+    const marketplaceKnown = !!current.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
+    if (alreadyEnabled && marketplaceKnown) {
+      return {
+        status: "already-enabled",
+        settingsFile: p.settingsFile,
+        detail: "plugin already enabled at user scope"
+      };
+    }
+    const next = {
+      ...current,
+      enabledPlugins: {
+        ...current.enabledPlugins ?? {},
+        [MEMLIN_PLUGIN_KEY]: true
+      }
+    };
+    let touchedMarketplace = false;
+    if (!marketplaceKnown) {
+      next.extraKnownMarketplaces = {
+        ...current.extraKnownMarketplaces ?? {},
+        [MEMLIN_MARKETPLACE_KEY]: { source: { ...MEMLIN_MARKETPLACE_SOURCE } }
+      };
+      touchedMarketplace = true;
+    }
+    await fs3.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
+    return {
+      status: touchedMarketplace ? "enabled-with-marketplace" : "enabled",
+      settingsFile: p.settingsFile,
+      detail: touchedMarketplace ? "enabled plugin + registered Memlin marketplace" : "enabled plugin (marketplace already registered)"
+    };
+  } catch (err2) {
+    return {
+      status: "failed",
+      settingsFile: p.settingsFile,
+      detail: err2 instanceof Error ? err2.message : String(err2)
+    };
+  }
+}
+function inspectUserScopePlugin(settings) {
+  if (!settings) return { status: "unconfigured", marketplaceRegistered: false };
+  const enabled = settings.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
+  const market = !!settings.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
+  return { status: enabled ? "enabled" : "disabled", marketplaceRegistered: market };
+}
+var MEMLIN_PLUGIN_KEY, MEMLIN_MARKETPLACE_KEY, MEMLIN_MARKETPLACE_SOURCE;
+var init_plugin_install = __esm({
+  "packages/plugin-core/src/plugin-install.ts"() {
+    "use strict";
+    MEMLIN_PLUGIN_KEY = "memlin@memlin-ai";
+    MEMLIN_MARKETPLACE_KEY = "memlin-ai";
+    MEMLIN_MARKETPLACE_SOURCE = {
+      source: "github",
+      repo: "memlin-ai/memlin-claude-plugin"
+    };
+  }
+});
+
+// packages/plugin-core/src/cli/login.ts
+var login_exports = {};
+import { promises as fs4 } from "node:fs";
+import path4 from "node:path";
+import os5 from "node:os";
+async function installResolverSkill() {
+  try {
+    try {
+      const stat = await fs4.stat(RESOLVER_SKILL_FILE);
+      if (stat.size > 0) {
+        return { status: "kept", path: RESOLVER_SKILL_FILE };
+      }
+    } catch {
+    }
+    await fs4.mkdir(RESOLVER_SKILL_DIR, { recursive: true });
+    await fs4.writeFile(RESOLVER_SKILL_FILE, RESOLVER_SKILL_MD, "utf8");
+    return { status: "installed", path: RESOLVER_SKILL_FILE };
+  } catch (e) {
+    return {
+      status: "failed",
+      path: RESOLVER_SKILL_FILE,
+      error: e instanceof Error ? e.message : String(e)
+    };
+  }
+}
+function parseLoginArgs(argv) {
+  const out2 = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--account" || a === "-a") {
+      const v = argv[++i];
+      if (!v) return { error: "--account requires a value" };
+      out2.requestedAccount = v;
+    } else if (a === "--help" || a === "-h") {
+      return { error: "help" };
+    } else if (a?.startsWith("--")) {
+      return { error: `unknown flag: ${a}` };
+    }
+  }
+  return out2;
+}
+function pickAccount(accounts, needle) {
+  const exact = accounts.find((a) => a.id === needle);
+  if (exact) return exact;
+  const lower = needle.toLowerCase();
+  const matches = accounts.filter((a) => a.name.toLowerCase().includes(lower));
+  if (matches.length === 1) return matches[0];
+  return null;
+}
+async function main() {
+  const parsed = parseLoginArgs(process.argv.slice(2));
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      console.log("memlin login [--account <uuid-or-name>]");
+      console.log("");
+      console.log("Authenticate to Memlin and pin the active account.");
+      console.log("  --account <v>   Override server-side default_account_id with this account");
+      console.log("                  (must be one you're a member of)");
+      process.exit(0);
+    }
+    console.error(`memlin login: ${parsed.error}`);
+    process.exit(2);
+  }
+  const { requestedAccount } = parsed;
+  console.log("memlin login");
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  const device = await startDeviceFlow();
+  console.log("");
+  console.log("  Open this URL in your browser to sign in:");
+  console.log("");
+  console.log(`    \x1B[1m${device.verification_uri_complete}\x1B[0m`);
+  console.log("");
+  console.log(`  Verification code: \x1B[1m${device.user_code}\x1B[0m`);
+  console.log(`  Expires in ${Math.floor(device.expires_in / 60)} min.`);
+  console.log("");
+  process.stdout.write("  waiting for approval");
+  const token = await pollForToken(device.device_code, device.interval, (elapsed) => {
+    process.stdout.write(elapsed % 5 === 0 ? "." : "");
+  });
+  process.stdout.write("\n\n");
+  await writePersistedToken(token);
+  const apiUrl = resolveApiUrl();
+  const probe = new MemlinApiClient({
+    baseUrl: apiUrl,
+    getAccessToken: async () => token.access_token,
+    accountId: "00000000-0000-0000-0000-000000000000"
+  });
+  let me;
+  try {
+    me = await probe.me();
+  } catch (err2) {
+    console.error(
+      "memlin login: signed in to Auth0, but the Memlin API rejected the token.\n  Endpoint: " + apiUrl + "\n  Error: " + (err2 instanceof Error ? err2.message : String(err2))
+    );
+    process.exit(1);
+  }
+  if (me.accounts.length === 0) {
+    console.error(
+      "No Memlin workspaces on this user. Open https://memlin.ai once to bootstrap a personal workspace, then re-run `memlin login`."
+    );
+    process.exit(1);
+  }
+  let accountId;
+  let accountName;
+  if (requestedAccount) {
+    const picked = pickAccount(
+      me.accounts.map((a) => ({ id: a.id, name: a.name })),
+      requestedAccount
+    );
+    if (!picked) {
+      console.error(
+        `memlin login: --account "${requestedAccount}" doesn't match any account you're a member of.`
+      );
+      console.error("Your accounts:");
+      for (const a of me.accounts) {
+        console.error(`  ${a.id}  ${a.name}`);
+      }
+      process.exit(1);
+    }
+    accountId = picked.id;
+    accountName = picked.name;
+  } else {
+    accountId = me.default_account_id ?? me.accounts[0].id;
+    accountName = me.accounts.find((a) => a.id === accountId)?.name ?? "(unknown)";
+  }
+  const config = {
+    api_url: apiUrl,
+    account_id: accountId,
+    user_id: me.user_id,
+    project_id: null
+  };
+  await fs4.mkdir(CONFIG_DIR, { recursive: true });
+  await fs4.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), "utf8");
+  const displayName = me.display_name ?? me.email ?? me.user_id.slice(0, 8) + "\u2026";
+  console.log(`  \u2713 signed in as ${displayName}`);
+  console.log(`  \u2713 workspace "${accountName}"`);
+  const installed = await installResolverSkill();
+  if (installed.status === "installed") {
+    console.log(`  \u2713 installed Memlin resolver skill (${installed.path})`);
+  } else if (installed.status === "kept") {
+    console.log(`  \u2713 Memlin resolver skill already present (${installed.path})`);
+  } else {
+    console.log(
+      `  ! couldn't install Memlin resolver skill at ${installed.path}: ${installed.error ?? "unknown error"}`
+    );
+  }
+  const pluginInstall = await ensureUserScopePluginEnabled();
+  if (pluginInstall.status === "enabled") {
+    console.log(`  \u2713 enabled Memlin plugin user-wide (${pluginInstall.settingsFile})`);
+    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
+  } else if (pluginInstall.status === "enabled-with-marketplace") {
+    console.log(`  \u2713 enabled Memlin plugin + registered marketplace (${pluginInstall.settingsFile})`);
+    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
+  } else if (pluginInstall.status === "already-enabled") {
+    console.log(`  \u2713 Memlin plugin already enabled user-wide (${pluginInstall.settingsFile})`);
+  } else {
+    console.log(`  ! couldn't enable Memlin plugin user-wide: ${pluginInstall.detail}`);
+    console.log(`    Run \`/plugin install memlin@memlin-ai\` in any workspace to enable manually.`);
+  }
+  console.log("");
+  console.log("  Run `memlin pull` to fetch your memory, skills, and goals.");
+  printCommandGuide({ intro: true });
+}
+var CONFIG_DIR, CONFIG_FILE, RESOLVER_SKILL_DIR, RESOLVER_SKILL_FILE;
+var init_login = __esm({
+  "packages/plugin-core/src/cli/login.ts"() {
+    "use strict";
+    init_auth();
+    init_memlin_api_client();
+    init_resolver_skill();
+    init_plugin_install();
+    init_command_guide();
+    CONFIG_DIR = path4.join(os5.homedir(), ".config", "memlin");
+    CONFIG_FILE = path4.join(CONFIG_DIR, "config.json");
+    RESOLVER_SKILL_DIR = path4.join(os5.homedir(), ".claude", "skills", "memlin");
+    RESOLVER_SKILL_FILE = path4.join(RESOLVER_SKILL_DIR, "SKILL.md");
+    main().catch((err2) => {
+      console.error("memlin login failed:", err2 instanceof Error ? err2.message : err2);
+      process.exit(1);
+    });
+  }
+});
+
+// packages/plugin-core/src/workspace-binding.ts
+import { promises as fs5 } from "node:fs";
+import path5 from "node:path";
+async function findWorkspaceBinding(startDir) {
+  let dir = path5.resolve(startDir);
+  for (let i = 0; i < 64; i++) {
+    const candidate = path5.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+    try {
+      const raw = await fs5.readFile(candidate, "utf8");
+      const parsed = JSON.parse(raw);
+      if (typeof parsed.account_id === "string" && parsed.account_id) {
+        return {
+          binding: {
+            account_id: parsed.account_id,
+            project_id: parsed.project_id ?? null,
+            account_name: parsed.account_name
+          },
+          workspaceRoot: dir
+        };
+      }
+    } catch {
+    }
+    const parent = path5.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+async function writeWorkspaceBinding(workspaceRoot, binding) {
+  const dir = path5.join(path5.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
+  await fs5.mkdir(dir, { recursive: true });
+  const file = path5.join(dir, WORKSPACE_BINDING_FILE);
+  const body2 = JSON.stringify(
+    {
+      account_id: binding.account_id,
+      project_id: binding.project_id ?? null,
+      account_name: binding.account_name
+    },
+    null,
+    2
+  );
+  await fs5.writeFile(file, body2 + "\n", "utf8");
+  return file;
+}
+async function clearWorkspaceBinding(workspaceRoot) {
+  const file = path5.join(path5.resolve(workspaceRoot), WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+  try {
+    await fs5.unlink(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE;
+var init_workspace_binding = __esm({
+  "packages/plugin-core/src/workspace-binding.ts"() {
+    "use strict";
+    WORKSPACE_DIR_NAME = ".memlin";
+    WORKSPACE_BINDING_FILE = "config.json";
+  }
+});
+
+// packages/plugin-core/src/client.ts
+import { promises as fs6 } from "node:fs";
+import path6 from "node:path";
+import os6 from "node:os";
+async function readConfig() {
+  try {
+    const raw = await fs6.readFile(CONFIG_FILE2, "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed.account_id || !parsed.user_id) return null;
+    return {
+      api_url: parsed.api_url ?? DEFAULT_API_URL,
+      account_id: parsed.account_id,
+      user_id: parsed.user_id,
+      project_id: parsed.project_id ?? null
+    };
+  } catch {
+    return null;
+  }
+}
+async function writeToken(token) {
+  const persisted = {
+    access_token: token.access_token,
+    refresh_token: token.refresh_token,
+    expires_at: token.expires_at ?? Date.now() + 24 * 36e5
+    // 24h fallback
+  };
+  await writePersistedToken(persisted);
+}
+async function getApi(opts = {}) {
+  const config = await readConfig();
+  if (!config) return null;
+  try {
+    await getValidAccessToken();
+  } catch {
+    return null;
+  }
+  const cwd = opts.cwd ?? process.cwd();
+  const overlay = await findWorkspaceBinding(cwd);
+  const { workspaceBound, workspaceRoot } = applyWorkspaceOverlay(config, overlay);
+  const apiUrl = process.env.MEMLIN_API_URL?.trim() || config.api_url || resolveApiUrl();
+  const api = new MemlinApiClient({
+    baseUrl: apiUrl,
+    getAccessToken: getValidAccessToken,
+    accountId: config.account_id
+  });
+  return { api, config, workspaceBound, workspaceRoot };
+}
+function applyWorkspaceOverlay(config, overlay) {
+  if (!overlay) return { workspaceBound: false, workspaceRoot: null };
+  config.account_id = overlay.binding.account_id;
+  if (overlay.binding.project_id !== void 0) {
+    config.project_id = overlay.binding.project_id;
+  }
+  return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
+}
+var CONFIG_DIR2, CONFIG_FILE2, TOKEN_FILE;
+var init_client = __esm({
+  "packages/plugin-core/src/client.ts"() {
+    "use strict";
+    init_auth();
+    init_memlin_api_client();
+    init_workspace_binding();
+    CONFIG_DIR2 = path6.join(os6.homedir(), ".config", "memlin");
+    CONFIG_FILE2 = path6.join(CONFIG_DIR2, "config.json");
+    TOKEN_FILE = path6.join(CONFIG_DIR2, "token.json");
+  }
+});
+
+// packages/plugin-core/src/cli/init.ts
+var init_exports = {};
+import readline from "node:readline/promises";
+import { promises as fs7 } from "node:fs";
+import path7 from "node:path";
+import os7 from "node:os";
+async function main2() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  async function ask(prompt, fallback) {
+    const hint = fallback ? ` [${fallback}]` : "";
+    const ans = (await rl.question(`${prompt}${hint}: `)).trim();
+    return ans || fallback || "";
+  }
+  console.log("memlin init  (paste-a-token fallback \u2014 prefer `memlin login`)");
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  console.log("");
+  const apiUrl = await ask("Memlin API URL", process.env.MEMLIN_API_URL ?? DEFAULT_API_URL);
+  const access_token = await ask("Access token (Auth0 JWT)");
+  let account_id = "";
+  let user_id = "";
+  try {
+    const parts = access_token.split(".");
+    if (parts.length < 2 || !parts[1]) throw new Error("not a JWT");
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const ids = payload.memlin_account_ids;
+    account_id = payload.memlin_default_account_id ?? ids?.[0] ?? "";
+    user_id = payload.sub ?? "";
+  } catch {
+    console.error("couldn't decode access token JWT \u2014 paste it raw, no surrounding quotes.");
+    rl.close();
+    process.exit(1);
+  }
+  if (!account_id || !user_id) {
+    console.error(
+      "token is missing memlin_account_ids / sub. Make sure the Auth0 Action is deployed."
+    );
+    rl.close();
+    process.exit(1);
+  }
+  rl.close();
+  const config = {
+    api_url: apiUrl,
+    account_id,
+    user_id,
+    project_id: null
+  };
+  await fs7.mkdir(CONFIG_DIR3, { recursive: true });
+  await fs7.writeFile(CONFIG_FILE3, JSON.stringify(config, null, 2), "utf8");
+  await writeToken({ access_token });
+  console.log("");
+  console.log(`\u2713 wrote ${CONFIG_FILE3}`);
+  console.log(`\u2713 account ${account_id.slice(0, 8)}\u2026  user ${user_id.slice(0, 12)}\u2026`);
+  console.log("");
+  console.log("Try: `node ~/.claude/plugins/memlin/dist/cli/status.js`");
+}
+var CONFIG_DIR3, CONFIG_FILE3;
+var init_init = __esm({
+  "packages/plugin-core/src/cli/init.ts"() {
+    "use strict";
+    init_client();
+    init_memlin_api_client();
+    CONFIG_DIR3 = path7.join(os7.homedir(), ".config", "memlin");
+    CONFIG_FILE3 = path7.join(CONFIG_DIR3, "config.json");
+    main2().catch((err2) => {
+      console.error("memlin init failed:", err2 instanceof Error ? err2.message : err2);
+      process.exit(1);
+    });
+  }
+});
+
+// packages/plugin-core/src/project-resolver.ts
+import { execSync } from "node:child_process";
+import path8 from "node:path";
+function looksLikePluginCache(cwd) {
+  return cwd.includes("/.claude/plugins/cache/") || cwd.includes("/.cursor/plugins/cache/");
+}
+function runtimeCwd(fallback = process.cwd()) {
+  for (const name of WORKSPACE_ENV_VARS) {
+    const raw = process.env[name]?.trim();
+    if (raw && path8.isAbsolute(raw)) return path8.resolve(raw);
+  }
+  return path8.resolve(fallback);
+}
+function runtimeCwdForDisplay(fallback = process.cwd()) {
+  const processCwd = path8.resolve(fallback);
+  const cwd = runtimeCwd(fallback);
+  return {
+    cwd,
+    source: cwd !== processCwd ? "env" : "process",
+    processCwd,
+    pluginCache: looksLikePluginCache(processCwd)
+  };
+}
+async function resolveProject(api, cwd, configProjectId) {
+  const absCwd = path8.resolve(cwd);
+  const remote = readGitRemote(cwd);
+  try {
+    const result = await api.resolveProject({
+      git_remote: remote,
+      cwd: absCwd
+    });
+    if (result.project_id) {
+      return {
+        project_id: result.project_id,
+        project_name: result.name,
+        account_id: result.account_id,
+        reason: result.reason === "none" ? "config" : result.reason
+      };
+    }
+  } catch {
+  }
+  if (configProjectId) {
+    return {
+      project_id: configProjectId,
+      project_name: null,
+      account_id: null,
+      reason: "config"
+    };
+  }
+  return { project_id: null, project_name: null, account_id: null, reason: "none" };
+}
+function readGitRemote(cwd) {
+  try {
+    const url = execSync("git remote get-url origin", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    return normalizeGitRemote(url);
+  } catch {
+    return null;
+  }
+}
+function isWorkspaceActive(input) {
+  return Boolean(input.resolvedProjectId) || input.workspaceBound;
+}
+function effectiveAccountId(input) {
+  return input.resolvedAccountId ?? input.configAccountId;
+}
+var WORKSPACE_ENV_VARS;
+var init_project_resolver = __esm({
+  "packages/plugin-core/src/project-resolver.ts"() {
+    "use strict";
+    init_runtime_shared();
+    WORKSPACE_ENV_VARS = [
+      // Claude Code exposes the original project dir to hooks/plugin commands.
+      "CLAUDE_PROJECT_DIR",
+      // Cursor/plugin shims and local tests can set this explicitly.
+      "CURSOR_WORKSPACE_ROOT",
+      "CURSOR_PROJECT_ROOT",
+      "MEMLIN_WORKSPACE_ROOT",
+      // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
+      "INIT_CWD"
+    ];
+  }
+});
+
+// packages/plugin-core/src/state.ts
+import { promises as fs8 } from "node:fs";
+import path9 from "node:path";
+import os8 from "node:os";
+import crypto from "node:crypto";
+async function readState() {
+  try {
+    const raw = await fs8.readFile(STATE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return { ...EMPTY2 };
+  }
+}
+async function writeState(state) {
+  await fs8.mkdir(path9.dirname(STATE_FILE), { recursive: true });
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  await fs8.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
+  await fs8.rename(tmp, STATE_FILE);
+}
+function hash(content) {
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+async function recordLastResolve(entry) {
+  try {
+    const state = await readState();
+    state.last_resolve = entry;
+    await writeState(state);
+  } catch {
+  }
+}
+function diffStates(prev, current) {
+  const currentByPath = new Map(current.map((c) => [c.path, c.hash]));
+  const prevByPath = new Map(Object.entries(prev.documents).map(([p, s]) => [p, s.content_hash]));
+  const added = [];
+  const modified = [];
+  const deleted = [];
+  for (const [p, h] of currentByPath) {
+    const prevHash = prevByPath.get(p);
+    if (!prevHash) added.push(p);
+    else if (prevHash !== h) modified.push(p);
+  }
+  for (const p of prevByPath.keys()) {
+    if (!currentByPath.has(p)) deleted.push(p);
+  }
+  return { added, modified, deleted };
+}
+var STATE_FILE, EMPTY2;
+var init_state = __esm({
+  "packages/plugin-core/src/state.ts"() {
+    "use strict";
+    STATE_FILE = path9.join(os8.homedir(), ".config", "memlin", "state.json");
+    EMPTY2 = { documents: {} };
+  }
+});
+
+// packages/plugin-core/src/local-scan.ts
+import { promises as fs9 } from "node:fs";
+import { existsSync as existsSync2 } from "node:fs";
+import path10 from "node:path";
+async function scanLocal(opts = {}) {
+  const out2 = [];
+  const root = opts.rootOverride ?? resolveHost().homeDir();
+  const memDir = path10.join(root, "memory");
+  if (existsSync2(memDir)) {
+    for (const file of await fs9.readdir(memDir)) {
+      if (!file.endsWith(".md") || file === "MEMORY.md") continue;
+      const abs = path10.join(memDir, file);
+      const content = await fs9.readFile(abs, "utf8");
+      out2.push({
+        path: `memory/${file}`,
+        abs_path: abs,
+        kind: "memory",
+        content,
+        hash: hash(content)
+      });
+    }
+  }
+  const skillsDir = path10.join(root, "skills");
+  if (existsSync2(skillsDir)) {
+    const entries = await fs9.readdir(skillsDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const skillMd = path10.join(skillsDir, e.name, "SKILL.md");
+      if (!existsSync2(skillMd)) continue;
+      const content = await fs9.readFile(skillMd, "utf8");
+      out2.push({
+        path: `skills/${e.name}/SKILL.md`,
+        abs_path: skillMd,
+        kind: "skill",
+        content,
+        hash: hash(content)
+      });
+    }
+  }
+  if (opts.includePlans) {
+    const plansDir2 = resolveHost().plansDir();
+    if (existsSync2(plansDir2)) {
+      for (const file of await fs9.readdir(plansDir2)) {
+        if (!file.endsWith(".md")) continue;
+        const abs = path10.join(plansDir2, file);
+        const content = await fs9.readFile(abs, "utf8");
+        out2.push({
+          path: `plans/${file}`,
+          abs_path: abs,
+          kind: "plan",
+          content,
+          hash: hash(content)
+        });
+      }
+    }
+  }
+  return out2;
+}
+var init_local_scan = __esm({
+  "packages/plugin-core/src/local-scan.ts"() {
+    "use strict";
+    init_state();
+    init_host();
+  }
+});
+
+// packages/plugin-core/src/plan-sync.ts
+import { promises as fs10 } from "node:fs";
+import path11 from "node:path";
+function homeBase() {
+  return resolveHost().homeDir();
+}
+function plansDir() {
+  return resolveHost().plansDir();
+}
+async function pullPlans(api, opts = {}) {
+  const fetchOpts = {};
+  if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
+  if (opts.since) fetchOpts.updated_after = opts.since;
+  const list = await api.listPlans(fetchOpts);
+  await fs10.mkdir(plansDir(), { recursive: true });
+  const state = await readState();
+  const pulled = [];
+  const unchanged = [];
+  const removed = [];
+  const isFullSync = !opts.since;
+  const seenPaths = /* @__PURE__ */ new Set();
+  for (const p of list) {
+    const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
+    const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
+    const localPath = path11.join("plans", filename);
+    const full = path11.join(plansDir(), filename);
+    seenPaths.add(localPath);
+    let body2;
+    try {
+      const detail = await api.getPlan(p.document_id);
+      body2 = detail.body;
+    } catch {
+      continue;
+    }
+    const fileContent = formatPlanFile(p.title, body2, p.status, {
+      documentId: p.document_id,
+      projectId: p.project_id
+    });
+    const contentHash = hash(fileContent);
+    const existing = state.documents[localPath];
+    if (existing?.content_hash === contentHash) {
+      unchanged.push(localPath);
+      continue;
+    }
+    await fs10.writeFile(full, fileContent, "utf8");
+    pulled.push(localPath);
+    state.documents[localPath] = {
+      document_id: p.document_id,
+      version_id: "",
+      version_number: p.version_number,
+      content_hash: contentHash,
+      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+      scope: p.scope ?? "personal",
+      kind: "plan"
+    };
+  }
+  if (isFullSync) {
+    for (const tracked of Object.keys(state.documents)) {
+      if (!tracked.startsWith("plans/")) continue;
+      if (seenPaths.has(tracked)) continue;
+      delete state.documents[tracked];
+    }
+  }
+  await writeState(state);
+  return { pulled, unchanged, removed };
+}
+function resolveTargetDocId(stateEntry, binding) {
+  return stateEntry?.document_id || binding?.documentId || void 0;
+}
+async function pushPlanFile(api, file, opts = {}) {
+  const raw = await fs10.readFile(file, "utf8");
+  const { title, body: body2, binding: existingBinding } = parsePlanFile(raw);
+  if (!body2.trim()) {
+    throw new Error("plan body is empty");
+  }
+  const relPath = path11.relative(homeBase(), file);
+  const state = await readState();
+  const existing = state.documents[relPath];
+  const targetDocId = resolveTargetDocId(existing, existingBinding);
+  if (targetDocId) {
+    const result2 = await api.updatePlan(targetDocId, {
+      body: body2,
+      title,
+      commit_message: "edit from claude-code"
+    });
+    await stampPlanFile(file, {
+      documentId: result2.document_id,
+      projectId: existingBinding?.projectId ?? null
+    });
+    const stampedUpdate = await fs10.readFile(file, "utf8").catch(() => raw);
+    state.documents[relPath] = {
+      document_id: result2.document_id,
+      version_id: existing?.version_id ?? "",
+      version_number: result2.version_number,
+      content_hash: hash(stampedUpdate),
+      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+      scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
+      kind: "plan"
+    };
+    await writeState(state);
+    return {
+      document_id: result2.document_id,
+      version_number: result2.version_number,
+      created: false
+    };
+  }
+  const result = await api.pushPlan({
+    title,
+    body: body2,
+    cwd: opts.cwd ?? null,
+    git_remote: opts.gitRemote ?? null
+  });
+  state.documents[relPath] = {
+    document_id: result.document_id,
+    version_id: "",
+    version_number: result.version_number,
+    content_hash: hash(raw),
+    last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+    scope: result.project_id ? "project" : "personal",
+    kind: "plan"
+  };
+  await writeState(state);
+  await stampPlanFile(file, {
+    documentId: result.document_id,
+    projectId: result.project_id
+  });
+  const stamped = await fs10.readFile(file, "utf8").catch(() => raw);
+  state.documents[relPath].content_hash = hash(stamped);
+  await writeState(state);
+  return {
+    document_id: result.document_id,
+    version_number: result.version_number,
+    created: true
+  };
+}
+async function listUnboundPlans() {
+  const out2 = [];
+  let entries;
+  try {
+    entries = await fs10.readdir(plansDir());
+  } catch {
+    return out2;
+  }
+  const state = await readState();
+  for (const f of entries) {
+    if (!f.endsWith(".md")) continue;
+    const abs = path11.join(plansDir(), f);
+    let raw;
+    let size = 0;
+    try {
+      const st = await fs10.stat(abs);
+      if (!st.isFile() || st.size === 0) continue;
+      size = st.size;
+      raw = await fs10.readFile(abs, "utf8");
+    } catch {
+      continue;
+    }
+    const relPath = path11.relative(homeBase(), abs);
+    const { title, binding } = parsePlanFile(raw);
+    if (state.documents[relPath]?.document_id || binding?.documentId) continue;
+    out2.push({ file: f, title, size });
+  }
+  return out2;
+}
+async function stampPlanFile(file, binding) {
+  let raw;
+  try {
+    raw = await fs10.readFile(file, "utf8");
+  } catch {
+    return;
+  }
+  const parsed = parsePlanFile(raw);
+  const stampLine = `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`;
+  const bodyNoStamp = parsed.body.replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "");
+  const composed = [
+    `# ${parsed.title}`,
+    "",
+    parsed.status ? `<!-- memlin-plan-status: ${parsed.status} -->` : null,
+    stampLine,
+    "",
+    bodyNoStamp.trim(),
+    ""
+  ].filter((l) => l !== null).join("\n");
+  await fs10.writeFile(file, composed, "utf8");
+}
+function formatPlanFile(title, body2, status, binding) {
+  const trimmedBody = body2.replace(/^\s*#\s+.+\n+/, "").trimEnd();
+  const lines = [`# ${title}`, "", `<!-- memlin-plan-status: ${status} -->`];
+  if (binding) {
+    lines.push(
+      `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`
+    );
+  }
+  lines.push("", trimmedBody, "");
+  return lines.join("\n");
+}
+function parsePlanFile(raw) {
+  const firstNl = raw.indexOf("\n");
+  const first = firstNl === -1 ? raw : raw.slice(0, firstNl);
+  const title = first.replace(/^#\s+/, "").trim() || "(untitled plan)";
+  const rest = firstNl === -1 ? "" : raw.slice(firstNl + 1).trim();
+  const statusMatch = rest.match(/<!--\s*memlin-plan-status:\s*([a-z_]+)\s*-->/);
+  const status = statusMatch ? statusMatch[1] ?? null : null;
+  const bindMatch = rest.match(/<!--\s*memlin-binding:\s*doc=([0-9a-f-]+)\s+project=(\S+)\s*-->/i);
+  const binding = bindMatch ? {
+    documentId: bindMatch[1],
+    projectId: bindMatch[2] === "none" ? null : bindMatch[2] ?? null
+  } : null;
+  const body2 = rest.replace(/<!--\s*memlin-plan-status:[^>]*-->\s*\n?/g, "").replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "").trim();
+  return { title, body: body2, status, binding };
+}
+function getLastPlanPullCursor(state) {
+  return state.last_plan_pull_at;
+}
+function setLastPlanPullCursor(state, at) {
+  state.last_plan_pull_at = at;
+}
+var init_plan_sync = __esm({
+  "packages/plugin-core/src/plan-sync.ts"() {
+    "use strict";
+    init_state();
+    init_host();
+  }
+});
+
+// packages/plugin-core/src/cli/status.ts
+var status_exports = {};
+async function main3() {
+  console.log("memlin status");
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  const config = await readConfig();
+  const token = await readPersistedToken();
+  if (!config || !token) {
+    console.log("  not configured. Run `memlin login`.");
+    return;
+  }
+  const ctx = await getApi();
+  printAuth(token);
+  if (!ctx) {
+    console.log("");
+    console.log("  could not connect (token may be expired and unrefreshable).");
+    return;
+  }
+  const cwdInfo = runtimeCwdForDisplay();
+  const resolved = await resolveProject(ctx.api, cwdInfo.cwd, ctx.config.project_id);
+  await printAccount(ctx.api, ctx.config, resolved);
+  printProject(resolved, cwdInfo);
+  printRouting(ctx.config.api_url);
+  await printLocalState();
+}
+function printAuth(token) {
+  console.log("");
+  console.log("Auth");
+  if (!Number.isFinite(token.expires_at) || token.expires_at <= 0) {
+    console.log("  access token: present (no expiry recorded \u2014 legacy `memlin init` token)");
+  } else {
+    const remaining = token.expires_at - Date.now();
+    const expiresAt = new Date(token.expires_at);
+    if (remaining <= 0) {
+      console.log(
+        `  access token: expired ${formatDurationCompact(-remaining)} ago (auto-refresh on next call)`
+      );
+    } else {
+      console.log(
+        `  access token: valid for ${formatDurationCompact(remaining)} (until ${expiresAt.toLocaleString()})`
+      );
+    }
+  }
+  console.log(
+    `  refresh token: ${token.refresh_token ? "present (auto-rotates)" : "absent (re-run `memlin login` when token expires)"}`
+  );
+}
+async function printAccount(api, config, resolved) {
+  const accountId = effectiveAccountId({
+    configAccountId: config.account_id,
+    resolvedAccountId: resolved.account_id
+  });
+  console.log("");
+  console.log("Account");
+  try {
+    const account = await api.getAccount({ accountId });
+    console.log(
+      `  workspace:   ${account.name}  (${account.kind}${account.tier ? `, ${account.tier}` : ""})`
+    );
+    console.log(`  account_id:  ${account.id}`);
+    console.log(`  role:        ${account.role}`);
+  } catch (err2) {
+    console.log(`  account_id:  ${accountId}`);
+    console.log(`  (could not fetch account info: ${err2 instanceof Error ? err2.message : err2})`);
+  }
+  try {
+    const [{ count }, { insights }] = await Promise.all([
+      api.listInbox({ accountId }),
+      api.listInsights({ kind: "memory_proposal", status: "pending", limit: 100 }, { accountId })
+    ]);
+    const total = count + insights.length;
+    console.log(
+      total > 0 ? `  inbox:       ${total} proposal${total === 1 ? "" : "s"} waiting \u2014 run /memlin-inbox` : "  inbox:       clear"
+    );
+  } catch {
+  }
+}
+function printProject(resolved, cwdInfo) {
+  console.log("");
+  console.log("Project");
+  console.log(`  cwd:         ${cwdInfo.cwd}`);
+  if (cwdInfo.source === "env") console.log(`  cwd source:  host workspace env`);
+  else if (cwdInfo.pluginCache) console.log(`  cwd source:  plugin cache (workspace env missing)`);
+  if (resolved.project_id) {
+    console.log(`  project:     ${resolved.project_id.slice(0, 8)}\u2026`);
+    console.log(`  resolved by: ${resolved.reason}`);
+  } else {
+    console.log(`  project:     (none) \u2014 running against account-scope only`);
+    console.log(`  resolved by: ${resolved.reason}`);
+  }
+}
+function printRouting(apiUrl) {
+  console.log("");
+  console.log("Routing");
+  console.log(`  api:         ${apiUrl}`);
+  const mcpUrl = process.env.MEMLIN_MCP_URL;
+  if (mcpUrl) {
+    console.log(`  mcp:         ${mcpUrl} (legacy override; CLI uses /v1 by default)`);
+  }
+}
+async function printLocalState() {
+  console.log("");
+  console.log("Local state");
+  const state = await readState();
+  const allLocal = await scanLocal({ includePlans: true });
+  const local = allLocal.filter((doc) => doc.kind !== "plan");
+  const localPlanCount = allLocal.length - local.length;
+  const trackedPlanCount = Object.keys(state.documents).filter(
+    (p) => p.startsWith("plans/")
+  ).length;
+  const trackedDocs = {
+    ...state,
+    documents: Object.fromEntries(
+      Object.entries(state.documents).filter(([p]) => !p.startsWith("plans/"))
+    )
+  };
+  const { added, modified, deleted } = diffStates(
+    trackedDocs,
+    local.map((l) => ({ path: l.path, hash: l.hash }))
+  );
+  const unboundPlans = await listUnboundPlans();
+  const trackedCount = Object.keys(trackedDocs.documents).length;
+  console.log(`  tracked:     ${trackedCount} document${trackedCount === 1 ? "" : "s"}`);
+  console.log(
+    `  plans:       ${localPlanCount} local, ${trackedPlanCount} tracked, ${unboundPlans.length} unbound`
+  );
+  const lastSyncMs = mostRecentSync(state);
+  if (lastSyncMs) {
+    const age = Date.now() - lastSyncMs;
+    console.log(
+      `  last sync:   ${formatRelativeSigned(age)} (${new Date(lastSyncMs).toLocaleString()})`
+    );
+  } else {
+    console.log(`  last sync:   never`);
+  }
+  console.log(
+    `  changes:     ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`
+  );
+  const all = [
+    ...added.map((p) => ({ p, k: "A" })),
+    ...modified.map((p) => ({ p, k: "M" })),
+    ...deleted.map((p) => ({ p, k: "D" }))
+  ];
+  if (all.length > 0) {
+    console.log("");
+    for (const { p, k } of all.slice(0, 50)) {
+      console.log(`  ${k}  ${p}`);
+    }
+    if (all.length > 50) console.log(`  \u2026 +${all.length - 50} more`);
+  } else if (trackedCount > 0) {
+    console.log("");
+    console.log("  clean.");
+  }
+}
+function mostRecentSync(state) {
+  let max = 0;
+  for (const doc of Object.values(state.documents)) {
+    const t = Date.parse(doc.last_synced_at);
+    if (!Number.isNaN(t) && t > max) max = t;
+  }
+  return max > 0 ? max : null;
+}
+var init_status = __esm({
+  "packages/plugin-core/src/cli/status.ts"() {
+    "use strict";
+    init_runtime_shared();
+    init_project_resolver();
+    init_local_scan();
+    init_state();
+    init_client();
+    init_auth();
+    init_plan_sync();
+    main3().catch((err2) => {
+      console.error("memlin status failed:", err2 instanceof Error ? err2.message : err2);
+      process.exit(1);
+    });
+  }
+});
+
+// packages/plugin-core/src/check-evaluators.ts
+function evaluateConfig(config, configPath) {
+  if (!config) {
+    return { status: "fail", detail: `no config at ${configPath} \u2014 run \`memlin login\`` };
+  }
+  const missing = [];
+  if (!config.account_id) missing.push("account_id");
+  if (!config.user_id) missing.push("user_id");
+  if (!config.api_url) missing.push("api_url");
+  if (missing.length > 0) {
+    return { status: "fail", detail: `config missing fields: ${missing.join(", ")}` };
+  }
+  return {
+    status: "pass",
+    detail: `account ${config.account_id.slice(0, 8)}\u2026, api ${config.api_url}`
+  };
+}
+function evaluateToken(token, now) {
+  if (!token) return { status: "fail", detail: "no token \u2014 run `memlin login`" };
+  if (!Number.isFinite(token.expires_at)) {
+    return { status: "warn", detail: "token has no expiry recorded (legacy init)" };
+  }
+  const remaining = token.expires_at - now;
+  if (remaining <= 0) {
+    if (!token.refresh_token) {
+      return {
+        status: "fail",
+        detail: "access token expired and no refresh token \u2014 re-run `memlin login`"
+      };
+    }
+    return { status: "warn", detail: "access token expired; refresh will fire on next call" };
+  }
+  if (!token.refresh_token) {
+    return {
+      status: "warn",
+      detail: `valid for ${Math.round(remaining / 6e4)} min, but no refresh token saved`
+    };
+  }
+  return { status: "pass", detail: `valid for ${Math.round(remaining / 6e4)} min` };
+}
+function evaluateApiReachable(url, probe) {
+  if (!probe.ok) {
+    return { status: "fail", detail: probe.errorMessage };
+  }
+  if (probe.status >= 500) {
+    return { status: "fail", detail: `${url} returned ${probe.status}` };
+  }
+  return { status: "pass", detail: `${url} reachable (HTTP ${probe.status})` };
+}
+function evaluateMcpReachable(url, result) {
+  if (!url) {
+    return { status: "warn", detail: "MEMLIN_MCP_URL not set \u2014 routing is direct Supabase" };
+  }
+  if (!result) {
+    return { status: "fail", detail: "no response from MCP endpoint" };
+  }
+  if (!result.ok) {
+    return { status: "fail", detail: result.errorMessage };
+  }
+  if (result.status >= 400) {
+    return { status: "fail", detail: `${url} returned ${result.status}` };
+  }
+  if (result.service !== "memlin-mcp") {
+    return {
+      status: "warn",
+      detail: `endpoint responded but service header is "${result.service ?? "<missing>"}" not "memlin-mcp"`
+    };
+  }
+  return {
+    status: "pass",
+    detail: `${url} reachable (${result.toolCount ?? 0} tools)`
+  };
+}
+function evaluateProjectResolve(resolved, cwd) {
+  if (resolved.project_id) {
+    return {
+      status: "pass",
+      detail: `project ${resolved.project_id.slice(0, 8)}\u2026 (via ${resolved.reason})`
+    };
+  }
+  return {
+    status: "warn",
+    detail: `no project bound to ${cwd} (via ${resolved.reason}) \u2014 account-scope only`
+  };
+}
+function evaluateWritable(dir, result) {
+  if (result.ok) return { status: "pass", detail: `writable: ${dir}` };
+  return { status: "fail", detail: `${dir} not writable: ${result.errorMessage}` };
+}
+function evaluatePluginPresence(presence, settingsFile) {
+  if (presence.status === "enabled") {
+    return { status: "pass", detail: `memlin@memlin-ai enabled in ${settingsFile}` };
+  }
+  if (presence.status === "unconfigured") {
+    return {
+      status: "warn",
+      detail: `no ${settingsFile} \u2014 re-run \`memlin login\` to enable Memlin in every workspace (otherwise capture is dark outside the one workspace where the plugin was installed).`
+    };
+  }
+  return {
+    status: "warn",
+    detail: `${settingsFile} present but Memlin plugin not enabled \u2014 capture is dark in unbound workspaces. Re-run \`memlin login\` to fix.`
+  };
+}
+var init_check_evaluators = __esm({
+  "packages/plugin-core/src/check-evaluators.ts"() {
+    "use strict";
+  }
+});
+
+// packages/plugin-core/src/cli/doctor.ts
+var doctor_exports = {};
+import { promises as fs11 } from "node:fs";
+import path12 from "node:path";
+import os9 from "node:os";
+async function probeUrl(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { method: "HEAD", signal: ctrl.signal });
+    return { ok: true, status: res.status };
+  } catch (err2) {
+    return {
+      ok: false,
+      errorMessage: err2 instanceof Error ? err2.message : "request failed"
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function probeMcp(url) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { method: "GET", signal: ctrl.signal });
+    if (!res.ok) {
+      return { ok: true, status: res.status };
+    }
+    const body2 = await res.json();
+    return {
+      ok: true,
+      status: res.status,
+      service: body2.service,
+      toolCount: body2.tools?.length
+    };
+  } catch (err2) {
+    return {
+      ok: false,
+      errorMessage: err2 instanceof Error ? err2.message : "request failed"
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function probeWritable(dir) {
+  try {
+    await fs11.mkdir(dir, { recursive: true });
+    const probe = path12.join(dir, `.memlin-doctor-${Date.now()}.tmp`);
+    await fs11.writeFile(probe, "ok", "utf8");
+    await fs11.unlink(probe);
+    return { ok: true };
+  } catch (err2) {
+    return {
+      ok: false,
+      errorMessage: err2 instanceof Error ? err2.message : String(err2)
+    };
+  }
+}
+async function runCheck(name, fn) {
+  try {
+    return { name, ...await fn() };
+  } catch (err2) {
+    return {
+      name,
+      status: "fail",
+      detail: err2 instanceof Error ? err2.message : String(err2)
+    };
+  }
+}
+async function main4() {
+  console.log("memlin doctor");
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  const config = await readConfig();
+  const token = await readPersistedToken();
+  const results = [];
+  results.push({
+    name: "Config file",
+    ...evaluateConfig(config, CONFIG_FILE4)
+  });
+  results.push({
+    name: "Token shape",
+    ...evaluateToken(token, Date.now())
+  });
+  if (config) {
+    if (token) {
+      results.push(
+        await runCheck("Token refresh", async () => {
+          try {
+            const t = await getValidAccessToken();
+            return {
+              status: "pass",
+              detail: `live access token obtained (len=${t.length})`
+            };
+          } catch (err2) {
+            return {
+              status: "fail",
+              detail: err2 instanceof Error ? err2.message : "refresh failed"
+            };
+          }
+        })
+      );
+      results.push(
+        await runCheck("Memlin API reachable", async () => {
+          const probe = await probeUrl(`${config.api_url}/me`);
+          return evaluateApiReachable(config.api_url, probe);
+        })
+      );
+      results.push(
+        await runCheck("Project resolution", async () => {
+          const ctx = await getApi();
+          if (!ctx) {
+            return {
+              status: "fail",
+              detail: "API client unavailable (see previous checks)"
+            };
+          }
+          const cwd = runtimeCwd();
+          const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
+          return evaluateProjectResolve(resolved, cwd);
+        })
+      );
+    }
+    const mcpUrl = process.env.MEMLIN_MCP_URL;
+    results.push(
+      await runCheck("MCP endpoint", async () => {
+        if (!mcpUrl) return evaluateMcpReachable(void 0, null);
+        const result = await probeMcp(mcpUrl);
+        return evaluateMcpReachable(mcpUrl, result);
+      })
+    );
+  }
+  results.push(
+    await runCheck(`Writable: ${CONFIG_DIR4}`, async () => {
+      const result = await probeWritable(CONFIG_DIR4);
+      return evaluateWritable(CONFIG_DIR4, result);
+    })
+  );
+  results.push(
+    await runCheck(`Writable: ${CLAUDE_DIR}`, async () => {
+      const result = await probeWritable(CLAUDE_DIR);
+      return evaluateWritable(CLAUDE_DIR, result);
+    })
+  );
+  results.push(
+    await runCheck("Claude Code plugin (user scope)", async () => {
+      const paths = defaultUserSettingsPaths();
+      const settings = await readClaudeUserSettings(paths);
+      return evaluatePluginPresence(inspectUserScopePlugin(settings), paths.settingsFile);
+    })
+  );
+  let nameWidth = 0;
+  for (const r of results) nameWidth = Math.max(nameWidth, r.name.length);
+  console.log("");
+  for (const r of results) {
+    const icon = r.status === "pass" ? "\u2713" : r.status === "warn" ? "\u26A0" : "\u2717";
+    const colorOpen = r.status === "pass" ? "\x1B[32m" : r.status === "warn" ? "\x1B[33m" : "\x1B[31m";
+    const colorClose = "\x1B[0m";
+    const padding = " ".repeat(nameWidth - r.name.length + 2);
+    console.log(`  ${colorOpen}${icon}${colorClose} ${r.name}${padding}${r.detail}`);
+  }
+  const failed = results.filter((r) => r.status === "fail").length;
+  const warned = results.filter((r) => r.status === "warn").length;
+  console.log("");
+  if (failed === 0 && warned === 0) {
+    console.log("  all checks pass.");
+    process.exit(0);
+  }
+  console.log(`  ${results.length - failed - warned} pass \xB7 ${warned} warn \xB7 ${failed} fail`);
+  process.exit(failed > 0 ? 1 : 0);
+}
+var NET_TIMEOUT_MS, CONFIG_DIR4, CONFIG_FILE4, CLAUDE_DIR;
+var init_doctor = __esm({
+  "packages/plugin-core/src/cli/doctor.ts"() {
+    "use strict";
+    init_project_resolver();
+    init_client();
+    init_auth();
+    init_check_evaluators();
+    init_plugin_install();
+    NET_TIMEOUT_MS = 5e3;
+    CONFIG_DIR4 = path12.join(os9.homedir(), ".config", "memlin");
+    CONFIG_FILE4 = path12.join(CONFIG_DIR4, "config.json");
+    CLAUDE_DIR = path12.join(os9.homedir(), ".claude");
+    main4().catch((err2) => {
+      console.error("memlin doctor failed:", err2 instanceof Error ? err2.message : err2);
+      process.exit(1);
+    });
+  }
+});
+
+// packages/plugin-core/src/paths.ts
+function slugify(s) {
+  const cleaned = s.toLowerCase().replace(SLUG, "-").replace(/^-|-$/g, "");
+  return cleaned || "untitled";
+}
+function inferLocalPath(kind, title, existing) {
+  if (kind === "skill") {
+    if (existing && existing.endsWith("/SKILL.md")) return existing;
+    if (existing) {
+      const stripped = existing.replace(/\.md$/i, "");
+      return `${stripped}/SKILL.md`;
+    }
+    return `skills/${slugify(title)}/SKILL.md`;
+  }
+  if (existing) return existing;
+  switch (kind) {
+    case "goal":
+      return `goals/${slugify(title)}.md`;
+    case "schema":
+      return `schemas/${slugify(title)}.json`;
+    case "memory":
+      return `memory/${slugify(title)}.md`;
+    default:
+      return `${kind}/${slugify(title)}.md`;
+  }
+}
+var SLUG;
+var init_paths = __esm({
+  "packages/plugin-core/src/paths.ts"() {
+    "use strict";
+    SLUG = /[^a-z0-9]+/g;
+  }
+});
+
+// packages/plugin-core/src/apply.ts
+import { promises as fs12 } from "node:fs";
+import { existsSync as existsSync3 } from "node:fs";
+import os10 from "node:os";
+import path13 from "node:path";
+function archiveRoot() {
+  return path13.join(os10.homedir(), ".config", "memlin", "archive");
+}
+async function archiveDestination(trackedRelPath) {
+  const base = path13.join(archiveRoot(), trackedRelPath);
+  if (!existsSync3(base)) return base;
+  const ext = path13.extname(base);
+  const stem = base.slice(0, base.length - ext.length);
+  for (let i = 1; i < 1e3; i++) {
+    const candidate = `${stem}.${i}${ext}`;
+    if (!existsSync3(candidate)) return candidate;
+  }
+  return `${stem}.${Date.now()}${ext}`;
+}
+async function applyPullToLocal(docs, state, now, rootOverride) {
+  const out2 = {
+    written: [],
+    unchanged: [],
+    removed: [],
+    archived: [],
+    keptEdited: [],
+    citations: {}
+  };
+  const currentPaths = /* @__PURE__ */ new Set();
+  const root = rootOverride ?? resolveHost().homeDir();
+  for (const d of docs) {
+    if (d.kind === "brand_guidelines") continue;
+    const localPath = inferLocalPath(d.kind, d.title, d.path);
+    currentPaths.add(localPath);
+    const full = path13.join(root, localPath);
+    const contentHash = hash(d.content);
+    let needsWrite = true;
+    try {
+      const local = await fs12.readFile(full, "utf8");
+      if (hash(local) === contentHash) needsWrite = false;
+    } catch {
+    }
+    if (needsWrite) {
+      await fs12.mkdir(path13.dirname(full), { recursive: true });
+      await fs12.writeFile(full, d.content, "utf8");
+      out2.written.push(localPath);
+    } else {
+      out2.unchanged.push(localPath);
+    }
+    state.documents[localPath] = stateRow(d, contentHash, now);
+    out2.citations[localPath] = {
+      localPath,
+      sourcePath: d.path ?? null,
+      version_number: d.version_number ?? state.documents[localPath]?.version_number ?? 1,
+      updated_at: d.updated_at ?? null
+    };
+  }
+  for (const tracked of Object.keys(state.documents)) {
+    if (currentPaths.has(tracked)) continue;
+    const full = path13.join(root, tracked);
+    if (existsSync3(full)) {
+      let userEdited = false;
+      try {
+        const local = await fs12.readFile(full, "utf8");
+        const prior = state.documents[tracked]?.content_hash;
+        userEdited = !prior || hash(local) !== prior;
+      } catch {
+        userEdited = true;
+      }
+      if (userEdited) {
+        out2.keptEdited.push(tracked);
+        out2.removed.push(`${tracked} (kept \u2014 locally edited)`);
+      } else {
+        const dest = await archiveDestination(tracked);
+        try {
+          await fs12.mkdir(path13.dirname(dest), { recursive: true });
+          await fs12.rename(full, dest);
+          out2.archived.push(tracked);
+          out2.removed.push(`${tracked} (archived)`);
+        } catch {
+          out2.keptEdited.push(tracked);
+          out2.removed.push(`${tracked} (kept \u2014 archive failed)`);
+        }
+      }
+    }
+    delete state.documents[tracked];
+  }
+  return out2;
+}
+function stateRow(d, h, at) {
+  return {
+    document_id: d.id,
+    version_id: "",
+    version_number: d.version_number ?? 0,
+    content_hash: h,
+    last_synced_at: at,
+    scope: d.scope,
+    kind: d.kind
+  };
+}
+var init_apply = __esm({
+  "packages/plugin-core/src/apply.ts"() {
+    "use strict";
+    init_state();
+    init_paths();
+    init_host();
   }
 });
 
