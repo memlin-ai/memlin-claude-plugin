@@ -8028,6 +8028,12 @@ var MEMLIN_COMMANDS = [
     details: "`~/.claude/plans/` spans every repo you work in, so plans created before the sync hooks landed have no known project. This command lists locally-stored plans that aren't tied to a Memlin project and walks you through assigning each one \u2014 they then sync on every future run."
   },
   {
+    section: "",
+    cmd: "archive-plans",
+    blurb: "archive duplicate local plan files (never deletes)",
+    details: "Folds duplicate plan files in your local plans directory by moving older copies of the same slug into `.archived/<date>/`. Default is dry-run; pass `--apply` to execute. Always reversible \u2014 files move, never delete; recover by moving them back. Useful after a server-side plan-dedup sweep when your disk still holds orphan copies from before the fix."
+  },
+  {
     section: "Actions",
     cmd: "actions-list",
     blurb: "callable workspace tools",
