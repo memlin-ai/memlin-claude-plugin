@@ -41,12 +41,125 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
+// packages/plugin-core/src/host.ts
+import os from "node:os";
+import path from "node:path";
+function resolveHost() {
+  const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
+  const make = HOSTS[envHost];
+  return (make ?? HOSTS["claude-code"])();
+}
+var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, HOSTS;
+var init_host = __esm({
+  "packages/plugin-core/src/host.ts"() {
+    "use strict";
+    BaseHost = class {
+      constructor(kind, home) {
+        this.kind = kind;
+        this.home = home;
+      }
+      kind;
+      home;
+      homeDir() {
+        return this.home;
+      }
+      plansDir() {
+        return path.join(this.home, "plans");
+      }
+    };
+    ClaudeCodeHost = class extends BaseHost {
+      constructor() {
+        super("claude-code", path.join(os.homedir(), ".claude"));
+      }
+    };
+    CursorHost = class extends BaseHost {
+      constructor() {
+        super("cursor", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    CodexHost = class extends BaseHost {
+      constructor() {
+        super("codex", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    WindsurfHost = class extends BaseHost {
+      constructor() {
+        super("windsurf", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    AntigravityHost = class extends BaseHost {
+      constructor() {
+        super("antigravity", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
+    HOSTS = {
+      "claude-code": () => new ClaudeCodeHost(),
+      cursor: () => new CursorHost(),
+      codex: () => new CodexHost(),
+      windsurf: () => new WindsurfHost(),
+      antigravity: () => new AntigravityHost()
+    };
+  }
+});
+
+// packages/plugin-core/src/cli/command-guide.ts
+function printCommandGuide(opts = {}) {
+  const write = opts.write ?? ((line) => console.log(line));
+  const host = resolveHost().kind;
+  const isSlashHost = host === "claude-code" || host === "cursor";
+  const fmt = (cmd) => isSlashHost ? `/memlin-${cmd}` : `memlin ${cmd}`;
+  const helpRef = isSlashHost ? "`/memlin-help`" : "`memlin help`";
+  const cmdCol = Math.max(...ROWS.map((r) => fmt(r[1]).length));
+  if (opts.intro) {
+    write("");
+    write(`  What you can do from here (run ${helpRef} for this list anytime):`);
+    write("");
+  } else {
+    write("memlin \u2014 Memlin commands");
+    write("");
+  }
+  for (const [section, cmd, blurb] of ROWS) {
+    const sectionCol = section.padEnd(16);
+    const cmdStr = fmt(cmd).padEnd(cmdCol);
+    write(`    ${sectionCol} ${cmdStr}  ${blurb}`);
+  }
+}
+var ROWS;
+var init_command_guide = __esm({
+  "packages/plugin-core/src/cli/command-guide.ts"() {
+    "use strict";
+    init_host();
+    ROWS = [
+      ["Discovery", "ask", "ask your workspace anything"],
+      ["", "inbox", "review scribe proposals"],
+      ["", "scribe", "extract from this session"],
+      ["Sync", "sync", "pull + push in one shot"],
+      ["", "pull", "server \u2192 local"],
+      ["", "push", "local \u2192 server"],
+      ["", "revert", "roll a doc back a version"],
+      ["Plans", "push-plan", "upload a Claude Code plan"],
+      ["", "pull-plans", "refresh local plans"],
+      ["", "bind-plans", "assign unbound local plans"],
+      ["Actions", "actions-list", "callable workspace tools"],
+      ["", "actions-execute", "invoke one by id"],
+      ["Audit", "audit-replay", "see the bundle an agent saw"],
+      ["", "audit-explain", "why each item ranked there"],
+      ["Coordination", "handoffs", "pass work between agents"],
+      ["", "role", "assign roles to members/docs"],
+      ["Setup & health", "status", "auth, account, project, sync state"],
+      ["", "doctor", "diagnose why status is broken"],
+      ["", "add-project", "register this workspace"],
+      ["", "link", "pin a different account"]
+    ];
+  }
+});
+
 // packages/plugin-core/src/auth.ts
 import { promises as fs2 } from "node:fs";
-import path from "node:path";
-import os from "node:os";
+import path2 from "node:path";
+import os2 from "node:os";
 function tokenFilePath() {
-  return process.env.MEMLIN_TOKEN_FILE || path.join(os.homedir(), ".config", "memlin", "token.json");
+  return process.env.MEMLIN_TOKEN_FILE || path2.join(os2.homedir(), ".config", "memlin", "token.json");
 }
 async function readPersistedToken() {
   try {
@@ -58,8 +171,8 @@ async function readPersistedToken() {
 }
 async function writePersistedToken(t) {
   const file = tokenFilePath();
-  await fs2.mkdir(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `token.json.tmp-${process.pid}`);
+  await fs2.mkdir(path2.dirname(file), { recursive: true });
+  const tmp = path2.join(path2.dirname(file), `token.json.tmp-${process.pid}`);
   await fs2.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
   await fs2.chmod(tmp, 384).catch(() => {
   });
@@ -260,74 +373,13 @@ var init_runtime_shared = __esm({
   }
 });
 
-// packages/plugin-core/src/host.ts
-import os2 from "node:os";
-import path2 from "node:path";
-function resolveHost() {
-  const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
-  const make = HOSTS[envHost];
-  return (make ?? HOSTS["claude-code"])();
-}
-var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, HOSTS;
-var init_host = __esm({
-  "packages/plugin-core/src/host.ts"() {
-    "use strict";
-    BaseHost = class {
-      constructor(kind, home) {
-        this.kind = kind;
-        this.home = home;
-      }
-      kind;
-      home;
-      homeDir() {
-        return this.home;
-      }
-      plansDir() {
-        return path2.join(this.home, "plans");
-      }
-    };
-    ClaudeCodeHost = class extends BaseHost {
-      constructor() {
-        super("claude-code", path2.join(os2.homedir(), ".claude"));
-      }
-    };
-    CursorHost = class extends BaseHost {
-      constructor() {
-        super("cursor", path2.join(os2.homedir(), ".config", "memlin"));
-      }
-    };
-    CodexHost = class extends BaseHost {
-      constructor() {
-        super("codex", path2.join(os2.homedir(), ".config", "memlin"));
-      }
-    };
-    WindsurfHost = class extends BaseHost {
-      constructor() {
-        super("windsurf", path2.join(os2.homedir(), ".config", "memlin"));
-      }
-    };
-    AntigravityHost = class extends BaseHost {
-      constructor() {
-        super("antigravity", path2.join(os2.homedir(), ".config", "memlin"));
-      }
-    };
-    HOSTS = {
-      "claude-code": () => new ClaudeCodeHost(),
-      cursor: () => new CursorHost(),
-      codex: () => new CodexHost(),
-      windsurf: () => new WindsurfHost(),
-      antigravity: () => new AntigravityHost()
-    };
-  }
-});
-
 // packages/plugin-core/src/memlin-api-client.ts
 import os3 from "node:os";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.17";
+  return "0.2.18";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -1082,6 +1134,7 @@ async function main() {
   }
   console.log("");
   console.log("  Run `memlin pull` to fetch your memory, skills, and goals.");
+  printCommandGuide({ intro: true });
 }
 var CONFIG_DIR, CONFIG_FILE, RESOLVER_SKILL_DIR, RESOLVER_SKILL_FILE;
 var init_login = __esm({
@@ -1091,6 +1144,7 @@ var init_login = __esm({
     init_memlin_api_client();
     init_resolver_skill();
     init_plugin_install();
+    init_command_guide();
     CONFIG_DIR = path4.join(os5.homedir(), ".config", "memlin");
     CONFIG_FILE = path4.join(CONFIG_DIR, "config.json");
     RESOLVER_SKILL_DIR = path4.join(os5.homedir(), ".claude", "skills", "memlin");
@@ -259880,6 +259934,7 @@ var init_scan = __esm({
 });
 
 // packages/plugin-core/src/cli/main.ts
+init_command_guide();
 var RUN = {
   login: () => Promise.resolve().then(() => (init_login(), login_exports)),
   init: () => Promise.resolve().then(() => (init_init(), init_exports)),
@@ -259919,15 +259974,7 @@ async function main28() {
     }
   }
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
-    process.stdout.write(
-      `memlin \u2014 Memlin CLI
-
-Usage: memlin <command> [args]
-
-Commands:
-  ${Object.keys(RUN).join(", ")}
-`
-    );
+    printCommandGuide({ write: (line) => process.stdout.write(line + "\n") });
     process.exit(sub ? 0 : 1);
   }
   const run2 = RUN[sub];
