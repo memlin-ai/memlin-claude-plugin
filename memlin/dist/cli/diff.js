@@ -3,6 +3,9 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
+// packages/plugin-core/src/cli/diff.ts
+import { promises as fs4 } from "node:fs";
+
 // packages/plugin-core/src/client.ts
 import { promises as fs3 } from "node:fs";
 import path4 from "node:path";
@@ -126,40 +129,6 @@ var AGENT_EXPECTED_CAPABILITIES = {
   mcp: ["mcp", "resolve"],
   "claude-ai": ["mcp", "resolve"]
 };
-var PROVIDER_HOSTS = [
-  "github.com",
-  "gitlab.com",
-  "bitbucket.org",
-  "dev.azure.com",
-  "ssh.dev.azure.com",
-  "codeberg.org",
-  "sr.ht",
-  "git.sr.ht"
-];
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash);
-    const rest = s.slice(slash);
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
-}
 
 // packages/plugin-core/src/host.ts
 import os2 from "node:os";
@@ -733,214 +702,211 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
-// packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import path5 from "node:path";
-var WORKSPACE_ENV_VARS = [
-  // Claude Code exposes the original project dir to hooks/plugin commands.
-  "CLAUDE_PROJECT_DIR",
-  // Cursor/plugin shims and local tests can set this explicitly.
-  "CURSOR_WORKSPACE_ROOT",
-  "CURSOR_PROJECT_ROOT",
-  "MEMLIN_WORKSPACE_ROOT",
-  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
-  "INIT_CWD"
-];
-function runtimeCwd(fallback = process.cwd()) {
-  for (const name of WORKSPACE_ENV_VARS) {
-    const raw = process.env[name]?.trim();
-    if (raw && path5.isAbsolute(raw)) return path5.resolve(raw);
-  }
-  return path5.resolve(fallback);
-}
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path5.resolve(cwd);
-  const remote = readGitRemote(cwd);
-  try {
-    const result = await api.resolveProject({
-      git_remote: remote,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason
-      };
+// packages/plugin-core/src/cli/diff.ts
+function parseDiffArgs(argv) {
+  const out = {
+    documentId: null,
+    localFile: null,
+    mode: "subset",
+    json: false
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--strict") {
+      out.mode = "strict";
+    } else if (a === "--subset") {
+      out.mode = "subset";
+    } else if (a === "--json") {
+      out.json = true;
+    } else if (a === "--help" || a === "-h") {
+      return { error: "help" };
+    } else if (a.startsWith("--")) {
+      return { error: `unknown flag: ${a}` };
+    } else if (out.documentId === null) {
+      out.documentId = a;
+    } else if (out.localFile === null) {
+      out.localFile = a;
+    } else {
+      return { error: `unexpected positional: ${a}` };
     }
-  } catch {
   }
-  if (configProjectId) {
-    return {
-      project_id: configProjectId,
-      project_name: null,
-      account_id: null,
-      reason: "config"
-    };
-  }
-  return { project_id: null, project_name: null, account_id: null, reason: "none" };
+  if (!out.documentId) return { error: "document id is required" };
+  if (!out.localFile) return { error: "local file path is required" };
+  return out;
 }
-function readGitRemote(cwd) {
-  try {
-    const url = execSync("git remote get-url origin", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
-}
-
-// packages/plugin-core/src/plan-sync.ts
-import { promises as fs5 } from "node:fs";
-import path7 from "node:path";
-
-// packages/plugin-core/src/state.ts
-import { promises as fs4 } from "node:fs";
-import path6 from "node:path";
-import os5 from "node:os";
-import crypto from "node:crypto";
-var STATE_FILE = path6.join(os5.homedir(), ".config", "memlin", "state.json");
-var EMPTY = { documents: {} };
-async function readState() {
-  try {
-    const raw = await fs4.readFile(STATE_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return { ...EMPTY };
-  }
-}
-async function writeState(state) {
-  await fs4.mkdir(path6.dirname(STATE_FILE), { recursive: true });
-  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs4.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await fs4.rename(tmp, STATE_FILE);
-}
-function hash(content) {
-  return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-// packages/plugin-core/src/plan-sync.ts
-function plansDir() {
-  return resolveHost().plansDir();
-}
-async function pullPlans(api, opts = {}) {
-  const fetchOpts = {};
-  if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
-  if (opts.since) fetchOpts.updated_after = opts.since;
-  const list = await api.listPlans(fetchOpts);
-  await fs5.mkdir(plansDir(), { recursive: true });
-  const state = await readState();
-  const pulled = [];
-  const unchanged = [];
-  const removed = [];
-  const isFullSync = !opts.since;
-  const seenPaths = /* @__PURE__ */ new Set();
-  for (const p of list) {
-    const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
-    const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path7.join("plans", filename);
-    const full = path7.join(plansDir(), filename);
-    seenPaths.add(localPath);
-    let body;
+function extractContract(body) {
+  const FENCE = /```memlin-contract\s*\n([\s\S]*?)\n```/g;
+  const merged = {};
+  let found = false;
+  let m;
+  while (m = FENCE.exec(body)) {
+    found = true;
+    let parsed;
     try {
-      const detail = await api.getPlan(p.document_id);
-      body = detail.body;
-    } catch {
-      continue;
+      parsed = JSON.parse(m[1]);
+    } catch (e) {
+      throw new Error(`contract block is not valid JSON: ${e instanceof Error ? e.message : e}`);
     }
-    const fileContent = formatPlanFile(p.title, body, p.status, {
-      documentId: p.document_id,
-      projectId: p.project_id
-    });
-    const contentHash = hash(fileContent);
-    const existing = state.documents[localPath];
-    if (existing?.content_hash === contentHash) {
-      unchanged.push(localPath);
-      continue;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("contract block must be a JSON object at the top level");
     }
-    await fs5.writeFile(full, fileContent, "utf8");
-    pulled.push(localPath);
-    state.documents[localPath] = {
-      document_id: p.document_id,
-      version_id: "",
-      version_number: p.version_number,
-      content_hash: contentHash,
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: p.scope ?? "personal",
-      kind: "plan"
-    };
+    Object.assign(merged, parsed);
   }
-  if (isFullSync) {
-    for (const tracked of Object.keys(state.documents)) {
-      if (!tracked.startsWith("plans/")) continue;
-      if (seenPaths.has(tracked)) continue;
-      delete state.documents[tracked];
-    }
-  }
-  await writeState(state);
-  return { pulled, unchanged, removed };
+  return found ? merged : null;
 }
-function formatPlanFile(title, body, status, binding) {
-  const trimmedBody = body.replace(/^\s*#\s+.+\n+/, "").trimEnd();
-  const lines = [`# ${title}`, "", `<!-- memlin-plan-status: ${status} -->`];
-  if (binding) {
-    lines.push(
-      `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`
+function diffContract(contract, local, mode = "subset") {
+  const drift = [];
+  function walk(c, l, path5) {
+    if (c === null || typeof c !== "object" || Array.isArray(c)) {
+      if (!deepEq(c, l)) drift.push({ path: path5, contract: c, local: l, reason: "mismatch" });
+      return;
+    }
+    const lObj = l && typeof l === "object" && !Array.isArray(l) ? l : null;
+    for (const [k, cv] of Object.entries(c)) {
+      const nextPath = path5 ? `${path5}.${k}` : k;
+      if (!lObj || !(k in lObj)) {
+        drift.push({ path: nextPath, contract: cv, local: void 0, reason: "missing" });
+        continue;
+      }
+      walk(cv, lObj[k], nextPath);
+    }
+    if (mode === "strict" && lObj) {
+      for (const k of Object.keys(lObj)) {
+        if (!(k in c)) {
+          drift.push({
+            path: path5 ? `${path5}.${k}` : k,
+            contract: void 0,
+            local: lObj[k],
+            reason: "extra"
+          });
+        }
+      }
+    }
+  }
+  walk(contract, local, "");
+  return drift;
+}
+function deepEq(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEq(v, b[i]));
+  }
+  if (typeof a === "object") {
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    return ak.every(
+      (k) => deepEq(
+        a[k],
+        b[k]
+      )
     );
   }
-  lines.push("", trimmedBody, "");
-  return lines.join("\n");
-}
-function getLastPlanPullCursor(state) {
-  return state.last_plan_pull_at;
-}
-function setLastPlanPullCursor(state, at) {
-  state.last_plan_pull_at = at;
-}
-
-// packages/plugin-core/src/cli/pull-plans.ts
-function parseArgs(argv) {
-  let full = false;
-  let planId;
-  for (const a of argv) {
-    if (a === "--full") {
-      full = true;
-    } else if (!a.startsWith("--")) {
-      planId = a;
-    }
-  }
-  return { full, ...planId !== void 0 ? { planId } : {} };
+  return false;
 }
 async function main() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs(argv);
-  const ctx = await getApi();
-  if (!ctx) return;
-  const resolved = await resolveProject(ctx.api, runtimeCwd(), ctx.config.project_id).catch(() => ({
-    project_id: null
-  }));
-  const state = await readState();
-  const cursor = getLastPlanPullCursor(state);
-  try {
-    const opts = {
-      projectId: resolved.project_id
-    };
-    if (!parsed.full && !parsed.planId && cursor) {
-      opts.since = cursor;
+  const parsed = parseDiffArgs(process.argv.slice(2));
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      console.log("memlin diff <document-id> <local-file> [--strict|--subset] [--json]");
+      console.log("");
+      console.log("Diff a fenced `memlin-contract` JSON block in a Memlin doc against");
+      console.log("a local JSON file. Exit 0 on match, 1 on drift, 2 on error.");
+      process.exit(0);
     }
-    const result = await pullPlans(ctx.api, opts);
-    setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
-    await writeState(state);
-    if (parsed.full || parsed.planId) {
-      const pulled = result.pulled.length;
-      const removed = result.removed.length;
-      console.log(`plans: pulled ${pulled}, removed ${removed}`);
-    }
-  } catch {
+    console.error(`memlin diff: ${parsed.error}`);
+    process.exit(2);
   }
+  const documentId = parsed.documentId;
+  const localFile = parsed.localFile;
+  let localRaw;
+  try {
+    localRaw = await fs4.readFile(localFile, "utf8");
+  } catch (e) {
+    console.error(`memlin diff: cannot read ${localFile}: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  let local;
+  try {
+    local = JSON.parse(localRaw);
+  } catch (e) {
+    console.error(`memlin diff: ${localFile} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  if (!local || typeof local !== "object" || Array.isArray(local)) {
+    console.error(`memlin diff: ${localFile} must be a JSON object at the top level`);
+    process.exit(2);
+  }
+  const apiCtx = await getApi();
+  if (!apiCtx) {
+    console.error(`memlin diff: not signed in (run \`memlin login\`)`);
+    process.exit(2);
+  }
+  const { api } = apiCtx;
+  let doc;
+  try {
+    doc = await api.getDocument(documentId);
+  } catch (e) {
+    console.error(`memlin diff: fetch document ${documentId} failed: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  const docContent = typeof doc.content === "string" ? doc.content : "";
+  let contract;
+  try {
+    contract = extractContract(docContent);
+  } catch (e) {
+    console.error(`memlin diff: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  if (!contract) {
+    console.error(
+      `memlin diff: no \`memlin-contract\` fenced block found in document ${documentId}`
+    );
+    process.exit(2);
+  }
+  const drift = diffContract(contract, local, parsed.mode);
+  if (parsed.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          document_id: documentId,
+          local_file: localFile,
+          mode: parsed.mode,
+          ok: drift.length === 0,
+          drift
+        },
+        null,
+        2
+      ) + "\n"
+    );
+  } else if (drift.length === 0) {
+    console.log(`\u2713 ${localFile} matches contract in ${doc.title ?? documentId}`);
+  } else {
+    console.error(`\u2717 ${localFile} drifts from contract in ${doc.title ?? documentId}:`);
+    for (const d of drift) {
+      if (d.reason === "missing") {
+        console.error(`  - ${d.path}: missing in local (contract has ${JSON.stringify(d.contract)})`);
+      } else if (d.reason === "extra") {
+        console.error(`  - ${d.path}: extra in local (${JSON.stringify(d.local)})`);
+      } else {
+        console.error(
+          `  - ${d.path}: contract=${JSON.stringify(d.contract)} local=${JSON.stringify(d.local)}`
+        );
+      }
+    }
+  }
+  process.exit(drift.length === 0 ? 0 : 1);
 }
-void main();
+if (import.meta.url === (process.argv[1] ? `file://${process.argv[1]}` : void 0)) {
+  main().catch((err) => {
+    console.error(`memlin diff: ${err instanceof Error ? err.message : err}`);
+    process.exit(2);
+  });
+}
+export {
+  diffContract,
+  extractContract,
+  parseDiffArgs
+};

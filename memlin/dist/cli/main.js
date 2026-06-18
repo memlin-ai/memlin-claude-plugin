@@ -7775,7 +7775,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs23 = __require("fs");
+    var fs24 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -7859,7 +7859,7 @@ var require_gray_matter = __commonJS({
       return stringify(file, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs23.readFileSync(filepath, "utf8");
+      const str2 = fs24.readFileSync(filepath, "utf8");
       const file = matter3(str2, options2);
       file.path = filepath;
       return file;
@@ -8391,6 +8391,12 @@ var init_memlin_commands = __esm({
         cmd: "verify",
         blurb: "turn a decision into a verdict",
         details: "Close the feedback loop on a past decision \u2014 `held`, `broke`, or `inconclusive` \u2014 with whatever evidence and measurements you have. Run `memlin verify --due` first to see decisions whose review_by date has arrived. Each verdict becomes reusable knowledge for the next decision: it shows on the decision, in Agent Experience, and rides along on future resolves so your agents build experience from what actually worked."
+      },
+      {
+        section: "",
+        cmd: "diff",
+        blurb: "check a code constant against a Memlin contract",
+        details: "CI-friendly drift check. Parses a fenced ```memlin-contract``` JSON block out of a Memlin document body and diffs it against a local JSON file. Exits 0 on match, 1 on drift, 2 on error. Use it in CI to assert that your code's constants still match the approved decision in Memlin \u2014 a backstop against silent drift between a documented choice and what's actually running."
       },
       {
         section: "Audit",
@@ -8932,6 +8938,10 @@ var init_memlin_api_client = __esm({
       /** POST /documents — create or update a document. */
       async writeDocument(input) {
         return this.request("POST", "/documents", input);
+      }
+      /** GET /documents/{id} — fetch one doc with body + metadata. */
+      async getDocument(documentId) {
+        return this.request("GET", `/documents/${encodeURIComponent(documentId)}`);
       }
       /** GET /documents/{id}/versions — history. */
       async listVersions(documentId) {
@@ -12567,6 +12577,223 @@ var init_verify = __esm({
   }
 });
 
+// packages/plugin-core/src/cli/diff.ts
+var diff_exports = {};
+__export(diff_exports, {
+  diffContract: () => diffContract,
+  extractContract: () => extractContract,
+  parseDiffArgs: () => parseDiffArgs
+});
+import { promises as fs16 } from "node:fs";
+function parseDiffArgs(argv) {
+  const out2 = {
+    documentId: null,
+    localFile: null,
+    mode: "subset",
+    json: false
+  };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--strict") {
+      out2.mode = "strict";
+    } else if (a === "--subset") {
+      out2.mode = "subset";
+    } else if (a === "--json") {
+      out2.json = true;
+    } else if (a === "--help" || a === "-h") {
+      return { error: "help" };
+    } else if (a.startsWith("--")) {
+      return { error: `unknown flag: ${a}` };
+    } else if (out2.documentId === null) {
+      out2.documentId = a;
+    } else if (out2.localFile === null) {
+      out2.localFile = a;
+    } else {
+      return { error: `unexpected positional: ${a}` };
+    }
+  }
+  if (!out2.documentId) return { error: "document id is required" };
+  if (!out2.localFile) return { error: "local file path is required" };
+  return out2;
+}
+function extractContract(body2) {
+  const FENCE = /```memlin-contract\s*\n([\s\S]*?)\n```/g;
+  const merged = {};
+  let found = false;
+  let m;
+  while (m = FENCE.exec(body2)) {
+    found = true;
+    let parsed;
+    try {
+      parsed = JSON.parse(m[1]);
+    } catch (e) {
+      throw new Error(`contract block is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("contract block must be a JSON object at the top level");
+    }
+    Object.assign(merged, parsed);
+  }
+  return found ? merged : null;
+}
+function diffContract(contract, local, mode = "subset") {
+  const drift = [];
+  function walk(c, l, path37) {
+    if (c === null || typeof c !== "object" || Array.isArray(c)) {
+      if (!deepEq(c, l)) drift.push({ path: path37, contract: c, local: l, reason: "mismatch" });
+      return;
+    }
+    const lObj = l && typeof l === "object" && !Array.isArray(l) ? l : null;
+    for (const [k, cv] of Object.entries(c)) {
+      const nextPath = path37 ? `${path37}.${k}` : k;
+      if (!lObj || !(k in lObj)) {
+        drift.push({ path: nextPath, contract: cv, local: void 0, reason: "missing" });
+        continue;
+      }
+      walk(cv, lObj[k], nextPath);
+    }
+    if (mode === "strict" && lObj) {
+      for (const k of Object.keys(lObj)) {
+        if (!(k in c)) {
+          drift.push({
+            path: path37 ? `${path37}.${k}` : k,
+            contract: void 0,
+            local: lObj[k],
+            reason: "extra"
+          });
+        }
+      }
+    }
+  }
+  walk(contract, local, "");
+  return drift;
+}
+function deepEq(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== typeof b) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((v, i) => deepEq(v, b[i]));
+  }
+  if (typeof a === "object") {
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    if (ak.length !== bk.length) return false;
+    return ak.every(
+      (k) => deepEq(
+        a[k],
+        b[k]
+      )
+    );
+  }
+  return false;
+}
+async function main15() {
+  const parsed = parseDiffArgs(process.argv.slice(2));
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      console.log("memlin diff <document-id> <local-file> [--strict|--subset] [--json]");
+      console.log("");
+      console.log("Diff a fenced `memlin-contract` JSON block in a Memlin doc against");
+      console.log("a local JSON file. Exit 0 on match, 1 on drift, 2 on error.");
+      process.exit(0);
+    }
+    console.error(`memlin diff: ${parsed.error}`);
+    process.exit(2);
+  }
+  const documentId = parsed.documentId;
+  const localFile = parsed.localFile;
+  let localRaw;
+  try {
+    localRaw = await fs16.readFile(localFile, "utf8");
+  } catch (e) {
+    console.error(`memlin diff: cannot read ${localFile}: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  let local;
+  try {
+    local = JSON.parse(localRaw);
+  } catch (e) {
+    console.error(`memlin diff: ${localFile} is not valid JSON: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  if (!local || typeof local !== "object" || Array.isArray(local)) {
+    console.error(`memlin diff: ${localFile} must be a JSON object at the top level`);
+    process.exit(2);
+  }
+  const apiCtx = await getApi();
+  if (!apiCtx) {
+    console.error(`memlin diff: not signed in (run \`memlin login\`)`);
+    process.exit(2);
+  }
+  const { api } = apiCtx;
+  let doc;
+  try {
+    doc = await api.getDocument(documentId);
+  } catch (e) {
+    console.error(`memlin diff: fetch document ${documentId} failed: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  const docContent = typeof doc.content === "string" ? doc.content : "";
+  let contract;
+  try {
+    contract = extractContract(docContent);
+  } catch (e) {
+    console.error(`memlin diff: ${e instanceof Error ? e.message : e}`);
+    process.exit(2);
+  }
+  if (!contract) {
+    console.error(
+      `memlin diff: no \`memlin-contract\` fenced block found in document ${documentId}`
+    );
+    process.exit(2);
+  }
+  const drift = diffContract(contract, local, parsed.mode);
+  if (parsed.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          document_id: documentId,
+          local_file: localFile,
+          mode: parsed.mode,
+          ok: drift.length === 0,
+          drift
+        },
+        null,
+        2
+      ) + "\n"
+    );
+  } else if (drift.length === 0) {
+    console.log(`\u2713 ${localFile} matches contract in ${doc.title ?? documentId}`);
+  } else {
+    console.error(`\u2717 ${localFile} drifts from contract in ${doc.title ?? documentId}:`);
+    for (const d of drift) {
+      if (d.reason === "missing") {
+        console.error(`  - ${d.path}: missing in local (contract has ${JSON.stringify(d.contract)})`);
+      } else if (d.reason === "extra") {
+        console.error(`  - ${d.path}: extra in local (${JSON.stringify(d.local)})`);
+      } else {
+        console.error(
+          `  - ${d.path}: contract=${JSON.stringify(d.contract)} local=${JSON.stringify(d.local)}`
+        );
+      }
+    }
+  }
+  process.exit(drift.length === 0 ? 0 : 1);
+}
+var init_diff = __esm({
+  "packages/plugin-core/src/cli/diff.ts"() {
+    "use strict";
+    init_client();
+    if (import.meta.url === (process.argv[1] ? `file://${process.argv[1]}` : void 0)) {
+      main15().catch((err2) => {
+        console.error(`memlin diff: ${err2 instanceof Error ? err2.message : err2}`);
+        process.exit(2);
+      });
+    }
+  }
+});
+
 // packages/plugin-core/src/transcript.ts
 function summarizeToolUse(b) {
   const n = b.name || "tool";
@@ -12609,7 +12836,7 @@ var init_transcript = __esm({
 
 // packages/plugin-core/src/cli/scribe.ts
 var scribe_exports = {};
-import { promises as fs16 } from "node:fs";
+import { promises as fs17 } from "node:fs";
 import path21 from "node:path";
 import os13 from "node:os";
 import { createHash as createHash2 } from "node:crypto";
@@ -12619,11 +12846,11 @@ async function findLatestTranscript(cwd) {
   const direct = path21.join(projectsDir, encoded);
   let scanDirs = [];
   try {
-    const st = await fs16.stat(direct);
+    const st = await fs17.stat(direct);
     if (st.isDirectory()) scanDirs.push(direct);
   } catch {
     try {
-      const dirs = await fs16.readdir(projectsDir);
+      const dirs = await fs17.readdir(projectsDir);
       scanDirs = dirs.map((d) => path21.join(projectsDir, d));
     } catch {
       return null;
@@ -12633,7 +12860,7 @@ async function findLatestTranscript(cwd) {
   for (const dir of scanDirs) {
     let files;
     try {
-      files = await fs16.readdir(dir);
+      files = await fs17.readdir(dir);
     } catch {
       continue;
     }
@@ -12641,7 +12868,7 @@ async function findLatestTranscript(cwd) {
       if (!f.endsWith(".jsonl")) continue;
       const abs = path21.join(dir, f);
       try {
-        const st = await fs16.stat(abs);
+        const st = await fs17.stat(abs);
         const mtime = st.mtimeMs;
         if (!best || mtime > best.mtime) {
           best = { path: abs, sessionId: f.replace(/\.jsonl$/, ""), mtime };
@@ -12653,7 +12880,7 @@ async function findLatestTranscript(cwd) {
   return best ? { path: best.path, sessionId: best.sessionId } : null;
 }
 async function loadTranscript(transcriptPath) {
-  const raw = await fs16.readFile(transcriptPath, "utf8");
+  const raw = await fs17.readFile(transcriptPath, "utf8");
   const lines = raw.split("\n").filter((l) => l.trim());
   const turns = [];
   for (const line of lines) {
@@ -12672,7 +12899,7 @@ ${text}`);
   }
   return turns.join("\n\n");
 }
-async function main15() {
+async function main16() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
@@ -12706,7 +12933,7 @@ async function main15() {
   try {
     transcript = await loadTranscript(found.path);
     if (explicitFile && transcript.length === 0) {
-      const raw = await fs16.readFile(found.path, "utf8");
+      const raw = await fs17.readFile(found.path, "utf8");
       transcript = `### user
 ${raw}`;
     }
@@ -12754,7 +12981,7 @@ var init_scribe = __esm({
     init_client();
     init_transcript();
     init_project_resolver();
-    void main15();
+    void main16();
   }
 });
 
@@ -12969,7 +13196,7 @@ function matchProposal(proposals, needle) {
     error: `"${needle}" is ambiguous \u2014 matches ${matches.length} proposals; use more characters`
   };
 }
-async function main16() {
+async function main17() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
@@ -13027,7 +13254,7 @@ var init_inbox = __esm({
     "use strict";
     init_client();
     init_args();
-    main16().catch((err2) => {
+    main17().catch((err2) => {
       process.stderr.write(
         `memlin inbox failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
@@ -13047,7 +13274,7 @@ function matchHandoff(handoffs, needle) {
   if (matches.length === 0) return { error: `no handoff matches "${needle}"` };
   return { error: `"${needle}" is ambiguous \u2014 matches ${matches.length} handoffs` };
 }
-async function main17() {
+async function main18() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run memlin login first\n");
@@ -13188,7 +13415,7 @@ var init_handoffs = __esm({
     init_client();
     init_host();
     init_args();
-    main17().catch((err2) => {
+    main18().catch((err2) => {
       process.stderr.write(
         `memlin handoffs failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
@@ -13252,7 +13479,7 @@ function chooseAccount(accounts, needle) {
   if (byName.length === 1) return byName[0];
   return null;
 }
-async function main18() {
+async function main19() {
   const argv = process.argv.slice(2);
   const parsed = parseArgs5(argv);
   if ("error" in parsed) {
@@ -13328,7 +13555,7 @@ var init_link = __esm({
     init_client();
     init_workspace_binding();
     init_project_resolver();
-    main18().catch((err2) => {
+    main19().catch((err2) => {
       console.error("memlin link failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13338,7 +13565,7 @@ var init_link = __esm({
 // packages/plugin-core/src/cli/revert.ts
 var revert_exports = {};
 import readline2 from "node:readline/promises";
-async function main19() {
+async function main20() {
   const args2 = process.argv.slice(2);
   if (args2.length === 0) {
     console.error("usage: memlin revert <document-name-or-path> [version-number]");
@@ -13413,7 +13640,7 @@ var init_revert = __esm({
   "packages/plugin-core/src/cli/revert.ts"() {
     "use strict";
     init_client();
-    main19().catch((err2) => {
+    main20().catch((err2) => {
       console.error("memlin revert failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13437,7 +13664,7 @@ function printHelp5() {
     ].join("\n")
   );
 }
-async function main20() {
+async function main21() {
   const argv = process.argv.slice(2);
   const first = argv[0];
   if (!first || first === "--help" || first === "-h" || first === "help") {
@@ -13466,7 +13693,7 @@ var init_pin = __esm({
   "packages/plugin-core/src/cli/pin.ts"() {
     "use strict";
     init_client();
-    main20().catch((err2) => {
+    main21().catch((err2) => {
       console.error("memlin pin failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13618,7 +13845,7 @@ function pickAccount2(accounts, needle, fallback) {
   }
   return accounts.find((a) => a.id === fallback) ?? null;
 }
-async function main21() {
+async function main22() {
   const argv = process.argv.slice(2);
   const parsed = parseArgs6(argv);
   if ("error" in parsed) {
@@ -13780,7 +14007,7 @@ var init_add_project = __esm({
     init_workspace_binding();
     init_sibling_detect();
     init_plugin_install();
-    main21().catch((err2) => {
+    main22().catch((err2) => {
       console.error("memlin add-project failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13828,7 +14055,7 @@ function printHelp7() {
     ].join("\n")
   );
 }
-async function main22() {
+async function main23() {
   const parsed = parseArgs7(process.argv.slice(2));
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -13921,7 +14148,7 @@ var init_attach_path = __esm({
     init_project_resolver();
     init_workspace_binding();
     init_sibling_detect();
-    main22().catch((err2) => {
+    main23().catch((err2) => {
       console.error("memlin attach-path failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13985,7 +14212,7 @@ function renderItem2(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main23() {
+async function main24() {
   const parsed = parseArgs8(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14068,7 +14295,7 @@ var init_audit_replay = __esm({
     "use strict";
     init_client();
     init_args();
-    main23().catch((err2) => {
+    main24().catch((err2) => {
       console.error("memlin audit replay failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14146,7 +14373,7 @@ function renderItem3(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main24() {
+async function main25() {
   const parsed = parseArgs9(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14221,7 +14448,7 @@ var init_audit_explain = __esm({
     "use strict";
     init_client();
     init_args();
-    main24().catch((err2) => {
+    main25().catch((err2) => {
       console.error("memlin audit explain failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14290,7 +14517,7 @@ function renderRow(a) {
     `  invoke:       POST ${a.invoke_url}  body={"input":${inputSummary}}`
   ].join("\n");
 }
-async function main25() {
+async function main26() {
   const parsed = parseArgs10(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14335,7 +14562,7 @@ var init_actions_list = __esm({
     "use strict";
     init_client();
     init_args();
-    main25().catch((err2) => {
+    main26().catch((err2) => {
       console.error("memlin actions list failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14409,7 +14636,7 @@ function printHelp11() {
     ].join("\n")
   );
 }
-async function main26() {
+async function main27() {
   const parsed = parseArgs11(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14471,7 +14698,7 @@ var init_actions_execute = __esm({
     "use strict";
     init_client();
     init_args();
-    main26().catch((err2) => {
+    main27().catch((err2) => {
       console.error("memlin actions execute failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14480,7 +14707,7 @@ var init_actions_execute = __esm({
 
 // packages/plugin-core/src/cli/prompt-ci.ts
 var prompt_ci_exports = {};
-import { promises as fs17 } from "node:fs";
+import { promises as fs18 } from "node:fs";
 import path26 from "node:path";
 function printHelp12() {
   console.log(
@@ -14496,7 +14723,7 @@ function printHelp12() {
     ].join("\n")
   );
 }
-async function main27() {
+async function main28() {
   const argv = argvAsSlashArgs();
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp12();
@@ -14561,7 +14788,7 @@ async function main27() {
 ------------------------------------------------------------`);
     console.log(`Testing skill: ${skill.relPath} (ID: ${skill.docId.slice(0, 8)}...)`);
     console.log(`------------------------------------------------------------`);
-    const content = await fs17.readFile(skill.absPath, "utf8");
+    const content = await fs18.readFile(skill.absPath, "utf8");
     try {
       const report = await api.runPromptCi(skill.docId, content);
       const passRate = report.totalTraces > 0 ? (report.passedTraces / report.totalTraces * 100).toFixed(0) : "100";
@@ -14617,7 +14844,7 @@ var init_prompt_ci = __esm({
     init_local_scan();
     init_state();
     init_args();
-    main27().catch((err2) => {
+    main28().catch((err2) => {
       console.error("memlin prompt-ci failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -16375,7 +16602,7 @@ var init_csharp_parser = __esm({
 });
 
 // services/scanners/dist/scanner-discovery/repo-walker.js
-import { promises as fs18 } from "node:fs";
+import { promises as fs19 } from "node:fs";
 import path28 from "node:path";
 async function scanRepo(repoRoot, opts = {}) {
   const signals = await collectSignals(repoRoot, opts);
@@ -16445,7 +16672,7 @@ async function collectSignals(root, opts = {}) {
     package_managers.push("nuget");
   let repo_name = path28.basename(root);
   try {
-    const pkg = JSON.parse(await fs18.readFile(path28.join(root, "package.json"), "utf8"));
+    const pkg = JSON.parse(await fs19.readFile(path28.join(root, "package.json"), "utf8"));
     if (typeof pkg.name === "string")
       repo_name = pkg.name;
   } catch {
@@ -16455,7 +16682,7 @@ async function collectSignals(root, opts = {}) {
   let readme_excerpt = "";
   for (const candidate of ["README.md", "README", "readme.md"]) {
     try {
-      const text = await fs18.readFile(path28.join(root, candidate), "utf8");
+      const text = await fs19.readFile(path28.join(root, candidate), "utf8");
       readme_excerpt = text.slice(0, 4096);
       break;
     } catch {
@@ -16480,7 +16707,7 @@ async function findComponentRoots(root) {
       return;
     let entries;
     try {
-      entries = await fs18.readdir(dir, { withFileTypes: true });
+      entries = await fs19.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -16525,14 +16752,14 @@ async function detectComponents(root, signals) {
       const parentPath = path28.join(root, parent);
       let kids = [];
       try {
-        kids = await fs18.readdir(parentPath);
+        kids = await fs19.readdir(parentPath);
       } catch {
         continue;
       }
       for (const kid of kids) {
         const abs = path28.join(parentPath, kid);
         try {
-          const st = await fs18.stat(abs);
+          const st = await fs19.stat(abs);
           if (!st.isDirectory())
             continue;
         } catch {
@@ -16565,7 +16792,7 @@ async function readComponent(root, rel) {
   let pkgDescription = "";
   const tech_stack = [];
   try {
-    const raw = await fs18.readFile(path28.join(dirPath, "package.json"), "utf8");
+    const raw = await fs19.readFile(path28.join(dirPath, "package.json"), "utf8");
     const pkg = JSON.parse(raw);
     if (typeof pkg.description === "string")
       pkgDescription = pkg.description;
@@ -16590,14 +16817,14 @@ async function readComponent(root, rel) {
   let readme = "";
   for (const candidate of ["README.md", "README"]) {
     try {
-      readme = await fs18.readFile(path28.join(dirPath, candidate), "utf8");
+      readme = await fs19.readFile(path28.join(dirPath, candidate), "utf8");
       break;
     } catch {
     }
   }
   let fileCount = 0;
   try {
-    const files = await fs18.readdir(dirPath);
+    const files = await fs19.readdir(dirPath);
     for (const f of files) {
       if (SKIP_DIRS.has(f))
         continue;
@@ -16659,7 +16886,7 @@ async function extractDotNetRoutes(repoRoot, components) {
       break;
     if (path28.extname(abs).toLowerCase() !== ".cs")
       continue;
-    const text = await fs18.readFile(abs, "utf8").catch(() => "");
+    const text = await fs19.readFile(abs, "utf8").catch(() => "");
     if (!text || !/\[ApiController\]|\[Route\(|\[Http(Get|Post|Put|Delete|Patch|Head|Options)\b/.test(text)) {
       continue;
     }
@@ -16694,7 +16921,7 @@ async function walkComponent(repoRoot, dir, componentSlug) {
   candidates.sort((a, b) => b.mtime - a.mtime);
   for (const { abs } of candidates) {
     const rel = path28.relative(repoRoot, abs);
-    const text = await fs18.readFile(abs, "utf8").catch(() => "");
+    const text = await fs19.readFile(abs, "utf8").catch(() => "");
     if (!text)
       continue;
     if (/apps\/.+\/app\/api\/.+route\.(ts|js|tsx|jsx)$/.test(rel)) {
@@ -16782,7 +17009,7 @@ async function collectCandidates(dir, out2, limit) {
     return;
   let entries;
   try {
-    entries = await fs18.readdir(dir, { withFileTypes: true });
+    entries = await fs19.readdir(dir, { withFileTypes: true });
   } catch {
     return;
   }
@@ -16802,7 +17029,7 @@ async function collectCandidates(dir, out2, limit) {
         continue;
       }
       try {
-        const st = await fs18.stat(abs);
+        const st = await fs19.stat(abs);
         out2.push({ abs, mtime: st.mtimeMs });
       } catch {
       }
@@ -16864,7 +17091,7 @@ async function extractMigrations(root) {
   const dir = path28.join(root, "supabase", "migrations");
   let files;
   try {
-    files = await fs18.readdir(dir);
+    files = await fs19.readdir(dir);
   } catch {
     return out2;
   }
@@ -16872,7 +17099,7 @@ async function extractMigrations(root) {
     if (!f.endsWith(".sql"))
       continue;
     const abs = path28.join(dir, f);
-    const text = await fs18.readFile(abs, "utf8").catch(() => "");
+    const text = await fs19.readFile(abs, "utf8").catch(() => "");
     if (!text)
       continue;
     out2.push({
@@ -16926,13 +17153,13 @@ async function collectMarkdownDocs(root, components) {
     let content;
     let size;
     try {
-      const st = await fs18.stat(absPath);
+      const st = await fs19.stat(absPath);
       size = st.size;
       if (size > MAX_MARKDOWN_FILE_BYTES)
         return;
       if (totalBytes + size > MAX_MARKDOWN_TOTAL_BYTES)
         return;
-      content = await fs18.readFile(absPath, "utf8");
+      content = await fs19.readFile(absPath, "utf8");
     } catch {
       return;
     }
@@ -16950,7 +17177,7 @@ async function collectMarkdownDocs(root, components) {
   };
   let rootEntries = [];
   try {
-    rootEntries = await fs18.readdir(root, { withFileTypes: true });
+    rootEntries = await fs19.readdir(root, { withFileTypes: true });
   } catch {
     rootEntries = [];
   }
@@ -16974,7 +17201,7 @@ async function collectMarkdownDocs(root, components) {
     const dirAbs = path28.join(root, dir);
     let entries;
     try {
-      entries = await fs18.readdir(dirAbs, { withFileTypes: true });
+      entries = await fs19.readdir(dirAbs, { withFileTypes: true });
     } catch {
       continue;
     }
@@ -17014,7 +17241,7 @@ function extractMarkdownTitle(content, fallbackName) {
 }
 async function exists(p) {
   try {
-    await fs18.access(p);
+    await fs19.access(p);
     return true;
   } catch {
     return false;
@@ -17028,7 +17255,7 @@ async function sampleExtensions(root, cap) {
       return;
     let entries;
     try {
-      entries = await fs18.readdir(dir, { withFileTypes: true });
+      entries = await fs19.readdir(dir, { withFileTypes: true });
     } catch {
       return;
     }
@@ -20902,10 +21129,10 @@ var require_typescript = __commonJS({
       function and(f, g) {
         return (arg) => f(arg) && g(arg);
       }
-      function or(...fs23) {
+      function or(...fs24) {
         return (...args2) => {
           let lastResult;
-          for (const f of fs23) {
+          for (const f of fs24) {
             lastResult = f(...args2);
             if (lastResult) {
               return lastResult;
@@ -22480,7 +22707,7 @@ ${lanes.join("\n")}
       var tracing;
       var tracingEnabled;
       ((tracingEnabled2) => {
-        let fs23;
+        let fs24;
         let traceCount = 0;
         let traceFd = 0;
         let mode;
@@ -22489,9 +22716,9 @@ ${lanes.join("\n")}
         const legend = [];
         function startTracing2(tracingMode, traceDir, configFilePath) {
           Debug.assert(!tracing, "Tracing already started");
-          if (fs23 === void 0) {
+          if (fs24 === void 0) {
             try {
-              fs23 = __require("fs");
+              fs24 = __require("fs");
             } catch (e) {
               throw new Error(`tracing requires having fs
 (original error: ${e.message || e})`);
@@ -22502,8 +22729,8 @@ ${lanes.join("\n")}
           if (legendPath === void 0) {
             legendPath = combinePaths(traceDir, "legend.json");
           }
-          if (!fs23.existsSync(traceDir)) {
-            fs23.mkdirSync(traceDir, { recursive: true });
+          if (!fs24.existsSync(traceDir)) {
+            fs24.mkdirSync(traceDir, { recursive: true });
           }
           const countPart = mode === "build" ? `.${process.pid}-${++traceCount}` : mode === "server" ? `.${process.pid}` : ``;
           const tracePath = combinePaths(traceDir, `trace${countPart}.json`);
@@ -22513,10 +22740,10 @@ ${lanes.join("\n")}
             tracePath,
             typesPath
           });
-          traceFd = fs23.openSync(tracePath, "w");
+          traceFd = fs24.openSync(tracePath, "w");
           tracing = tracingEnabled2;
           const meta = { cat: "__metadata", ph: "M", ts: 1e3 * timestamp(), pid: 1, tid: 1 };
-          fs23.writeSync(
+          fs24.writeSync(
             traceFd,
             "[\n" + [{ name: "process_name", args: { name: "tsc" }, ...meta }, { name: "thread_name", args: { name: "Main" }, ...meta }, { name: "TracingStartedInBrowser", ...meta, cat: "disabled-by-default-devtools.timeline" }].map((v) => JSON.stringify(v)).join(",\n")
           );
@@ -22525,10 +22752,10 @@ ${lanes.join("\n")}
         function stopTracing() {
           Debug.assert(tracing, "Tracing is not in progress");
           Debug.assert(!!typeCatalog.length === (mode !== "server"));
-          fs23.writeSync(traceFd, `
+          fs24.writeSync(traceFd, `
 ]
 `);
-          fs23.closeSync(traceFd);
+          fs24.closeSync(traceFd);
           tracing = void 0;
           if (typeCatalog.length) {
             dumpTypes(typeCatalog);
@@ -22600,11 +22827,11 @@ ${lanes.join("\n")}
         function writeEvent(eventType, phase, name, args2, extras, time = 1e3 * timestamp()) {
           if (mode === "server" && phase === "checkTypes") return;
           mark("beginTracing");
-          fs23.writeSync(traceFd, `,
+          fs24.writeSync(traceFd, `,
 {"pid":1,"tid":1,"ph":"${eventType}","cat":"${phase}","ts":${time},"name":"${name}"`);
-          if (extras) fs23.writeSync(traceFd, `,${extras}`);
-          if (args2) fs23.writeSync(traceFd, `,"args":${JSON.stringify(args2)}`);
-          fs23.writeSync(traceFd, `}`);
+          if (extras) fs24.writeSync(traceFd, `,${extras}`);
+          if (args2) fs24.writeSync(traceFd, `,"args":${JSON.stringify(args2)}`);
+          fs24.writeSync(traceFd, `}`);
           mark("endTracing");
           measure("Tracing", "beginTracing", "endTracing");
         }
@@ -22626,9 +22853,9 @@ ${lanes.join("\n")}
           var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
           mark("beginDumpTypes");
           const typesPath = legend[legend.length - 1].typesPath;
-          const typesFd = fs23.openSync(typesPath, "w");
+          const typesFd = fs24.openSync(typesPath, "w");
           const recursionIdentityMap = /* @__PURE__ */ new Map();
-          fs23.writeSync(typesFd, "[");
+          fs24.writeSync(typesFd, "[");
           const numTypes = types.length;
           for (let i = 0; i < numTypes; i++) {
             const type = types[i];
@@ -22724,13 +22951,13 @@ ${lanes.join("\n")}
               flags: Debug.formatTypeFlags(type.flags).split("|"),
               display
             };
-            fs23.writeSync(typesFd, JSON.stringify(descriptor));
+            fs24.writeSync(typesFd, JSON.stringify(descriptor));
             if (i < numTypes - 1) {
-              fs23.writeSync(typesFd, ",\n");
+              fs24.writeSync(typesFd, ",\n");
             }
           }
-          fs23.writeSync(typesFd, "]\n");
-          fs23.closeSync(typesFd);
+          fs24.writeSync(typesFd, "]\n");
+          fs24.closeSync(typesFd);
           mark("endDumpTypes");
           measure("Dump types", "beginDumpTypes", "endDumpTypes");
         }
@@ -22738,7 +22965,7 @@ ${lanes.join("\n")}
           if (!legendPath) {
             return;
           }
-          fs23.writeFileSync(legendPath, JSON.stringify(legend));
+          fs24.writeFileSync(legendPath, JSON.stringify(legend));
         }
         tracingEnabled2.dumpLegend = dumpLegend;
       })(tracingEnabled || (tracingEnabled = {}));
@@ -232826,7 +233053,7 @@ var require_dist = __commonJS({
       enumerable: true
     }) : target, mod));
     var path37 = __toESM2(__require("path"));
-    var fs23 = __toESM2(__require("fs"));
+    var fs24 = __toESM2(__require("fs"));
     function cleanPath(path$1) {
       let normalized = (0, path37.normalize)(path$1);
       if (normalized.length > 1 && normalized[normalized.length - 1] === path37.sep) normalized = normalized.substring(0, normalized.length - 1);
@@ -233123,7 +233350,7 @@ var require_dist = __commonJS({
           symlinks: /* @__PURE__ */ new Map(),
           visited: [""].slice(0, 0),
           controller: new Aborter(),
-          fs: options2.fs || fs23
+          fs: options2.fs || fs24
         };
         this.joinPath = build$7(this.root, options2);
         this.pushDirectory = build$6(this.root, options2);
@@ -233358,7 +233585,7 @@ var require_dist2 = __commonJS({
       value: mod,
       enumerable: true
     }) : target, mod));
-    var fs23 = __require("fs");
+    var fs24 = __require("fs");
     var path37 = __require("path");
     var url = __require("url");
     var fdir = require_dist();
@@ -233606,12 +233833,12 @@ var require_dist2 = __commonJS({
       opts.cwd = (opts.cwd instanceof URL ? (0, url.fileURLToPath)(opts.cwd) : (0, path37.resolve)(opts.cwd)).replace(BACKSLASHES, "/");
       opts.ignore = ensureStringArray(opts.ignore);
       opts.fs && (opts.fs = {
-        readdir: opts.fs.readdir || fs23.readdir,
-        readdirSync: opts.fs.readdirSync || fs23.readdirSync,
-        realpath: opts.fs.realpath || fs23.realpath,
-        realpathSync: opts.fs.realpathSync || fs23.realpathSync,
-        stat: opts.fs.stat || fs23.stat,
-        statSync: opts.fs.statSync || fs23.statSync
+        readdir: opts.fs.readdir || fs24.readdir,
+        readdirSync: opts.fs.readdirSync || fs24.readdirSync,
+        realpath: opts.fs.realpath || fs24.realpath,
+        realpathSync: opts.fs.realpathSync || fs24.realpathSync,
+        stat: opts.fs.stat || fs24.stat,
+        statSync: opts.fs.statSync || fs24.statSync
       });
       if (opts.debug) log("globbing with options:", opts);
       return opts;
@@ -235542,30 +235769,30 @@ ${nodeLocation}` : message;
           yield path38;
       }
     }
-    var fs23 = runtime.fs;
+    var fs24 = runtime.fs;
     var RealFileSystemHost = class {
       async delete(path38) {
         try {
-          await fs23.delete(path38);
+          await fs24.delete(path38);
         } catch (err2) {
           throw this.#getFileNotFoundErrorIfNecessary(err2, path38);
         }
       }
       deleteSync(path38) {
         try {
-          fs23.deleteSync(path38);
+          fs24.deleteSync(path38);
         } catch (err2) {
           throw this.#getFileNotFoundErrorIfNecessary(err2, path38);
         }
       }
       readDirSync(dirPath) {
         try {
-          const entries = fs23.readDirSync(dirPath);
+          const entries = fs24.readDirSync(dirPath);
           for (const entry of entries) {
             entry.name = FileUtils.pathJoin(dirPath, entry.name);
             if (entry.isSymlink) {
               try {
-                const info2 = fs23.statSync(entry.name);
+                const info2 = fs24.statSync(entry.name);
                 if (info2 != null) {
                   entry.isDirectory = info2.isDirectory();
                   entry.isFile = info2.isFile();
@@ -235581,84 +235808,84 @@ ${nodeLocation}` : message;
       }
       async readFile(filePath, encoding = "utf-8") {
         try {
-          return await fs23.readFile(filePath, encoding);
+          return await fs24.readFile(filePath, encoding);
         } catch (err2) {
           throw this.#getFileNotFoundErrorIfNecessary(err2, filePath);
         }
       }
       readFileSync(filePath, encoding = "utf-8") {
         try {
-          return fs23.readFileSync(filePath, encoding);
+          return fs24.readFileSync(filePath, encoding);
         } catch (err2) {
           throw this.#getFileNotFoundErrorIfNecessary(err2, filePath);
         }
       }
       async writeFile(filePath, fileText) {
-        return fs23.writeFile(filePath, fileText);
+        return fs24.writeFile(filePath, fileText);
       }
       writeFileSync(filePath, fileText) {
-        fs23.writeFileSync(filePath, fileText);
+        fs24.writeFileSync(filePath, fileText);
       }
       mkdir(dirPath) {
-        return fs23.mkdir(dirPath);
+        return fs24.mkdir(dirPath);
       }
       mkdirSync(dirPath) {
-        fs23.mkdirSync(dirPath);
+        fs24.mkdirSync(dirPath);
       }
       move(srcPath, destPath) {
-        return fs23.move(srcPath, destPath);
+        return fs24.move(srcPath, destPath);
       }
       moveSync(srcPath, destPath) {
-        fs23.moveSync(srcPath, destPath);
+        fs24.moveSync(srcPath, destPath);
       }
       copy(srcPath, destPath) {
-        return fs23.copy(srcPath, destPath);
+        return fs24.copy(srcPath, destPath);
       }
       copySync(srcPath, destPath) {
-        fs23.copySync(srcPath, destPath);
+        fs24.copySync(srcPath, destPath);
       }
       async fileExists(filePath) {
         try {
-          return (await fs23.stat(filePath))?.isFile() ?? false;
+          return (await fs24.stat(filePath))?.isFile() ?? false;
         } catch {
           return false;
         }
       }
       fileExistsSync(filePath) {
         try {
-          return fs23.statSync(filePath)?.isFile() ?? false;
+          return fs24.statSync(filePath)?.isFile() ?? false;
         } catch {
           return false;
         }
       }
       async directoryExists(dirPath) {
         try {
-          return (await fs23.stat(dirPath))?.isDirectory() ?? false;
+          return (await fs24.stat(dirPath))?.isDirectory() ?? false;
         } catch {
           return false;
         }
       }
       directoryExistsSync(dirPath) {
         try {
-          return fs23.statSync(dirPath)?.isDirectory() ?? false;
+          return fs24.statSync(dirPath)?.isDirectory() ?? false;
         } catch {
           return false;
         }
       }
       realpathSync(path38) {
-        return fs23.realpathSync(path38);
+        return fs24.realpathSync(path38);
       }
       getCurrentDirectory() {
-        return FileUtils.standardizeSlashes(fs23.getCurrentDirectory());
+        return FileUtils.standardizeSlashes(fs24.getCurrentDirectory());
       }
       glob(patterns) {
-        return fs23.glob(backSlashesToForward(patterns));
+        return fs24.glob(backSlashesToForward(patterns));
       }
       globSync(patterns) {
-        return fs23.globSync(backSlashesToForward(patterns));
+        return fs24.globSync(backSlashesToForward(patterns));
       }
       isCaseSensitive() {
-        return fs23.isCaseSensitive();
+        return fs24.isCaseSensitive();
       }
       #getDirectoryNotFoundErrorIfNecessary(err2, path38) {
         return FileUtils.isNotExistsError(err2) ? new exports2.errors.DirectoryNotFoundError(FileUtils.getStandardizedAbsolutePath(this, path38)) : err2;
@@ -258905,7 +259132,7 @@ Node text: ${this.#forgottenText}`;
 });
 
 // services/scanners/dist/scanner-discovery/graph/ts-project.js
-import { promises as fs19 } from "node:fs";
+import { promises as fs20 } from "node:fs";
 import path29 from "node:path";
 async function findNearestTsconfig(repoRoot, componentDir) {
   let dir = path29.resolve(componentDir);
@@ -258913,7 +259140,7 @@ async function findNearestTsconfig(repoRoot, componentDir) {
   for (let i = 0; i < 24; i += 1) {
     const candidate = path29.join(dir, "tsconfig.json");
     try {
-      await fs19.access(candidate);
+      await fs20.access(candidate);
       return candidate;
     } catch {
     }
@@ -258931,7 +259158,7 @@ async function collectSourceFilePaths(dir, out2, limit) {
     return;
   let entries;
   try {
-    entries = await fs19.readdir(dir, { withFileTypes: true });
+    entries = await fs20.readdir(dir, { withFileTypes: true });
   } catch {
     return;
   }
@@ -259451,14 +259678,14 @@ var init_sql_tables = __esm({
 });
 
 // services/scanners/dist/scanner-discovery/graph/csharp-analyzer.js
-import { promises as fs20 } from "node:fs";
+import { promises as fs21 } from "node:fs";
 import path31 from "node:path";
 async function collectCsFiles(dir, out2) {
   if (out2.length > MAX_FILES)
     return;
   let entries;
   try {
-    entries = await fs20.readdir(dir, { withFileTypes: true });
+    entries = await fs21.readdir(dir, { withFileTypes: true });
   } catch {
     return;
   }
@@ -259592,7 +259819,7 @@ var init_csharp_analyzer = __esm({
         for (const file of files) {
           let src;
           try {
-            src = await fs20.readFile(file, "utf8");
+            src = await fs21.readFile(file, "utf8");
           } catch {
             continue;
           }
@@ -259727,14 +259954,14 @@ var init_csharp_analyzer = __esm({
 });
 
 // services/scanners/dist/scanner-discovery/graph/sql-schema.js
-import { promises as fs21 } from "node:fs";
+import { promises as fs22 } from "node:fs";
 import path32 from "node:path";
 async function collectSqlFiles(dir, out2, depth) {
   if (depth > 10 || out2.length >= MAX_SQL_FILES)
     return;
   let entries;
   try {
-    entries = await fs21.readdir(dir, { withFileTypes: true });
+    entries = await fs22.readdir(dir, { withFileTypes: true });
   } catch {
     return;
   }
@@ -259764,7 +259991,7 @@ async function scanSqlSchema(repoRoot) {
   for (const abs of files) {
     let sql;
     try {
-      sql = await fs21.readFile(abs, "utf8");
+      sql = await fs22.readFile(abs, "utf8");
     } catch {
       continue;
     }
@@ -259853,7 +260080,7 @@ var init_incremental_graph = __esm({
 });
 
 // services/scanners/dist/scanner-discovery/graph/index.js
-import { promises as fs22 } from "node:fs";
+import { promises as fs23 } from "node:fs";
 import path34 from "node:path";
 async function pickAnalyzer(componentDir) {
   if (process.env.POLYGLOT_GRAPH_ENABLED !== "true")
@@ -259866,7 +260093,7 @@ async function languageCensus(dir, acc, depth) {
     return acc;
   let entries;
   try {
-    entries = await fs22.readdir(dir, { withFileTypes: true });
+    entries = await fs23.readdir(dir, { withFileTypes: true });
   } catch {
     return acc;
   }
@@ -260101,7 +260328,7 @@ function configureBundledWasmDir() {
   } catch {
   }
 }
-async function main28() {
+async function main29() {
   const args2 = parseArgs12(process.argv);
   if (args2.help) {
     printHelp13();
@@ -260216,7 +260443,7 @@ var init_scan = __esm({
     init_auth();
     init_project_resolver();
     init_run_scan();
-    main28().catch((err2) => {
+    main29().catch((err2) => {
       console.error(`memlin: ${err2 instanceof Error ? err2.stack ?? err2.message : String(err2)}`);
       process.exit(2);
     });
@@ -260240,6 +260467,7 @@ var RUN = {
   resolve: () => Promise.resolve().then(() => (init_resolve(), resolve_exports)),
   ask: () => Promise.resolve().then(() => (init_ask(), ask_exports)),
   verify: () => Promise.resolve().then(() => (init_verify(), verify_exports)),
+  diff: () => Promise.resolve().then(() => (init_diff(), diff_exports)),
   scribe: () => Promise.resolve().then(() => (init_scribe(), scribe_exports)),
   inbox: () => Promise.resolve().then(() => (init_inbox(), inbox_exports)),
   handoffs: () => Promise.resolve().then(() => (init_handoffs(), handoffs_exports)),
@@ -260255,7 +260483,7 @@ var RUN = {
   "prompt-ci": () => Promise.resolve().then(() => (init_prompt_ci(), prompt_ci_exports)),
   scan: () => Promise.resolve().then(() => (init_scan(), scan_exports))
 };
-async function main29() {
+async function main30() {
   let sub = process.argv[2];
   if (sub === "audit") {
     const action = process.argv[3];
@@ -260277,7 +260505,7 @@ async function main29() {
   process.argv.splice(2, 1);
   await run2();
 }
-main29().catch((err2) => {
+main30().catch((err2) => {
   process.stderr.write(`memlin: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
   process.exit(1);
