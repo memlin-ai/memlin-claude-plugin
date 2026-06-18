@@ -8450,6 +8450,37 @@ var init_memlin_commands = __esm({
   }
 });
 
+// packages/shared/dist/memlin-contract.js
+function extractMemlinContract(body2) {
+  const re = new RegExp(FENCE.source, "g");
+  const merged = {};
+  let found = false;
+  let m;
+  while (m = re.exec(body2)) {
+    found = true;
+    let parsed;
+    try {
+      parsed = JSON.parse(m[1]);
+    } catch (e) {
+      throw new Error(
+        `contract block is not valid JSON: ${e instanceof Error ? e.message : e}`
+      );
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("contract block must be a JSON object at the top level");
+    }
+    Object.assign(merged, parsed);
+  }
+  return found ? merged : null;
+}
+var FENCE;
+var init_memlin_contract = __esm({
+  "packages/shared/dist/memlin-contract.js"() {
+    "use strict";
+    FENCE = /```memlin-contract\s*\n([\s\S]*?)\n```/g;
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -8477,6 +8508,7 @@ var init_dist = __esm({
     init_model_prices();
     init_credit_math();
     init_memlin_commands();
+    init_memlin_contract();
   }
 });
 
@@ -12643,26 +12675,6 @@ function parseDiffArgs(argv) {
   if (!out2.localFile) return { error: "local file path is required" };
   return out2;
 }
-function extractContract(body2) {
-  const FENCE = /```memlin-contract\s*\n([\s\S]*?)\n```/g;
-  const merged = {};
-  let found = false;
-  let m;
-  while (m = FENCE.exec(body2)) {
-    found = true;
-    let parsed;
-    try {
-      parsed = JSON.parse(m[1]);
-    } catch (e) {
-      throw new Error(`contract block is not valid JSON: ${e instanceof Error ? e.message : e}`);
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("contract block must be a JSON object at the top level");
-    }
-    Object.assign(merged, parsed);
-  }
-  return found ? merged : null;
-}
 function diffContract(contract, local, mode = "subset") {
   const drift = [];
   function walk(c, l, path37) {
@@ -12834,10 +12846,13 @@ async function main15() {
   }
   process.exit(drift.length === 0 ? 0 : 1);
 }
+var extractContract;
 var init_diff = __esm({
   "packages/plugin-core/src/cli/diff.ts"() {
     "use strict";
+    init_dist();
     init_client();
+    extractContract = extractMemlinContract;
     if (import.meta.url === (process.argv[1] ? `file://${process.argv[1]}` : void 0)) {
       main15().catch((err2) => {
         console.error(`memlin diff: ${err2 instanceof Error ? err2.message : err2}`);
