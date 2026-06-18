@@ -328,6 +328,15 @@ var MemlinApiClient = class {
   async getDocument(documentId) {
     return this.request("GET", `/documents/${encodeURIComponent(documentId)}`);
   }
+  /** POST /documents/{id}/contract-verification — H12. Record a contract
+   *  check. Used by `memlin diff --record`. */
+  async recordContractVerification(documentId, body) {
+    return this.request(
+      "POST",
+      `/documents/${encodeURIComponent(documentId)}/contract-verification`,
+      body
+    );
+  }
   /** GET /documents/{id}/versions — history. */
   async listVersions(documentId) {
     const res = await this.request(
@@ -708,7 +717,11 @@ function parseDiffArgs(argv) {
     documentId: null,
     localFile: null,
     mode: "subset",
-    json: false
+    json: false,
+    record: false,
+    groundTruthKind: "file",
+    revision: null,
+    agentLabel: null
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -718,6 +731,20 @@ function parseDiffArgs(argv) {
       out.mode = "subset";
     } else if (a === "--json") {
       out.json = true;
+    } else if (a === "--record") {
+      out.record = true;
+    } else if (a === "--kind") {
+      const v = argv[++i];
+      if (!v) return { error: "--kind needs a value" };
+      out.groundTruthKind = v;
+    } else if (a === "--revision") {
+      const v = argv[++i];
+      if (!v) return { error: "--revision needs a value" };
+      out.revision = v;
+    } else if (a === "--agent") {
+      const v = argv[++i];
+      if (!v) return { error: "--agent needs a value" };
+      out.agentLabel = v;
     } else if (a === "--help" || a === "-h") {
       return { error: "help" };
     } else if (a.startsWith("--")) {
@@ -895,6 +922,32 @@ async function main() {
           `  - ${d.path}: contract=${JSON.stringify(d.contract)} local=${JSON.stringify(d.local)}`
         );
       }
+    }
+  }
+  if (parsed.record) {
+    const status = drift.length === 0 ? "verified" : "drifted";
+    const payload = {
+      status,
+      document_version: doc.version_number,
+      ground_truth: {
+        kind: parsed.groundTruthKind,
+        ref: localFile,
+        ...parsed.revision ? { revision: parsed.revision } : {}
+      },
+      ...status === "drifted" ? { drift } : {},
+      ...parsed.agentLabel ? { agent_attribution: { label: parsed.agentLabel } } : {}
+    };
+    try {
+      await api.recordContractVerification(documentId, payload);
+      if (!parsed.json) {
+        process.stderr.write(`  \u2192 recorded ${status} on document ${documentId}
+`);
+      }
+    } catch (e) {
+      process.stderr.write(
+        `  \u26A0 recorded the diff but Memlin didn't accept it: ${e instanceof Error ? e.message : e}
+`
+      );
     }
   }
   process.exit(drift.length === 0 ? 0 : 1);
