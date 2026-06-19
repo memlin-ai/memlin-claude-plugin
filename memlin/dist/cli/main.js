@@ -8839,7 +8839,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.22";
+  return "0.2.23";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -14012,7 +14012,16 @@ async function main22() {
   }
   const { api, config } = ctx;
   const cwd = runtimeCwd();
-  const gitRemote = readGitRemote6(cwd);
+  let gitRemote = readGitRemote6(cwd);
+  if (!gitRemote) {
+    const childRemotes = detectGitRemotes(cwd);
+    if (childRemotes.length > 0) {
+      gitRemote = childRemotes[0];
+      console.log(
+        `Umbrella folder detected (${childRemotes.length} child repo${childRemotes.length === 1 ? "" : "s"}); anchoring the project to ${gitRemote} so it resolves by git remote.`
+      );
+    }
+  }
   const me = await api.me();
   const accounts = me.accounts.map((a) => ({
     id: a.id,

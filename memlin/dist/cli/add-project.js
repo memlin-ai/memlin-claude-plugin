@@ -227,7 +227,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.22";
+  return "0.2.23";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -784,6 +784,40 @@ function runtimeCwd(fallback = process.cwd()) {
   }
   return path5.resolve(fallback);
 }
+function readGitRemote(cwd) {
+  try {
+    const url = execSync("git remote get-url origin", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    return normalizeGitRemote(url);
+  } catch {
+    return null;
+  }
+}
+var MAX_WORKSPACE_SCAN = 64;
+function detectGitRemotes(cwd) {
+  const enclosing = readGitRemote(cwd);
+  if (enclosing) return [enclosing];
+  const out = [];
+  try {
+    let scanned = 0;
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (scanned >= MAX_WORKSPACE_SCAN) break;
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
+        continue;
+      }
+      scanned++;
+      const child = path5.join(cwd, entry.name);
+      if (!existsSync(path5.join(child, ".git"))) continue;
+      const remote = readGitRemote(child);
+      if (remote && !out.includes(remote)) out.push(remote);
+    }
+  } catch {
+  }
+  return out;
+}
 
 // packages/plugin-core/src/sibling-detect.ts
 import { readdirSync as readdirSync2, existsSync as existsSync2 } from "node:fs";
@@ -930,7 +964,7 @@ function printHelp() {
     ].join("\n")
   );
 }
-function readGitRemote(cwd) {
+function readGitRemote2(cwd) {
   try {
     const url = execSync3("git remote get-url origin", {
       cwd,
@@ -972,7 +1006,16 @@ async function main() {
   }
   const { api, config } = ctx;
   const cwd = runtimeCwd();
-  const gitRemote = readGitRemote(cwd);
+  let gitRemote = readGitRemote2(cwd);
+  if (!gitRemote) {
+    const childRemotes = detectGitRemotes(cwd);
+    if (childRemotes.length > 0) {
+      gitRemote = childRemotes[0];
+      console.log(
+        `Umbrella folder detected (${childRemotes.length} child repo${childRemotes.length === 1 ? "" : "s"}); anchoring the project to ${gitRemote} so it resolves by git remote.`
+      );
+    }
+  }
   const me = await api.me();
   const accounts = me.accounts.map((a) => ({
     id: a.id,
