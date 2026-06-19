@@ -22,3 +22,10 @@ Common usage:
 
 If the workspace is already registered under any of your orgs, this
 command is a no-op except for writing the workspace pin file.
+
+You usually **don't** need this at a multi-repo workspace root. If you open
+your agent at a parent folder holding several sibling git repos (e.g.
+`~/Repos/Drip/{drip-api,web,mobile}`), Memlin auto-resolves to the org project
+that owns those repos — no `add-project`, no per-machine config — and forks
+resolve via the project's additional remotes. Reach for `add-project` only for
+a single standalone repo that isn't attached yet, or a non-git folder.

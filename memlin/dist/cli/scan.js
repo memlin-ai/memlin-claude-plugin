@@ -243317,7 +243317,7 @@ Node text: ${this.#forgottenText}`;
 import { execSync as execSync2 } from "node:child_process";
 import path15 from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync as existsSync2 } from "node:fs";
+import { existsSync as existsSync3 } from "node:fs";
 import { gzipSync } from "node:zlib";
 
 // packages/plugin-core/src/client.ts
@@ -243539,7 +243539,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.19";
+  return "0.2.20";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -244061,6 +244061,7 @@ function applyWorkspaceOverlay(config, overlay) {
 
 // packages/plugin-core/src/project-resolver.ts
 import { execSync } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 import path5 from "node:path";
 var WORKSPACE_ENV_VARS = [
   // Claude Code exposes the original project dir to hooks/plugin commands.
@@ -244081,10 +244082,14 @@ function runtimeCwd(fallback = process.cwd()) {
 }
 async function resolveProject(api, cwd, configProjectId) {
   const absCwd = path5.resolve(cwd);
-  const remote = readGitRemote(cwd);
+  const remotes = detectGitRemotes(cwd);
   try {
     const result = await api.resolveProject({
-      git_remote: remote,
+      // Primary remote (back-compat with the single-remote server path).
+      git_remote: remotes[0] ?? null,
+      // All detected remotes — for the workspace-root-of-repos case, this is
+      // every sibling repo so the server resolves to the owning project.
+      git_remotes: remotes,
       cwd: absCwd
     });
     if (result.project_id) {
@@ -244119,6 +244124,28 @@ function readGitRemote(cwd) {
     return null;
   }
 }
+var MAX_WORKSPACE_SCAN = 64;
+function detectGitRemotes(cwd) {
+  const enclosing = readGitRemote(cwd);
+  if (enclosing) return [enclosing];
+  const out2 = [];
+  try {
+    let scanned = 0;
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (scanned >= MAX_WORKSPACE_SCAN) break;
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
+        continue;
+      }
+      scanned++;
+      const child = path5.join(cwd, entry.name);
+      if (!existsSync(path5.join(child, ".git"))) continue;
+      const remote = readGitRemote(child);
+      if (remote && !out2.includes(remote)) out2.push(remote);
+    }
+  } catch {
+  }
+  return out2;
+}
 
 // services/scanners/dist/runner/run-scan.js
 import path14 from "node:path";
@@ -244130,12 +244157,12 @@ import path7 from "node:path";
 // services/scanners/dist/scanner-discovery/graph/csharp-parser.js
 var import_web_tree_sitter = __toESM(require_tree_sitter(), 1);
 import path6 from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync as existsSync2 } from "node:fs";
 import { createRequire } from "node:module";
 var parserPromise = null;
 function resolveWasmPaths() {
   const override = process.env.MEMLIN_WASM_DIR;
-  if (override && existsSync(path6.join(override, "tree-sitter.wasm"))) {
+  if (override && existsSync2(path6.join(override, "tree-sitter.wasm"))) {
     return {
       runtimeDir: override,
       grammarPath: path6.join(override, "tree-sitter-c_sharp.wasm")
@@ -246199,7 +246226,7 @@ function configureBundledWasmDir() {
   try {
     const here = path15.dirname(fileURLToPath(import.meta.url));
     const candidate = path15.resolve(here, "..", "wasm");
-    if (existsSync2(path15.join(candidate, "tree-sitter.wasm"))) {
+    if (existsSync3(path15.join(candidate, "tree-sitter.wasm"))) {
       process.env.MEMLIN_WASM_DIR = candidate;
     }
   } catch {

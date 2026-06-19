@@ -8449,7 +8449,7 @@ var init_memlin_commands = __esm({
         section: "",
         cmd: "add-project",
         blurb: "register this workspace",
-        details: "Registers the current workspace as a Memlin project. Auto-detects the git remote and local paths, writes a workspace pin, and makes sure every future session in this directory binds to the project automatically."
+        details: "Registers the current workspace as a Memlin project. Auto-detects the git remote and local paths, writes a workspace pin, and makes sure every future session in this directory binds to the project automatically. You usually don\u2019t need it: opening your agent inside a repo (or at a workspace root holding sibling repos, e.g. ~/Repos/Drip/{drip-api,web,mobile}) auto-resolves to the project that owns those repos \u2014 forks included, via the project\u2019s additional remotes. Reach for add-project only for a single standalone repo that isn\u2019t attached yet, or a non-git folder."
       },
       {
         section: "",
@@ -8839,7 +8839,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.19";
+  return "0.2.20";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -9860,6 +9860,7 @@ var init_init = __esm({
 
 // packages/plugin-core/src/project-resolver.ts
 import { execSync } from "node:child_process";
+import { existsSync as existsSync2, readdirSync } from "node:fs";
 import path9 from "node:path";
 function looksLikePluginCache(cwd) {
   return cwd.includes("/.claude/plugins/cache/") || cwd.includes("/.cursor/plugins/cache/");
@@ -9883,10 +9884,14 @@ function runtimeCwdForDisplay(fallback = process.cwd()) {
 }
 async function resolveProject(api, cwd, configProjectId) {
   const absCwd = path9.resolve(cwd);
-  const remote = readGitRemote(cwd);
+  const remotes = detectGitRemotes(cwd);
   try {
     const result = await api.resolveProject({
-      git_remote: remote,
+      // Primary remote (back-compat with the single-remote server path).
+      git_remote: remotes[0] ?? null,
+      // All detected remotes — for the workspace-root-of-repos case, this is
+      // every sibling repo so the server resolves to the owning project.
+      git_remotes: remotes,
       cwd: absCwd
     });
     if (result.project_id) {
@@ -9921,13 +9926,34 @@ function readGitRemote(cwd) {
     return null;
   }
 }
+function detectGitRemotes(cwd) {
+  const enclosing = readGitRemote(cwd);
+  if (enclosing) return [enclosing];
+  const out2 = [];
+  try {
+    let scanned = 0;
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (scanned >= MAX_WORKSPACE_SCAN) break;
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
+        continue;
+      }
+      scanned++;
+      const child = path9.join(cwd, entry.name);
+      if (!existsSync2(path9.join(child, ".git"))) continue;
+      const remote = readGitRemote(child);
+      if (remote && !out2.includes(remote)) out2.push(remote);
+    }
+  } catch {
+  }
+  return out2;
+}
 function isWorkspaceActive(input) {
   return Boolean(input.resolvedProjectId) || input.workspaceBound;
 }
 function effectiveAccountId(input) {
   return input.resolvedAccountId ?? input.configAccountId;
 }
-var WORKSPACE_ENV_VARS;
+var WORKSPACE_ENV_VARS, MAX_WORKSPACE_SCAN;
 var init_project_resolver = __esm({
   "packages/plugin-core/src/project-resolver.ts"() {
     "use strict";
@@ -9942,6 +9968,7 @@ var init_project_resolver = __esm({
       // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
       "INIT_CWD"
     ];
+    MAX_WORKSPACE_SCAN = 64;
   }
 });
 
@@ -10002,13 +10029,13 @@ var init_state = __esm({
 
 // packages/plugin-core/src/local-scan.ts
 import { promises as fs10 } from "node:fs";
-import { existsSync as existsSync2 } from "node:fs";
+import { existsSync as existsSync3 } from "node:fs";
 import path11 from "node:path";
 async function scanLocal(opts = {}) {
   const out2 = [];
   const root = opts.rootOverride ?? resolveHost().homeDir();
   const memDir = path11.join(root, "memory");
-  if (existsSync2(memDir)) {
+  if (existsSync3(memDir)) {
     for (const file of await fs10.readdir(memDir)) {
       if (!file.endsWith(".md") || file === "MEMORY.md") continue;
       const abs = path11.join(memDir, file);
@@ -10023,12 +10050,12 @@ async function scanLocal(opts = {}) {
     }
   }
   const skillsDir = path11.join(root, "skills");
-  if (existsSync2(skillsDir)) {
+  if (existsSync3(skillsDir)) {
     const entries = await fs10.readdir(skillsDir, { withFileTypes: true });
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       const skillMd = path11.join(skillsDir, e.name, "SKILL.md");
-      if (!existsSync2(skillMd)) continue;
+      if (!existsSync3(skillMd)) continue;
       const content = await fs10.readFile(skillMd, "utf8");
       out2.push({
         path: `skills/${e.name}/SKILL.md`,
@@ -10041,7 +10068,7 @@ async function scanLocal(opts = {}) {
   }
   if (opts.includePlans) {
     const plansDir2 = resolveHost().plansDir();
-    if (existsSync2(plansDir2)) {
+    if (existsSync3(plansDir2)) {
       for (const file of await fs10.readdir(plansDir2)) {
         if (!file.endsWith(".md")) continue;
         const abs = path11.join(plansDir2, file);
@@ -10806,7 +10833,7 @@ var init_paths = __esm({
 
 // packages/plugin-core/src/apply.ts
 import { promises as fs13 } from "node:fs";
-import { existsSync as existsSync3 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
 import os11 from "node:os";
 import path14 from "node:path";
 function archiveRoot() {
@@ -10814,12 +10841,12 @@ function archiveRoot() {
 }
 async function archiveDestination(trackedRelPath) {
   const base = path14.join(archiveRoot(), trackedRelPath);
-  if (!existsSync3(base)) return base;
+  if (!existsSync4(base)) return base;
   const ext = path14.extname(base);
   const stem = base.slice(0, base.length - ext.length);
   for (let i = 1; i < 1e3; i++) {
     const candidate = `${stem}.${i}${ext}`;
-    if (!existsSync3(candidate)) return candidate;
+    if (!existsSync4(candidate)) return candidate;
   }
   return `${stem}.${Date.now()}${ext}`;
 }
@@ -10865,7 +10892,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
   for (const tracked of Object.keys(state.documents)) {
     if (currentPaths.has(tracked)) continue;
     const full = path14.join(root, tracked);
-    if (existsSync3(full)) {
+    if (existsSync4(full)) {
       let userEdited = false;
       try {
         const local = await fs13.readFile(full, "utf8");
@@ -13781,20 +13808,20 @@ var init_pin = __esm({
 });
 
 // packages/plugin-core/src/sibling-detect.ts
-import { readdirSync, existsSync as existsSync4 } from "node:fs";
+import { readdirSync as readdirSync2, existsSync as existsSync5 } from "node:fs";
 import { execSync as execSync6 } from "node:child_process";
 import path23 from "node:path";
 function childGitRemotes(cwd, deps = {}) {
   const listDirs = deps.listDirs ?? ((p) => {
     try {
-      return readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules").map((e) => e.name);
+      return readdirSync2(p, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".") && e.name !== "node_modules").map((e) => e.name);
     } catch {
       return [];
     }
   });
   const readRemote = deps.readRemote ?? ((repoPath) => {
     try {
-      if (!existsSync4(path23.join(repoPath, ".git"))) return null;
+      if (!existsSync5(path23.join(repoPath, ".git"))) return null;
       const url = execSync6("git remote get-url origin", {
         cwd: repoPath,
         stdio: ["ignore", "pipe", "ignore"],
@@ -16550,11 +16577,11 @@ ${JSON.stringify(t2, null, 2)}`);
 
 // services/scanners/dist/scanner-discovery/graph/csharp-parser.js
 import path27 from "node:path";
-import { existsSync as existsSync5 } from "node:fs";
+import { existsSync as existsSync6 } from "node:fs";
 import { createRequire } from "node:module";
 function resolveWasmPaths() {
   const override = process.env.MEMLIN_WASM_DIR;
-  if (override && existsSync5(path27.join(override, "tree-sitter.wasm"))) {
+  if (override && existsSync6(path27.join(override, "tree-sitter.wasm"))) {
     return {
       runtimeDir: override,
       grammarPath: path27.join(override, "tree-sitter-c_sharp.wasm")
@@ -260340,7 +260367,7 @@ var scan_exports = {};
 import { execSync as execSync8 } from "node:child_process";
 import path36 from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync as existsSync6 } from "node:fs";
+import { existsSync as existsSync7 } from "node:fs";
 import { gzipSync } from "node:zlib";
 function parseArgs12(argv) {
   const out2 = {};
@@ -260402,7 +260429,7 @@ function configureBundledWasmDir() {
   try {
     const here = path36.dirname(fileURLToPath(import.meta.url));
     const candidate = path36.resolve(here, "..", "wasm");
-    if (existsSync6(path36.join(candidate, "tree-sitter.wasm"))) {
+    if (existsSync7(path36.join(candidate, "tree-sitter.wasm"))) {
       process.env.MEMLIN_WASM_DIR = candidate;
     }
   } catch {
