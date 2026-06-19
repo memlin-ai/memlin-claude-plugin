@@ -548,7 +548,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.20";
+  return "0.2.21";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -1231,9 +1231,34 @@ function stateRow(d, h, at) {
 import { execSync } from "node:child_process";
 import { existsSync as existsSync2, readdirSync } from "node:fs";
 import path7 from "node:path";
+var ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
+function allowAccountMismatch(env = process.env) {
+  const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
+  return v === "1" || v === "true" || v === "yes";
+}
+function accountBindingHazard(r, opts = {}) {
+  if (!r.hasGitRemote || !r.project_id) return "none";
+  if (r.reason === "local-path") return opts.allowMismatch ? "warn" : "block";
+  if (r.reason === "config") return "warn";
+  return "none";
+}
+function formatAccountMismatchWarning(input) {
+  if (input.hazard === "none") return null;
+  const acct = input.accountName ? `"${input.accountName}"` : "this account";
+  const proj = input.projectName ? `"${input.projectName}"` : "a project";
+  const head = input.hazard === "block" ? "Memlin: account-binding mismatch \u2014 capture paused." : "Memlin: account-binding check.";
+  return [
+    head,
+    `  This repo has a git remote, but it resolved to ${proj} under ${acct} via ${input.reason} \u2014`,
+    `  that project does not own your git remote, so you may be recording to the wrong org.`,
+    "  Fix: run `memlin login` to refresh your accounts, then `memlin add-project`",
+    "  (or `memlin link <correct-org>`)." + (input.hazard === "block" ? ` To record here anyway, set ${ALLOW_ACCOUNT_MISMATCH_ENV}=1.` : "")
+  ].join("\n");
+}
 async function resolveProject(api, cwd, configProjectId) {
   const absCwd = path7.resolve(cwd);
   const remotes = detectGitRemotes(cwd);
+  const hasGitRemote = remotes.length > 0;
   try {
     const result = await api.resolveProject({
       // Primary remote (back-compat with the single-remote server path).
@@ -1248,7 +1273,8 @@ async function resolveProject(api, cwd, configProjectId) {
         project_id: result.project_id,
         project_name: result.name,
         account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason
+        reason: result.reason === "none" ? "config" : result.reason,
+        hasGitRemote
       };
     }
   } catch {
@@ -1258,10 +1284,11 @@ async function resolveProject(api, cwd, configProjectId) {
       project_id: configProjectId,
       project_name: null,
       account_id: null,
-      reason: "config"
+      reason: "config",
+      hasGitRemote
     };
   }
-  return { project_id: null, project_name: null, account_id: null, reason: "none" };
+  return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
 }
 function readGitRemote(cwd) {
   try {
@@ -1340,6 +1367,7 @@ async function getLatestMainSha(state) {
 }
 function formatBanner(opts) {
   const lines = [];
+  if (opts.hazardWarning) lines.push(opts.hazardWarning);
   if (opts.binding) {
     const { accountName, projectName, source } = opts.binding;
     const sourceTag = source === "workspace" ? " (workspace pin)" : source === "cross-account-match" ? " (auto-matched)" : "";
@@ -1365,7 +1393,8 @@ async function buildSessionBanner(binding, opts = { authenticated: true }) {
     binding,
     authenticated: opts.authenticated,
     localSha,
-    latestSha
+    latestSha,
+    hazardWarning: opts.hazardWarning ?? null
   });
 }
 
@@ -1456,7 +1485,13 @@ async function main() {
     resolved = await resolveProject(api, process.cwd(), config.project_id);
   } catch (err) {
     log(`project resolve failed: ${err instanceof Error ? err.message : String(err)}`);
-    resolved = { project_id: null, project_name: null, account_id: null, reason: "none" };
+    resolved = {
+      project_id: null,
+      project_name: null,
+      account_id: null,
+      reason: "none",
+      hasGitRemote: false
+    };
   }
   let autoBoundJustNow = false;
   try {
@@ -1530,11 +1565,21 @@ async function main() {
   else if (resolved.account_id && resolved.account_id !== config.account_id) {
     source = "cross-account-match";
   }
-  const banner = await buildSessionBanner({
+  const hazard = accountBindingHazard(resolved, { allowMismatch: allowAccountMismatch() });
+  const hazardWarning = formatAccountMismatchWarning({
+    hazard,
     accountName,
     projectName: resolved.project_name,
-    source
+    reason: resolved.reason
   });
+  const banner = await buildSessionBanner(
+    {
+      accountName,
+      projectName: resolved.project_name,
+      source
+    },
+    { authenticated: true, hazardWarning }
+  );
   if (banner) {
     process.stdout.write(banner + "\n");
   }

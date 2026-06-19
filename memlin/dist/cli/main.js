@@ -8839,7 +8839,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.20";
+  return "0.2.21";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -9862,6 +9862,29 @@ var init_init = __esm({
 import { execSync } from "node:child_process";
 import { existsSync as existsSync2, readdirSync } from "node:fs";
 import path9 from "node:path";
+function allowAccountMismatch(env = process.env) {
+  const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
+  return v === "1" || v === "true" || v === "yes";
+}
+function accountBindingHazard(r, opts = {}) {
+  if (!r.hasGitRemote || !r.project_id) return "none";
+  if (r.reason === "local-path") return opts.allowMismatch ? "warn" : "block";
+  if (r.reason === "config") return "warn";
+  return "none";
+}
+function formatAccountMismatchWarning(input) {
+  if (input.hazard === "none") return null;
+  const acct = input.accountName ? `"${input.accountName}"` : "this account";
+  const proj = input.projectName ? `"${input.projectName}"` : "a project";
+  const head = input.hazard === "block" ? "Memlin: account-binding mismatch \u2014 capture paused." : "Memlin: account-binding check.";
+  return [
+    head,
+    `  This repo has a git remote, but it resolved to ${proj} under ${acct} via ${input.reason} \u2014`,
+    `  that project does not own your git remote, so you may be recording to the wrong org.`,
+    "  Fix: run `memlin login` to refresh your accounts, then `memlin add-project`",
+    "  (or `memlin link <correct-org>`)." + (input.hazard === "block" ? ` To record here anyway, set ${ALLOW_ACCOUNT_MISMATCH_ENV}=1.` : "")
+  ].join("\n");
+}
 function looksLikePluginCache(cwd) {
   return cwd.includes("/.claude/plugins/cache/") || cwd.includes("/.cursor/plugins/cache/");
 }
@@ -9885,6 +9908,7 @@ function runtimeCwdForDisplay(fallback = process.cwd()) {
 async function resolveProject(api, cwd, configProjectId) {
   const absCwd = path9.resolve(cwd);
   const remotes = detectGitRemotes(cwd);
+  const hasGitRemote = remotes.length > 0;
   try {
     const result = await api.resolveProject({
       // Primary remote (back-compat with the single-remote server path).
@@ -9899,7 +9923,8 @@ async function resolveProject(api, cwd, configProjectId) {
         project_id: result.project_id,
         project_name: result.name,
         account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason
+        reason: result.reason === "none" ? "config" : result.reason,
+        hasGitRemote
       };
     }
   } catch {
@@ -9909,10 +9934,11 @@ async function resolveProject(api, cwd, configProjectId) {
       project_id: configProjectId,
       project_name: null,
       account_id: null,
-      reason: "config"
+      reason: "config",
+      hasGitRemote
     };
   }
-  return { project_id: null, project_name: null, account_id: null, reason: "none" };
+  return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
 }
 function readGitRemote(cwd) {
   try {
@@ -9953,11 +9979,12 @@ function isWorkspaceActive(input) {
 function effectiveAccountId(input) {
   return input.resolvedAccountId ?? input.configAccountId;
 }
-var WORKSPACE_ENV_VARS, MAX_WORKSPACE_SCAN;
+var ALLOW_ACCOUNT_MISMATCH_ENV, WORKSPACE_ENV_VARS, MAX_WORKSPACE_SCAN;
 var init_project_resolver = __esm({
   "packages/plugin-core/src/project-resolver.ts"() {
     "use strict";
     init_runtime_shared();
+    ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
     WORKSPACE_ENV_VARS = [
       // Claude Code exposes the original project dir to hooks/plugin commands.
       "CLAUDE_PROJECT_DIR",
@@ -10338,8 +10365,19 @@ async function main3() {
   }
   const cwdInfo = runtimeCwdForDisplay();
   const resolved = await resolveProject(ctx.api, cwdInfo.cwd, ctx.config.project_id);
-  await printAccount(ctx.api, ctx.config, resolved);
+  const accountName = await printAccount(ctx.api, ctx.config, resolved);
   printProject(resolved, cwdInfo);
+  const hazard = accountBindingHazard(resolved, { allowMismatch: allowAccountMismatch() });
+  const hazardWarning = formatAccountMismatchWarning({
+    hazard,
+    accountName,
+    projectName: resolved.project_name,
+    reason: resolved.reason
+  });
+  if (hazardWarning) {
+    console.log("");
+    console.log(hazardWarning);
+  }
   printRouting(ctx.config.api_url);
   await printLocalState();
 }
@@ -10370,10 +10408,12 @@ async function printAccount(api, config, resolved) {
     configAccountId: config.account_id,
     resolvedAccountId: resolved.account_id
   });
+  let accountName = null;
   console.log("");
   console.log("Account");
   try {
     const account = await api.getAccount({ accountId });
+    accountName = account.name;
     console.log(
       `  workspace:   ${account.name}  (${account.kind}${account.tier ? `, ${account.tier}` : ""})`
     );
@@ -10394,6 +10434,7 @@ async function printAccount(api, config, resolved) {
     );
   } catch {
   }
+  return accountName;
 }
 function printProject(resolved, cwdInfo) {
   console.log("");
@@ -14064,6 +14105,14 @@ Attach this folder to it instead of creating a new project? [Y/n] `,
       console.error(`  ${a.id}  ${a.name}${tag}  [${a.role}]`);
     }
     process.exit(1);
+  }
+  if (!parsed.org && gitRemote && accounts.length > 1) {
+    console.log(
+      `Note: this repo's git remote isn't attached to any of your ${accounts.length} orgs yet.`
+    );
+    console.log(
+      `Creating a new project under "${target.name}" (your default). If it belongs to a different org, cancel and pass --org <name>, or run \`memlin login\` to refresh your account list first.`
+    );
   }
   const projectName = parsed.name?.trim() || path24.basename(cwd).trim() || "untitled";
   let project;
