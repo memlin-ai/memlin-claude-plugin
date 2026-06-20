@@ -3682,6 +3682,20 @@ function normalizeGitRemote(raw) {
   }
   return s || null;
 }
+async function withTimeout(promise, ms, fallback) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    if (timer !== void 0) clearTimeout(timer);
+  }
+}
 
 // packages/plugin-core/dist/host.js
 import os2 from "node:os";
@@ -3744,7 +3758,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.23";
+  return "0.2.24";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -9090,9 +9104,8 @@ async function maybeProposeMemory(ctx, payload) {
     },
     accountOverride ? { accountId: accountOverride } : {}
   );
-  const timeout = new Promise((resolve) => setTimeout(() => resolve({ ok: false, proposed: 0 }), TIMEOUT_MS));
   try {
-    const result = await Promise.race([propose, timeout]);
+    const result = await withTimeout(propose, TIMEOUT_MS, { ok: false, proposed: 0 });
     if (result.proposed > 0) {
       const parts = [
         `${result.proposed} candidate(s) processed`,
@@ -9141,10 +9154,7 @@ async function maybeRecordOutcome(ctx, payload) {
           git_remote: gitRemote,
           negative_outcome_audit_id: state.last_resolve.audit_id
         });
-        const timeout = new Promise(
-          (resolve) => setTimeout(() => resolve({ ok: false, proposed: 0 }), TIMEOUT_MS)
-        );
-        const res = await Promise.race([propose, timeout]);
+        const res = await withTimeout(propose, TIMEOUT_MS, { ok: false, proposed: 0 });
         if (res.correction_rule) {
           const sessionId = payload.transcript_path?.split("/").pop()?.replace(/\.jsonl$/, "") ?? "session";
           const next = await readState();
@@ -9265,11 +9275,15 @@ ${text}`);
     { session_id: sessionId, transcript: delta, project_id: resolvedProjectId },
     accountOverride ? { accountId: accountOverride } : {}
   );
-  const timeout = new Promise(
-    (resolve) => setTimeout(() => resolve({ proposals_persisted: 0 }), SCRIBE_TIMEOUT_MS)
-  );
   try {
-    const result = await Promise.race([scribe, timeout]);
+    const result = await withTimeout(scribe, SCRIBE_TIMEOUT_MS, {
+      run_id: "",
+      proposals_extracted: 0,
+      proposals_persisted: 0,
+      proposal_ids: [],
+      latency_ms: 0,
+      truncated: false
+    });
     if (result.proposals_persisted > 0) {
       log(`session scribe: ${result.proposals_persisted} proposal(s) queued`);
       const carried = state.scribe_notice && state.scribe_notice.session_id === sessionId ? state.scribe_notice.unsurfaced : 0;

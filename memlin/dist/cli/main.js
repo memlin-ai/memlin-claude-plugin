@@ -8839,7 +8839,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.23";
+  return "0.2.24";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -9782,6 +9782,8 @@ var init_client = __esm({
     init_auth();
     init_memlin_api_client();
     init_workspace_binding();
+    init_runtime_shared();
+    init_runtime_shared();
     CONFIG_DIR2 = path7.join(os7.homedir(), ".config", "memlin");
     CONFIG_FILE2 = path7.join(CONFIG_DIR2, "config.json");
     TOKEN_FILE = path7.join(CONFIG_DIR2, "token.json");

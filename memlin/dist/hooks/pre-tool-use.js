@@ -8218,6 +8218,38 @@ function normalizeGitRemote(raw) {
   }
   return s || null;
 }
+async function withTimeout(promise, ms, fallback) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms);
+        timer.unref?.();
+      })
+    ]);
+  } finally {
+    if (timer !== void 0) clearTimeout(timer);
+  }
+}
+async function closeHttpSockets() {
+  try {
+    const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
+    if (dispatcher && typeof dispatcher.close === "function") {
+      let timer;
+      await Promise.race([
+        dispatcher.close(),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 250);
+          timer.unref?.();
+        })
+      ]).finally(() => {
+        if (timer !== void 0) clearTimeout(timer);
+      });
+    }
+  } catch {
+  }
+}
 
 // packages/plugin-core/dist/host.js
 import os2 from "node:os";
@@ -8280,7 +8312,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.23";
+  return "0.2.24";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -8754,6 +8786,9 @@ async function findWorkspaceBinding(startDir) {
 }
 
 // packages/plugin-core/dist/client.js
+function exitClean(code) {
+  void closeHttpSockets().finally(() => process.exit(code));
+}
 var CONFIG_DIR = path4.join(os4.homedir(), ".config", "memlin");
 var CONFIG_FILE = path4.join(CONFIG_DIR, "config.json");
 var TOKEN_FILE = path4.join(CONFIG_DIR, "token.json");
@@ -9070,14 +9105,14 @@ async function evaluateEditCollision(ctx, payload, projectId, projectAccountId) 
   if (relPaths.length === 0) return null;
   let res;
   try {
-    const call = ctx.api.editGuard(
-      { project_id: projectId, session_id: payload.session_id, paths: relPaths },
-      projectAccountId ? { accountId: projectAccountId } : {}
+    res = await withTimeout(
+      ctx.api.editGuard(
+        { project_id: projectId, session_id: payload.session_id, paths: relPaths },
+        projectAccountId ? { accountId: projectAccountId } : {}
+      ),
+      EDIT_GUARD_TIMEOUT_MS,
+      { collisions: [] }
     );
-    const timeout = new Promise(
-      (resolve) => setTimeout(() => resolve({ collisions: [] }), EDIT_GUARD_TIMEOUT_MS)
-    );
-    res = await Promise.race([call, timeout]);
   } catch (err) {
     log(
       `edit-guard: check failed (fail-open): ${err instanceof Error ? err.message : String(err)}`
@@ -9187,7 +9222,7 @@ async function readStdin() {
   return data;
 }
 function emitAllow() {
-  process.exit(0);
+  exitClean(0);
 }
 function emit(decision, reason) {
   const payload = {
@@ -9198,7 +9233,7 @@ function emit(decision, reason) {
     }
   };
   process.stdout.write(JSON.stringify(payload) + "\n");
-  process.exit(0);
+  exitClean(0);
 }
 async function main() {
   let raw;
