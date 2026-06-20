@@ -540,6 +540,24 @@ function normalizeGitRemote(raw) {
   }
   return s || null;
 }
+async function closeHttpSockets() {
+  try {
+    const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
+    if (dispatcher && typeof dispatcher.close === "function") {
+      let timer;
+      await Promise.race([
+        dispatcher.close(),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 250);
+          timer.unref?.();
+        })
+      ]).finally(() => {
+        if (timer !== void 0) clearTimeout(timer);
+      });
+    }
+  } catch {
+  }
+}
 
 // packages/plugin-core/dist/memlin-api-client.js
 init_host();
@@ -548,7 +566,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.25";
+  return "0.2.26";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -1038,6 +1056,9 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
 }
 
 // packages/plugin-core/dist/client.js
+function exitClean(code) {
+  void closeHttpSockets().finally(() => process.exit(code));
+}
 var CONFIG_DIR = path4.join(os4.homedir(), ".config", "memlin");
 var CONFIG_FILE = path4.join(CONFIG_DIR, "config.json");
 var TOKEN_FILE = path4.join(CONFIG_DIR, "token.json");
@@ -1611,4 +1632,14 @@ async function main() {
   } catch {
   }
 }
-void main();
+var SESSION_START_DEADLINE_MS = 15e3;
+void Promise.race([
+  main(),
+  new Promise((resolve) => {
+    const t = setTimeout(() => {
+      log(`session-start: hit the ${SESSION_START_DEADLINE_MS}ms deadline \u2014 exiting (sync resumes next launch)`);
+      resolve();
+    }, SESSION_START_DEADLINE_MS);
+    t.unref?.();
+  })
+]).catch((err) => log(`session-start failed: ${err instanceof Error ? err.message : String(err)}`)).finally(() => exitClean(0));
