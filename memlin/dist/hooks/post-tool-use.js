@@ -3522,7 +3522,7 @@ var require_gray_matter = __commonJS({
 });
 
 // apps/cli-plugin/src/hooks/post-tool-use.ts
-import { execSync as execSync4 } from "node:child_process";
+import { execSync as execSync5 } from "node:child_process";
 import { promises as fs6 } from "node:fs";
 import path10 from "node:path";
 import os7 from "node:os";
@@ -9024,6 +9024,75 @@ async function releaseDeployLease(ctx, args) {
   }
 }
 
+// packages/plugin-core/dist/scribe-commit.js
+import { execSync as execSync4 } from "node:child_process";
+var GIT_COMMIT_RE = /\bgit\s+(?:-[A-Za-z]+\s+)*commit\b/;
+var DIFF_MAX_BYTES = 2e5;
+async function maybeScribeCommit(ctx, payload) {
+  const cmd = payload.tool_input?.command ?? "";
+  if (!GIT_COMMIT_RE.test(cmd)) return;
+  if (/--no-edit\b/.test(cmd) || /\bmerge\b.*--no-ff/.test(cmd)) return;
+  const cwd = payload.cwd ?? process.cwd();
+  let commitSha = "";
+  let commitMessage = "";
+  let diffStat = "";
+  let diffBody = "";
+  try {
+    commitSha = execSync4("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
+    commitMessage = execSync4("git log -1 --format=%B HEAD", { cwd, encoding: "utf8" }).trim();
+    diffStat = execSync4("git show --stat --format= HEAD", { cwd, encoding: "utf8" }).trim();
+    const buf = execSync4("git show --format= HEAD", {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: DIFF_MAX_BYTES * 2
+    });
+    diffBody = buf.length > DIFF_MAX_BYTES ? buf.slice(0, DIFF_MAX_BYTES) : buf;
+  } catch (err) {
+    log(
+      `diff scribe: failed to read commit details: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return;
+  }
+  if (!commitSha || !commitMessage) return;
+  let accountOverride;
+  let repoSlug = null;
+  try {
+    const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
+    if (resolved.account_id && resolved.account_id !== ctx.config.account_id) {
+      accountOverride = resolved.account_id;
+    }
+    try {
+      const remoteUrl = execSync4("git remote get-url origin", {
+        cwd,
+        stdio: ["ignore", "pipe", "ignore"],
+        encoding: "utf8"
+      }).trim();
+      repoSlug = normalizeGitRemote(remoteUrl);
+    } catch {
+    }
+  } catch {
+  }
+  try {
+    const result = await ctx.api.scribeDiff(
+      {
+        commit_sha: commitSha,
+        commit_message: commitMessage,
+        diff_stat: diffStat,
+        diff_body: diffBody,
+        repo_slug: repoSlug
+      },
+      accountOverride ? { accountId: accountOverride } : {}
+    );
+    if (result.proposals_persisted > 0) {
+      log(
+        `diff scribe: ${result.proposals_persisted} proposal(s) for commit ${commitSha.slice(0, 7)}`
+      );
+    }
+  } catch (err) {
+    log(`diff scribe call failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // apps/cli-plugin/src/hooks/post-tool-use.ts
 async function readStdin() {
   let data = "";
@@ -9097,7 +9166,7 @@ ${planText}`;
 }
 function readGitRemoteFor(cwd) {
   try {
-    const url = execSync4("git remote get-url origin", {
+    const url = execSync5("git remote get-url origin", {
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -9105,72 +9174,6 @@ function readGitRemoteFor(cwd) {
     return normalizeGitRemote(url);
   } catch {
     return null;
-  }
-}
-var GIT_COMMIT_RE = /\bgit\s+(?:-[A-Za-z]+\s+)*commit\b/;
-var DIFF_MAX_BYTES = 2e5;
-async function maybeScribeCommit(ctx, payload) {
-  const cmd = payload.tool_input?.command ?? "";
-  if (!GIT_COMMIT_RE.test(cmd)) return;
-  if (/--no-edit\b/.test(cmd) || /\bmerge\b.*--no-ff/.test(cmd)) return;
-  const cwd = payload.cwd ?? process.cwd();
-  let commitSha = "";
-  let commitMessage = "";
-  let diffStat = "";
-  let diffBody = "";
-  try {
-    commitSha = execSync4("git rev-parse HEAD", { cwd, encoding: "utf8" }).trim();
-    commitMessage = execSync4("git log -1 --format=%B HEAD", { cwd, encoding: "utf8" }).trim();
-    diffStat = execSync4("git show --stat --format= HEAD", { cwd, encoding: "utf8" }).trim();
-    const buf = execSync4("git show --format= HEAD", {
-      cwd,
-      encoding: "utf8",
-      maxBuffer: DIFF_MAX_BYTES * 2
-    });
-    diffBody = buf.length > DIFF_MAX_BYTES ? buf.slice(0, DIFF_MAX_BYTES) : buf;
-  } catch (err) {
-    log(
-      `diff scribe: failed to read commit details: ${err instanceof Error ? err.message : String(err)}`
-    );
-    return;
-  }
-  if (!commitSha || !commitMessage) return;
-  let accountOverride;
-  let repoSlug = null;
-  try {
-    const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
-    if (resolved.account_id && resolved.account_id !== ctx.config.account_id) {
-      accountOverride = resolved.account_id;
-    }
-    try {
-      const remoteUrl = execSync4("git remote get-url origin", {
-        cwd,
-        stdio: ["ignore", "pipe", "ignore"],
-        encoding: "utf8"
-      }).trim();
-      repoSlug = normalizeGitRemote(remoteUrl);
-    } catch {
-    }
-  } catch {
-  }
-  try {
-    const result = await ctx.api.scribeDiff(
-      {
-        commit_sha: commitSha,
-        commit_message: commitMessage,
-        diff_stat: diffStat,
-        diff_body: diffBody,
-        repo_slug: repoSlug
-      },
-      accountOverride ? { accountId: accountOverride } : {}
-    );
-    if (result.proposals_persisted > 0) {
-      log(
-        `diff scribe: ${result.proposals_persisted} proposal(s) for commit ${commitSha.slice(0, 7)}`
-      );
-    }
-  } catch (err) {
-    log(`diff scribe call failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 async function main() {
@@ -9216,8 +9219,8 @@ async function main() {
   );
   let gitRemote = null;
   try {
-    const { execSync: execSync5 } = await import("node:child_process");
-    const url = execSync5("git remote get-url origin", {
+    const { execSync: execSync6 } = await import("node:child_process");
+    const url = execSync6("git remote get-url origin", {
       cwd: payload.cwd ?? process.cwd(),
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
