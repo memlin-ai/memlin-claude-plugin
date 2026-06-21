@@ -12145,6 +12145,23 @@ function compileBundle(result, parsedTask, agent) {
       }
       out2.push("");
     }
+    const inFlight = b.work_in_flight ?? [];
+    if (inFlight.length > 0) {
+      out2.push("## ALREADY BUILT / IN FLIGHT \u2014 CHECK BEFORE YOU BUILD");
+      out2.push("");
+      out2.push(`# ${inFlight.length} PR(s) look semantically close to your task. READ THESE FIRST \u2014`);
+      out2.push("# you may be about to rebuild merged work or duplicate an open PR. If one covers");
+      out2.push("# your task, stop and extend/rebase onto it instead of starting fresh.");
+      for (const w of inFlight) {
+        const who = w.author_login ? ` by ${w.author_login}` : "";
+        const branch = w.head_ref ? ` (${w.head_ref})` : "";
+        const link = w.url ? ` \xB7 ${w.url}` : "";
+        out2.push(
+          `  - ${w.state.toUpperCase()} #${w.number}${who}${branch} \xB7 ${w.repo_full_name} \xB7 ${w.age_days}d ago \xB7 sim ${w.similarity} \xB7 ${w.title}${link}`
+        );
+      }
+      out2.push("");
+    }
     const collisions = b.collision_warnings ?? [];
     if (collisions.length > 0) {
       out2.push("## COLLISION WARNINGS");
