@@ -9062,6 +9062,18 @@ var init_memlin_api_client = __esm({
       async createHandoff(input) {
         return this.request("POST", "/handoffs", input);
       }
+      async listFeatures(opts = {}) {
+        const qs = new URLSearchParams();
+        if (opts.project_id) qs.set("project_id", opts.project_id);
+        const suffix = qs.toString() ? `?${qs.toString()}` : "";
+        return this.request("GET", `/features${suffix}`);
+      }
+      async createFeature(input) {
+        return this.request("POST", "/features", input);
+      }
+      async addFeatureMember(featureId, source) {
+        return this.request("POST", `/features/${featureId}/members`, { source });
+      }
       /** POST /documents/search — semantic + text. */
       async search(query, opts = {}) {
         const res = await this.request("POST", "/documents/search", {
@@ -13617,6 +13629,142 @@ var init_handoffs = __esm({
   }
 });
 
+// packages/plugin-core/src/cli/features.ts
+var features_exports = {};
+function matchFeature(features, needle) {
+  const exact = features.find((f) => f.id === needle);
+  if (exact) return exact;
+  const matches = features.filter((f) => f.id.startsWith(needle));
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) return { error: `no feature matches "${needle}"` };
+  return { error: `"${needle}" is ambiguous \u2014 matches ${matches.length} features` };
+}
+async function main19() {
+  const ctx = await getApi();
+  if (!ctx) {
+    process.stderr.write("not signed in \u2014 run memlin login first\n");
+    process.exit(1);
+  }
+  const args2 = argvAsSlashArgs();
+  const action = args2[0];
+  const pinnedProject = ctx.config.project_id ?? null;
+  if (!action || action === "list") {
+    const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
+    if (features.length === 0) {
+      process.stdout.write('No features yet. Create one: memlin features create "<title>"\n');
+      return;
+    }
+    process.stdout.write(`${features.length} feature${features.length === 1 ? "" : "s"}:
+
+`);
+    for (const f of features) {
+      process.stdout.write(`  ${f.id.slice(0, 8)}  ${f.title}  [${f.status}]
+`);
+    }
+    process.stdout.write('\nUse: memlin features create "<title>" | add <feature-id> <kind> <id>\n');
+    return;
+  }
+  if (action === "create") {
+    let projectId = pinnedProject ?? process.env.MEMLIN_PROJECT_ID ?? null;
+    let summary = null;
+    const titleParts = [];
+    for (let i = 1; i < args2.length; i++) {
+      const a = args2[i];
+      if (a === "--summary" && i + 1 < args2.length) {
+        summary = args2[++i] ?? null;
+        continue;
+      }
+      if (a === "--project" && i + 1 < args2.length) {
+        projectId = args2[++i] ?? null;
+        continue;
+      }
+      if (a?.startsWith("--")) {
+        process.stderr.write(`unknown flag: ${a}
+`);
+        process.exit(1);
+      }
+      titleParts.push(a ?? "");
+    }
+    if (!projectId) {
+      process.stderr.write(
+        "memlin features create: no project pinned \u2014 run `memlin add-project` first, pass --project <uuid>, or set MEMLIN_PROJECT_ID.\n"
+      );
+      process.exit(2);
+    }
+    const title = titleParts.join(" ").trim();
+    if (!title) {
+      process.stderr.write('usage: memlin features create "<title>" [--summary S] [--project P]\n');
+      process.exit(1);
+    }
+    try {
+      const result = await ctx.api.createFeature({
+        project_id: projectId,
+        title,
+        summary
+      });
+      process.stdout.write(`\u2713 created feature ${result.id.slice(0, 8)} \u2014 ${title}
+`);
+      process.stdout.write(`  add work to it: memlin features add ${result.id.slice(0, 8)} <kind> <id>
+`);
+      return;
+    } catch (err2) {
+      process.stderr.write(
+        `memlin features create failed: ${err2 instanceof Error ? err2.message : String(err2)}
+`
+      );
+      process.exit(1);
+    }
+  }
+  if (action === "add") {
+    const needle = args2[1];
+    const kind = args2[2];
+    const itemId = args2[3];
+    if (!needle || !kind || !itemId) {
+      process.stderr.write("usage: memlin features add <feature-id> <kind> <entity-id>\n");
+      process.exit(1);
+    }
+    const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
+    const match = matchFeature(features, needle);
+    if ("error" in match) {
+      process.stderr.write(`${match.error}
+`);
+      process.exit(2);
+    }
+    try {
+      await ctx.api.addFeatureMember(match.id, { kind, id: itemId });
+      process.stdout.write(
+        `\u2713 added ${kind} ${itemId.slice(0, 8)} to feature ${match.id.slice(0, 8)} (${match.title})
+`
+      );
+      return;
+    } catch (err2) {
+      process.stderr.write(
+        `memlin features add failed: ${err2 instanceof Error ? err2.message : String(err2)}
+`
+      );
+      process.exit(1);
+    }
+  }
+  process.stderr.write(
+    'usage: memlin features [list] | create "<title>" [--summary S] [--project P] | add <feature-id> <kind> <id>\n'
+  );
+  process.exit(1);
+}
+var init_features = __esm({
+  "packages/plugin-core/src/cli/features.ts"() {
+    "use strict";
+    init_client();
+    init_args();
+    main19().catch((err2) => {
+      process.stderr.write(
+        `memlin features failed: ${err2 instanceof Error ? err2.message : String(err2)}
+`
+      );
+      process.exit(1);
+    });
+  }
+});
+
 // packages/plugin-core/src/cli/link.ts
 var link_exports = {};
 import path22 from "node:path";
@@ -13671,7 +13819,7 @@ function chooseAccount(accounts, needle) {
   if (byName.length === 1) return byName[0];
   return null;
 }
-async function main19() {
+async function main20() {
   const argv = process.argv.slice(2);
   const parsed = parseArgs5(argv);
   if ("error" in parsed) {
@@ -13747,7 +13895,7 @@ var init_link = __esm({
     init_client();
     init_workspace_binding();
     init_project_resolver();
-    main19().catch((err2) => {
+    main20().catch((err2) => {
       console.error("memlin link failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13757,7 +13905,7 @@ var init_link = __esm({
 // packages/plugin-core/src/cli/revert.ts
 var revert_exports = {};
 import readline2 from "node:readline/promises";
-async function main20() {
+async function main21() {
   const args2 = process.argv.slice(2);
   if (args2.length === 0) {
     console.error("usage: memlin revert <document-name-or-path> [version-number]");
@@ -13832,7 +13980,7 @@ var init_revert = __esm({
   "packages/plugin-core/src/cli/revert.ts"() {
     "use strict";
     init_client();
-    main20().catch((err2) => {
+    main21().catch((err2) => {
       console.error("memlin revert failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -13856,7 +14004,7 @@ function printHelp5() {
     ].join("\n")
   );
 }
-async function main21() {
+async function main22() {
   const argv = process.argv.slice(2);
   const first = argv[0];
   if (!first || first === "--help" || first === "-h" || first === "help") {
@@ -13885,7 +14033,7 @@ var init_pin = __esm({
   "packages/plugin-core/src/cli/pin.ts"() {
     "use strict";
     init_client();
-    main21().catch((err2) => {
+    main22().catch((err2) => {
       console.error("memlin pin failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14037,7 +14185,7 @@ function pickAccount2(accounts, needle, fallback) {
   }
   return accounts.find((a) => a.id === fallback) ?? null;
 }
-async function main22() {
+async function main23() {
   const argv = process.argv.slice(2);
   const parsed = parseArgs6(argv);
   if ("error" in parsed) {
@@ -14262,7 +14410,7 @@ var init_add_project = __esm({
     init_workspace_binding();
     init_sibling_detect();
     init_plugin_install();
-    main22().catch((err2) => {
+    main23().catch((err2) => {
       console.error("memlin add-project failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14310,7 +14458,7 @@ function printHelp7() {
     ].join("\n")
   );
 }
-async function main23() {
+async function main24() {
   const parsed = parseArgs7(process.argv.slice(2));
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14403,7 +14551,7 @@ var init_attach_path = __esm({
     init_project_resolver();
     init_workspace_binding();
     init_sibling_detect();
-    main23().catch((err2) => {
+    main24().catch((err2) => {
       console.error("memlin attach-path failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14467,7 +14615,7 @@ function renderItem2(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main24() {
+async function main25() {
   const parsed = parseArgs8(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14550,7 +14698,7 @@ var init_audit_replay = __esm({
     "use strict";
     init_client();
     init_args();
-    main24().catch((err2) => {
+    main25().catch((err2) => {
       console.error("memlin audit replay failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14628,7 +14776,7 @@ function renderItem3(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main25() {
+async function main26() {
   const parsed = parseArgs9(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14703,7 +14851,7 @@ var init_audit_explain = __esm({
     "use strict";
     init_client();
     init_args();
-    main25().catch((err2) => {
+    main26().catch((err2) => {
       console.error("memlin audit explain failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14772,7 +14920,7 @@ function renderRow(a) {
     `  invoke:       POST ${a.invoke_url}  body={"input":${inputSummary}}`
   ].join("\n");
 }
-async function main26() {
+async function main27() {
   const parsed = parseArgs10(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14817,7 +14965,7 @@ var init_actions_list = __esm({
     "use strict";
     init_client();
     init_args();
-    main26().catch((err2) => {
+    main27().catch((err2) => {
       console.error("memlin actions list failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14891,7 +15039,7 @@ function printHelp11() {
     ].join("\n")
   );
 }
-async function main27() {
+async function main28() {
   const parsed = parseArgs11(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -14953,7 +15101,7 @@ var init_actions_execute = __esm({
     "use strict";
     init_client();
     init_args();
-    main27().catch((err2) => {
+    main28().catch((err2) => {
       console.error("memlin actions execute failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14978,7 +15126,7 @@ function printHelp12() {
     ].join("\n")
   );
 }
-async function main28() {
+async function main29() {
   const argv = argvAsSlashArgs();
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp12();
@@ -15099,7 +15247,7 @@ var init_prompt_ci = __esm({
     init_local_scan();
     init_state();
     init_args();
-    main28().catch((err2) => {
+    main29().catch((err2) => {
       console.error("memlin prompt-ci failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -260583,7 +260731,7 @@ function configureBundledWasmDir() {
   } catch {
   }
 }
-async function main29() {
+async function main30() {
   const args2 = parseArgs12(process.argv);
   if (args2.help) {
     printHelp13();
@@ -260698,7 +260846,7 @@ var init_scan = __esm({
     init_auth();
     init_project_resolver();
     init_run_scan();
-    main29().catch((err2) => {
+    main30().catch((err2) => {
       console.error(`memlin: ${err2 instanceof Error ? err2.stack ?? err2.message : String(err2)}`);
       process.exit(2);
     });
@@ -260726,6 +260874,7 @@ var RUN = {
   scribe: () => Promise.resolve().then(() => (init_scribe(), scribe_exports)),
   inbox: () => Promise.resolve().then(() => (init_inbox(), inbox_exports)),
   handoffs: () => Promise.resolve().then(() => (init_handoffs(), handoffs_exports)),
+  features: () => Promise.resolve().then(() => (init_features(), features_exports)),
   link: () => Promise.resolve().then(() => (init_link(), link_exports)),
   revert: () => Promise.resolve().then(() => (init_revert(), revert_exports)),
   pin: () => Promise.resolve().then(() => (init_pin(), pin_exports)),
@@ -260738,7 +260887,7 @@ var RUN = {
   "prompt-ci": () => Promise.resolve().then(() => (init_prompt_ci(), prompt_ci_exports)),
   scan: () => Promise.resolve().then(() => (init_scan(), scan_exports))
 };
-async function main30() {
+async function main31() {
   let sub = process.argv[2];
   if (sub === "audit") {
     const action = process.argv[3];
@@ -260760,7 +260909,7 @@ async function main30() {
   process.argv.splice(2, 1);
   await run2();
 }
-main30().catch((err2) => {
+main31().catch((err2) => {
   process.stderr.write(`memlin: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
   process.exit(1);

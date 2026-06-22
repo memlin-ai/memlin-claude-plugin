@@ -3,11 +3,6 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
-// packages/plugin-core/src/cli/push-plan.ts
-import { execSync as execSync2 } from "node:child_process";
-import { promises as fs4 } from "node:fs";
-import path6 from "node:path";
-
 // packages/plugin-core/src/client.ts
 import { promises as fs3 } from "node:fs";
 import path4 from "node:path";
@@ -131,40 +126,6 @@ var AGENT_EXPECTED_CAPABILITIES = {
   mcp: ["mcp", "resolve"],
   "claude-ai": ["mcp", "resolve"]
 };
-var PROVIDER_HOSTS = [
-  "github.com",
-  "gitlab.com",
-  "bitbucket.org",
-  "dev.azure.com",
-  "ssh.dev.azure.com",
-  "codeberg.org",
-  "sr.ht",
-  "git.sr.ht"
-];
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash);
-    const rest = s.slice(slash);
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
-}
 
 // packages/plugin-core/src/host.ts
 import os2 from "node:os";
@@ -759,153 +720,206 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
-// packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import path5 from "node:path";
-var WORKSPACE_ENV_VARS = [
-  // Claude Code exposes the original project dir to hooks/plugin commands.
-  "CLAUDE_PROJECT_DIR",
-  // Cursor/plugin shims and local tests can set this explicitly.
-  "CURSOR_WORKSPACE_ROOT",
-  "CURSOR_PROJECT_ROOT",
-  "MEMLIN_WORKSPACE_ROOT",
-  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
-  "INIT_CWD"
-];
-function runtimeCwd(fallback = process.cwd()) {
-  for (const name of WORKSPACE_ENV_VARS) {
-    const raw = process.env[name]?.trim();
-    if (raw && path5.isAbsolute(raw)) return path5.resolve(raw);
+// packages/plugin-core/src/cli/args.ts
+function parseSlashArgs(raw) {
+  const tokens = [];
+  let cur = "";
+  let inSingle = false;
+  let inDouble = false;
+  let started = false;
+  let i = 0;
+  const flush = () => {
+    if (started) {
+      tokens.push(cur);
+      cur = "";
+      started = false;
+    }
+  };
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        cur += ch;
+      }
+      i++;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === "\\" && i + 1 < raw.length) {
+        const next = raw[i + 1];
+        if (next === '"' || next === "\\") {
+          cur += next;
+          i += 2;
+          continue;
+        }
+        cur += ch;
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inDouble = false;
+        i++;
+        continue;
+      }
+      cur += ch;
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      started = true;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      started = true;
+      i++;
+      continue;
+    }
+    if (ch === " " || ch === "	" || ch === "\n") {
+      flush();
+      i++;
+      continue;
+    }
+    cur += ch;
+    started = true;
+    i++;
   }
-  return path5.resolve(fallback);
+  flush();
+  return tokens;
+}
+function argvAsSlashArgs() {
+  const raw = process.argv.slice(2).join(" ").trim();
+  return parseSlashArgs(raw);
 }
 
-// packages/plugin-core/src/cli/push-plan.ts
-function parseArgs(argv) {
-  let file;
-  let project;
-  let audit;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--project" || a === "-p") {
-      project = argv[++i];
-      if (!project) return { error: "--project requires a value" };
-    } else if (a === "--audit") {
-      audit = argv[++i];
-      if (!audit) return { error: "--audit requires a value" };
-    } else if (a === "--help" || a === "-h") {
-      return { error: "help" };
-    } else if (a?.startsWith("--")) {
-      return { error: `unknown flag: ${a}` };
-    } else if (a) {
-      file = a;
-    }
-  }
-  if (!file) return { error: "missing path to plan file" };
-  return {
-    file,
-    ...project !== void 0 ? { project } : {},
-    ...audit !== void 0 ? { audit } : {}
-  };
-}
-function printHelp() {
-  console.log(
-    [
-      "memlin push-plan \u2014 upload a Claude Code plan file to Memlin",
-      "",
-      "Usage:",
-      "  memlin push-plan <path-to-plan.md> [options]",
-      "",
-      "Options:",
-      "  --project <id>     Override the auto-resolved project",
-      "  --audit <id>       Attach a usage_events audit row as the source bundle",
-      "",
-      "The first line of the file becomes the plan title (strip a leading",
-      "# if present). Everything else is the body. Local file is preserved."
-    ].join("\n")
-  );
-}
-function splitTitleAndBody(raw) {
-  const trimmed = raw.replace(/^﻿/, "");
-  const firstNl = trimmed.indexOf("\n");
-  const first = firstNl === -1 ? trimmed : trimmed.slice(0, firstNl);
-  const rest = firstNl === -1 ? "" : trimmed.slice(firstNl + 1);
-  const title = first.replace(/^#\s+/, "").trim();
-  return { title: title || "(untitled plan)", body: rest.trim() };
-}
-function readGitRemote(cwd) {
-  try {
-    const url = execSync2("git remote get-url origin", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
+// packages/plugin-core/src/cli/features.ts
+function matchFeature(features, needle) {
+  const exact = features.find((f) => f.id === needle);
+  if (exact) return exact;
+  const matches = features.filter((f) => f.id.startsWith(needle));
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) return { error: `no feature matches "${needle}"` };
+  return { error: `"${needle}" is ambiguous \u2014 matches ${matches.length} features` };
 }
 async function main() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs(argv);
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      printHelp();
-      process.exit(0);
-    }
-    console.error(`memlin push-plan: ${parsed.error}`);
-    printHelp();
-    process.exit(2);
-  }
   const ctx = await getApi();
   if (!ctx) {
-    console.error("memlin: not configured. Run `memlin login` first.");
+    process.stderr.write("not signed in \u2014 run memlin login first\n");
     process.exit(1);
   }
-  const { api } = ctx;
-  const filePath = path6.resolve(parsed.file);
-  let raw;
-  try {
-    raw = await fs4.readFile(filePath, "utf8");
-  } catch (e) {
-    console.error(
-      `memlin push-plan: can't read ${filePath}: ${e instanceof Error ? e.message : e}`
-    );
-    process.exit(1);
+  const args = argvAsSlashArgs();
+  const action = args[0];
+  const pinnedProject = ctx.config.project_id ?? null;
+  if (!action || action === "list") {
+    const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
+    if (features.length === 0) {
+      process.stdout.write('No features yet. Create one: memlin features create "<title>"\n');
+      return;
+    }
+    process.stdout.write(`${features.length} feature${features.length === 1 ? "" : "s"}:
+
+`);
+    for (const f of features) {
+      process.stdout.write(`  ${f.id.slice(0, 8)}  ${f.title}  [${f.status}]
+`);
+    }
+    process.stdout.write('\nUse: memlin features create "<title>" | add <feature-id> <kind> <id>\n');
+    return;
   }
-  const { title, body } = splitTitleAndBody(raw);
-  if (!body) {
-    console.error(`memlin push-plan: ${filePath} has no body content after the title line`);
-    process.exit(1);
+  if (action === "create") {
+    let projectId = pinnedProject ?? process.env.MEMLIN_PROJECT_ID ?? null;
+    let summary = null;
+    const titleParts = [];
+    for (let i = 1; i < args.length; i++) {
+      const a = args[i];
+      if (a === "--summary" && i + 1 < args.length) {
+        summary = args[++i] ?? null;
+        continue;
+      }
+      if (a === "--project" && i + 1 < args.length) {
+        projectId = args[++i] ?? null;
+        continue;
+      }
+      if (a?.startsWith("--")) {
+        process.stderr.write(`unknown flag: ${a}
+`);
+        process.exit(1);
+      }
+      titleParts.push(a ?? "");
+    }
+    if (!projectId) {
+      process.stderr.write(
+        "memlin features create: no project pinned \u2014 run `memlin add-project` first, pass --project <uuid>, or set MEMLIN_PROJECT_ID.\n"
+      );
+      process.exit(2);
+    }
+    const title = titleParts.join(" ").trim();
+    if (!title) {
+      process.stderr.write('usage: memlin features create "<title>" [--summary S] [--project P]\n');
+      process.exit(1);
+    }
+    try {
+      const result = await ctx.api.createFeature({
+        project_id: projectId,
+        title,
+        summary
+      });
+      process.stdout.write(`\u2713 created feature ${result.id.slice(0, 8)} \u2014 ${title}
+`);
+      process.stdout.write(`  add work to it: memlin features add ${result.id.slice(0, 8)} <kind> <id>
+`);
+      return;
+    } catch (err) {
+      process.stderr.write(
+        `memlin features create failed: ${err instanceof Error ? err.message : String(err)}
+`
+      );
+      process.exit(1);
+    }
   }
-  const cwd = runtimeCwd();
-  const gitRemote = readGitRemote(cwd);
-  let result;
-  try {
-    result = await api.pushPlan({
-      title,
-      body,
-      cwd,
-      git_remote: gitRemote,
-      ...parsed.project !== void 0 ? { project_id: parsed.project } : {},
-      ...parsed.audit !== void 0 ? { source_audit_id: parsed.audit } : {}
-    });
-  } catch (e) {
-    console.error(`memlin push-plan failed: ${e instanceof Error ? e.message : e}`);
-    process.exit(1);
+  if (action === "add") {
+    const needle = args[1];
+    const kind = args[2];
+    const itemId = args[3];
+    if (!needle || !kind || !itemId) {
+      process.stderr.write("usage: memlin features add <feature-id> <kind> <entity-id>\n");
+      process.exit(1);
+    }
+    const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
+    const match = matchFeature(features, needle);
+    if ("error" in match) {
+      process.stderr.write(`${match.error}
+`);
+      process.exit(2);
+    }
+    try {
+      await ctx.api.addFeatureMember(match.id, { kind, id: itemId });
+      process.stdout.write(
+        `\u2713 added ${kind} ${itemId.slice(0, 8)} to feature ${match.id.slice(0, 8)} (${match.title})
+`
+      );
+      return;
+    } catch (err) {
+      process.stderr.write(
+        `memlin features add failed: ${err instanceof Error ? err.message : String(err)}
+`
+      );
+      process.exit(1);
+    }
   }
-  const apiBase = (process.env.MEMLIN_API_URL ?? "https://memlin.ai/api/v1").replace(
-    /\/api\/v1\/?$/,
-    ""
+  process.stderr.write(
+    'usage: memlin features [list] | create "<title>" [--summary S] [--project P] | add <feature-id> <kind> <id>\n'
   );
-  console.log(`Plan pushed \u2192 ${title}`);
-  console.log(`  status:     ${result.status}`);
-  console.log(`  document_id: ${result.document_id}`);
-  if (result.project_id) console.log(`  project_id:  ${result.project_id}`);
-  console.log(`  ${apiBase}/app/${ctx.config.account_id}/plans/${result.document_id}`);
+  process.exit(1);
 }
 main().catch((err) => {
-  console.error("memlin push-plan failed:", err instanceof Error ? err.message : err);
+  process.stderr.write(
+    `memlin features failed: ${err instanceof Error ? err.message : String(err)}
+`
+  );
   process.exit(1);
 });
