@@ -8437,13 +8437,13 @@ var init_memlin_commands = __esm({
         section: "Setup & health",
         cmd: "status",
         blurb: "auth, account, project, sync state",
-        details: "One-shot dashboard. Shows your auth state (token expiry, refresh state), the bound account and project, MCP routing (direct Supabase or hosted), the last sync time, and how many tracked docs are pending push or pull."
+        details: "One-shot dashboard. Shows your auth state (token expiry, refresh state), the bound account and project, routing (default or custom MCP endpoint), the last sync time, and how many tracked docs are pending push or pull."
       },
       {
         section: "",
         cmd: "doctor",
         blurb: "diagnose why status is broken",
-        details: 'Runs a checklist when something\'s wrong \u2014 config readable, token refreshable, Supabase and MCP reachable, project auto-resolves, filesystem permissions. `status` answers "what\'s the state right now"; `doctor` answers "why is the state broken."'
+        details: 'Runs a checklist when something\'s wrong \u2014 config readable, token refreshable, Memlin API and MCP endpoint reachable, project auto-resolves, filesystem permissions. `status` answers "what\'s the state right now"; `doctor` answers "why is the state broken."'
       },
       {
         section: "",
@@ -10657,7 +10657,7 @@ function evaluateApiReachable(url, probe) {
 }
 function evaluateMcpReachable(url, result) {
   if (!url) {
-    return { status: "warn", detail: "MEMLIN_MCP_URL not set \u2014 routing is direct Supabase" };
+    return { status: "pass", detail: "managed endpoint (default)" };
   }
   if (!result) {
     return { status: "fail", detail: "no response from MCP endpoint" };
