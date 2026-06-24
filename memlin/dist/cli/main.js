@@ -8560,7 +8560,7 @@ function resolveHost() {
   const make = HOSTS[envHost];
   return (make ?? HOSTS["claude-code"])();
 }
-var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, HOSTS;
+var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, HOSTS;
 var init_host = __esm({
   "packages/plugin-core/src/host.ts"() {
     "use strict";
@@ -8603,12 +8603,18 @@ var init_host = __esm({
         super("antigravity", path.join(os.homedir(), ".config", "memlin"));
       }
     };
+    VSCodeHost = class extends BaseHost {
+      constructor() {
+        super("vscode", path.join(os.homedir(), ".config", "memlin"));
+      }
+    };
     HOSTS = {
       "claude-code": () => new ClaudeCodeHost(),
       cursor: () => new CursorHost(),
       codex: () => new CodexHost(),
       windsurf: () => new WindsurfHost(),
-      antigravity: () => new AntigravityHost()
+      antigravity: () => new AntigravityHost(),
+      vscode: () => new VSCodeHost()
     };
   }
 });
