@@ -8874,7 +8874,7 @@ function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.28";
+  return "0.2.29";
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -10187,6 +10187,10 @@ async function scanLocal(opts = {}) {
   }
   return out2;
 }
+function filterAbsentOnDisk(paths, rootOverride) {
+  const root = rootOverride ?? resolveHost().homeDir();
+  return paths.filter((p) => !existsSync3(path11.join(root, p)));
+}
 var init_local_scan = __esm({
   "packages/plugin-core/src/local-scan.ts"() {
     "use strict";
@@ -10550,10 +10554,11 @@ async function printLocalState() {
       Object.entries(state.documents).filter(([p]) => !p.startsWith("plans/"))
     )
   };
-  const { added, modified, deleted } = diffStates(
+  const { added, modified, deleted: flaggedDeleted } = diffStates(
     trackedDocs,
     local.map((l) => ({ path: l.path, hash: l.hash }))
   );
+  const deleted = filterAbsentOnDisk(flaggedDeleted);
   const unboundPlans = await listUnboundPlans();
   const trackedCount = Object.keys(trackedDocs.documents).length;
   console.log(`  tracked:     ${trackedCount} document${trackedCount === 1 ? "" : "s"}`);
