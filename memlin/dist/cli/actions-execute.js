@@ -4,7 +4,7 @@ import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } fr
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
 // packages/plugin-core/src/cli/actions-execute.ts
-import { readFileSync } from "node:fs";
+import { readFileSync as readFileSync2 } from "node:fs";
 
 // packages/plugin-core/src/client.ts
 import { promises as fs3 } from "node:fs";
@@ -106,7 +106,10 @@ function requireClientId() {
 }
 
 // packages/plugin-core/src/memlin-api-client.ts
+import { readFileSync } from "node:fs";
 import os3 from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // packages/plugin-core/src/runtime-shared.ts
 var AGENT_KIND_HEADER = "Memlin-Agent-Kind";
@@ -196,8 +199,11 @@ var DEFAULT_API_URL = "https://memlin.ai/api/v1";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
+var cachedAgentVersion = null;
 function agentVersion() {
-  return "0.2.31";
+  if (cachedAgentVersion) return cachedAgentVersion;
+  cachedAgentVersion = "0.2.32";
+  return cachedAgentVersion;
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -839,7 +845,7 @@ function parseArgs(argv) {
   if (inputJson === null) {
     if (stdinFlag || !process.stdin.isTTY) {
       try {
-        inputJson = readFileSync(0, "utf8").trim();
+        inputJson = readFileSync2(0, "utf8").trim();
       } catch (e) {
         return { error: `stdin read failed: ${e instanceof Error ? e.message : e}` };
       }

@@ -215186,7 +215186,7 @@ var require_path_browserify = __commonJS({
         assertPath(path16);
         return path16.length > 0 && path16.charCodeAt(0) === 47;
       },
-      join: function join() {
+      join: function join2() {
         if (arguments.length === 0)
           return ".";
         var joined;
@@ -215273,7 +215273,7 @@ var require_path_browserify = __commonJS({
       _makeLong: function _makeLong(path16) {
         return path16;
       },
-      dirname: function dirname(path16) {
+      dirname: function dirname2(path16) {
         assertPath(path16);
         if (path16.length === 0) return ".";
         var code = path16.charCodeAt(0);
@@ -243316,7 +243316,7 @@ Node text: ${this.#forgottenText}`;
 // packages/plugin-core/src/cli/scan.ts
 import { execSync as execSync2 } from "node:child_process";
 import path15 from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { existsSync as existsSync3 } from "node:fs";
 import { gzipSync } from "node:zlib";
 
@@ -243420,7 +243420,10 @@ function requireClientId() {
 }
 
 // packages/plugin-core/src/memlin-api-client.ts
+import { readFileSync } from "node:fs";
 import os3 from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // packages/plugin-core/src/runtime-shared.ts
 var AGENT_KIND_HEADER = "Memlin-Agent-Kind";
@@ -243544,8 +243547,11 @@ var DEFAULT_API_URL = "https://memlin.ai/api/v1";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
+var cachedAgentVersion = null;
 function agentVersion() {
-  return "0.2.31";
+  if (cachedAgentVersion) return cachedAgentVersion;
+  cachedAgentVersion = "0.2.32";
+  return cachedAgentVersion;
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -246245,7 +246251,7 @@ function ownerRepoFromRemote(remote) {
 function configureBundledWasmDir() {
   if (process.env.MEMLIN_WASM_DIR) return;
   try {
-    const here = path15.dirname(fileURLToPath(import.meta.url));
+    const here = path15.dirname(fileURLToPath2(import.meta.url));
     const candidate = path15.resolve(here, "..", "wasm");
     if (existsSync3(path15.join(candidate, "tree-sitter.wasm"))) {
       process.env.MEMLIN_WASM_DIR = candidate;

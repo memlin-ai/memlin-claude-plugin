@@ -489,7 +489,10 @@ function requireClientId() {
 }
 
 // packages/plugin-core/dist/memlin-api-client.js
+import { readFileSync } from "node:fs";
 import os3 from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // packages/plugin-core/dist/runtime-shared.js
 var AGENT_KIND_HEADER = "Memlin-Agent-Kind";
@@ -571,8 +574,11 @@ var DEFAULT_API_URL = "https://memlin.ai/api/v1";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
+var cachedAgentVersion = null;
 function agentVersion() {
-  return "0.2.31";
+  if (cachedAgentVersion) return cachedAgentVersion;
+  cachedAgentVersion = "0.2.32";
+  return cachedAgentVersion;
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -1369,13 +1375,13 @@ function isWorkspaceActive(input) {
 
 // packages/plugin-core/dist/session-banner.js
 init_state();
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 var GITHUB_API = "https://api.github.com/repos/memlin-ai/memlin-claude-plugin/commits/main";
 var SHORT_SHA_LEN = 12;
 var FRESHNESS_TTL_MS = 6 * 60 * 60 * 1e3;
 function detectLocalPluginSha() {
   try {
-    const filePath = fileURLToPath(import.meta.url);
+    const filePath = fileURLToPath2(import.meta.url);
     const match = filePath.match(/\/memlin-ai\/memlin\/([0-9a-f]{8,40})\//i);
     return match ? match[1].slice(0, SHORT_SHA_LEN) : null;
   } catch {

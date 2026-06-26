@@ -8869,12 +8869,17 @@ var init_runtime_shared = __esm({
 });
 
 // packages/plugin-core/src/memlin-api-client.ts
+import { readFileSync } from "node:fs";
 import os3 from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
 }
 function agentVersion() {
-  return "0.2.31";
+  if (cachedAgentVersion) return cachedAgentVersion;
+  cachedAgentVersion = "0.2.32";
+  return cachedAgentVersion;
 }
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
@@ -8882,13 +8887,14 @@ function agentCapabilities() {
 function resolveApiUrl() {
   return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
 }
-var DEFAULT_API_URL, MemlinApiClient;
+var DEFAULT_API_URL, cachedAgentVersion, MemlinApiClient;
 var init_memlin_api_client = __esm({
   "packages/plugin-core/src/memlin-api-client.ts"() {
     "use strict";
     init_runtime_shared();
     init_host();
     DEFAULT_API_URL = "https://memlin.ai/api/v1";
+    cachedAgentVersion = null;
     MemlinApiClient = class {
       constructor(cfg) {
         this.cfg = cfg;
@@ -15065,7 +15071,7 @@ var init_actions_list = __esm({
 
 // packages/plugin-core/src/cli/actions-execute.ts
 var actions_execute_exports = {};
-import { readFileSync } from "node:fs";
+import { readFileSync as readFileSync2 } from "node:fs";
 function parseArgs11(argv) {
   const positional = [];
   let inputJson = null;
@@ -15099,7 +15105,7 @@ function parseArgs11(argv) {
   if (inputJson === null) {
     if (stdinFlag || !process.stdin.isTTY) {
       try {
-        inputJson = readFileSync(0, "utf8").trim();
+        inputJson = readFileSync2(0, "utf8").trim();
       } catch (e) {
         return { error: `stdin read failed: ${e instanceof Error ? e.message : e}` };
       }
@@ -231498,7 +231504,7 @@ var require_path_browserify = __commonJS({
         assertPath(path37);
         return path37.length > 0 && path37.charCodeAt(0) === 47;
       },
-      join: function join() {
+      join: function join2() {
         if (arguments.length === 0)
           return ".";
         var joined;
@@ -231585,7 +231591,7 @@ var require_path_browserify = __commonJS({
       _makeLong: function _makeLong(path37) {
         return path37;
       },
-      dirname: function dirname(path37) {
+      dirname: function dirname2(path37) {
         assertPath(path37);
         if (path37.length === 0) return ".";
         var code = path37.charCodeAt(0);
@@ -260753,7 +260759,7 @@ var init_run_scan = __esm({
 var scan_exports = {};
 import { execSync as execSync8 } from "node:child_process";
 import path36 from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { existsSync as existsSync7 } from "node:fs";
 import { gzipSync } from "node:zlib";
 function parseArgs12(argv) {
@@ -260814,7 +260820,7 @@ function ownerRepoFromRemote(remote) {
 function configureBundledWasmDir() {
   if (process.env.MEMLIN_WASM_DIR) return;
   try {
-    const here = path36.dirname(fileURLToPath(import.meta.url));
+    const here = path36.dirname(fileURLToPath2(import.meta.url));
     const candidate = path36.resolve(here, "..", "wasm");
     if (existsSync7(path36.join(candidate, "tree-sitter.wasm"))) {
       process.env.MEMLIN_WASM_DIR = candidate;
