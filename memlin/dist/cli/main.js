@@ -8310,6 +8310,13 @@ var init_credit_math = __esm({
   }
 });
 
+// packages/shared/dist/ai-pricing.js
+var init_ai_pricing = __esm({
+  "packages/shared/dist/ai-pricing.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/memlin-commands.js
 var MEMLIN_COMMANDS;
 var init_memlin_commands = __esm({
@@ -8546,6 +8553,7 @@ var init_dist = __esm({
     init_usage_stats();
     init_model_prices();
     init_credit_math();
+    init_ai_pricing();
     init_memlin_commands();
     init_memlin_contract();
     init_feature_discovery();
