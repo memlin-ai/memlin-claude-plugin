@@ -17821,7 +17821,12 @@ var init_repo_walker = __esm({
       "test",
       "tests",
       "__tests__",
-      "__mocks__"
+      "__mocks__",
+      ".claude",
+      ".agent",
+      ".gemini",
+      "dist-test",
+      "antigravity-plugin-out"
     ]);
     CODE_EXTENSIONS = /* @__PURE__ */ new Set([
       ".ts",

@@ -244347,7 +244347,12 @@ var SKIP_DIRS = /* @__PURE__ */ new Set([
   "test",
   "tests",
   "__tests__",
-  "__mocks__"
+  "__mocks__",
+  ".claude",
+  ".agent",
+  ".gemini",
+  "dist-test",
+  "antigravity-plugin-out"
 ]);
 var CODE_EXTENSIONS = /* @__PURE__ */ new Set([
   ".ts",
