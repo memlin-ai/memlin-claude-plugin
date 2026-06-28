@@ -3,6 +3,12 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
+// packages/plugin-core/src/cli/ingest-native-memory.ts
+import { promises as fs4 } from "node:fs";
+import { existsSync as existsSync2 } from "node:fs";
+import os5 from "node:os";
+import path6 from "node:path";
+
 // packages/plugin-core/src/client.ts
 import { promises as fs3 } from "node:fs";
 import path4 from "node:path";
@@ -129,6 +135,40 @@ var AGENT_EXPECTED_CAPABILITIES = {
   mcp: ["mcp", "resolve"],
   "claude-ai": ["mcp", "resolve"]
 };
+var PROVIDER_HOSTS = [
+  "github.com",
+  "gitlab.com",
+  "bitbucket.org",
+  "dev.azure.com",
+  "ssh.dev.azure.com",
+  "codeberg.org",
+  "sr.ht",
+  "git.sr.ht"
+];
+function normalizeGitRemote(raw) {
+  if (!raw) return null;
+  let s = raw.trim();
+  if (!s) return null;
+  s = s.replace(/^git@([^:]+):/, "https://$1/");
+  s = s.replace(/^ssh:\/\//, "");
+  s = s.replace(/^https?:\/\//, "");
+  s = s.replace(/^git@/, "");
+  s = s.replace(/\.git$/, "");
+  s = s.replace(/\/$/, "");
+  const slash = s.indexOf("/");
+  if (slash > 0) {
+    const host = s.slice(0, slash);
+    const rest = s.slice(slash);
+    for (const provider of PROVIDER_HOSTS) {
+      if (host === provider) break;
+      if (host.startsWith(provider + "-")) {
+        s = provider + rest;
+        break;
+      }
+    }
+  }
+  return s || null;
+}
 
 // packages/plugin-core/src/host.ts
 import os2 from "node:os";
@@ -743,230 +783,160 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
-// packages/plugin-core/src/cli/args.ts
-function parseSlashArgs(raw) {
-  const tokens = [];
-  let cur = "";
-  let inSingle = false;
-  let inDouble = false;
-  let started = false;
-  let i = 0;
-  const flush = () => {
-    if (started) {
-      tokens.push(cur);
-      cur = "";
-      started = false;
-    }
-  };
-  while (i < raw.length) {
-    const ch = raw[i];
-    if (inSingle) {
-      if (ch === "'") {
-        inSingle = false;
-      } else {
-        cur += ch;
-      }
-      i++;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === "\\" && i + 1 < raw.length) {
-        const next = raw[i + 1];
-        if (next === '"' || next === "\\") {
-          cur += next;
-          i += 2;
-          continue;
-        }
-        cur += ch;
-        i++;
-        continue;
-      }
-      if (ch === '"') {
-        inDouble = false;
-        i++;
-        continue;
-      }
-      cur += ch;
-      i++;
-      continue;
-    }
-    if (ch === "'") {
-      inSingle = true;
-      started = true;
-      i++;
-      continue;
-    }
-    if (ch === '"') {
-      inDouble = true;
-      started = true;
-      i++;
-      continue;
-    }
-    if (ch === " " || ch === "	" || ch === "\n") {
-      flush();
-      i++;
-      continue;
-    }
-    cur += ch;
-    started = true;
-    i++;
+// packages/plugin-core/src/project-resolver.ts
+import { execSync } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import path5 from "node:path";
+var WORKSPACE_ENV_VARS = [
+  // Claude Code exposes the original project dir to hooks/plugin commands.
+  "CLAUDE_PROJECT_DIR",
+  // Cursor/plugin shims and local tests can set this explicitly.
+  "CURSOR_WORKSPACE_ROOT",
+  "CURSOR_PROJECT_ROOT",
+  "MEMLIN_WORKSPACE_ROOT",
+  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
+  "INIT_CWD"
+];
+function runtimeCwd(fallback = process.cwd()) {
+  for (const name of WORKSPACE_ENV_VARS) {
+    const raw = process.env[name]?.trim();
+    if (raw && path5.isAbsolute(raw)) return path5.resolve(raw);
   }
-  flush();
-  return tokens;
+  return path5.resolve(fallback);
 }
-function argvAsSlashArgs() {
-  const raw = process.argv.slice(2).join(" ").trim();
-  return parseSlashArgs(raw);
+async function resolveProject(api, cwd, configProjectId) {
+  const absCwd = path5.resolve(cwd);
+  const remotes = detectGitRemotes(cwd);
+  const hasGitRemote = remotes.length > 0;
+  try {
+    const result = await api.resolveProject({
+      // Primary remote (back-compat with the single-remote server path).
+      git_remote: remotes[0] ?? null,
+      // All detected remotes — for the workspace-root-of-repos case, this is
+      // every sibling repo so the server resolves to the owning project.
+      git_remotes: remotes,
+      cwd: absCwd
+    });
+    if (result.project_id) {
+      return {
+        project_id: result.project_id,
+        project_name: result.name,
+        account_id: result.account_id,
+        reason: result.reason === "none" ? "config" : result.reason,
+        hasGitRemote
+      };
+    }
+  } catch {
+  }
+  if (configProjectId) {
+    return {
+      project_id: configProjectId,
+      project_name: null,
+      account_id: null,
+      reason: "config",
+      hasGitRemote
+    };
+  }
+  return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
+}
+function readGitRemote(cwd) {
+  try {
+    const url = execSync("git remote get-url origin", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    return normalizeGitRemote(url);
+  } catch {
+    return null;
+  }
+}
+var MAX_WORKSPACE_SCAN = 64;
+function detectGitRemotes(cwd) {
+  const enclosing = readGitRemote(cwd);
+  if (enclosing) return [enclosing];
+  const out = [];
+  try {
+    let scanned = 0;
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (scanned >= MAX_WORKSPACE_SCAN) break;
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
+        continue;
+      }
+      scanned++;
+      const child = path5.join(cwd, entry.name);
+      if (!existsSync(path5.join(child, ".git"))) continue;
+      const remote = readGitRemote(child);
+      if (remote && !out.includes(remote)) out.push(remote);
+    }
+  } catch {
+  }
+  return out;
 }
 
-// packages/plugin-core/src/cli/handoffs.ts
-function matchHandoff(handoffs, needle) {
-  const exact = handoffs.find((h) => h.id === needle);
-  if (exact) return exact;
-  const matches = handoffs.filter((h) => h.id.startsWith(needle));
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) return { error: `no handoff matches "${needle}"` };
-  return { error: `"${needle}" is ambiguous \u2014 matches ${matches.length} handoffs` };
+// packages/plugin-core/src/cli/ingest-native-memory.ts
+function nativeMemoryDirCandidates(cwd) {
+  const projects = path6.join(os5.homedir(), ".claude", "projects");
+  const enc1 = cwd.replace(/[/.]/g, "-");
+  const enc2 = cwd.replace(/\//g, "-");
+  return [path6.join(projects, enc1, "memory"), path6.join(projects, enc2, "memory")];
 }
 async function main() {
   const ctx = await getApi();
   if (!ctx) {
-    process.stderr.write("not signed in \u2014 run memlin login first\n");
+    console.error("memlin: not configured. Run `memlin login` first.");
     process.exit(1);
   }
-  const args = argvAsSlashArgs();
-  const action = args[0];
-  const target = resolveHost().kind;
-  if (!action || action === "list") {
-    const { handoffs: handoffs2 } = await ctx.api.listHandoffs({
-      project_id: ctx.config.project_id ?? null,
-      target_agent_kind: target,
-      status: "pending"
-    });
-    if (handoffs2.length === 0) {
-      process.stdout.write(`No pending handoffs for ${target}.
-`);
-      return;
-    }
-    process.stdout.write(
-      `${handoffs2.length} pending handoff${handoffs2.length === 1 ? "" : "s"} for ${target}:
-
-`
-    );
-    for (const h of handoffs2) {
-      process.stdout.write(`  ${h.id.slice(0, 8)}  ${h.task}${h.path ? ` (${h.path})` : ""}
-`);
-    }
-    process.stdout.write("\nUse: memlin handoffs accept <id> | complete <id> | cancel <id>\n");
-    return;
-  }
-  if (action === "create") {
-    const targetKind = args[1];
-    const projectId = ctx.config.project_id ?? process.env.MEMLIN_PROJECT_ID ?? null;
-    if (!projectId) {
-      process.stderr.write(
-        "memlin handoffs create: no project pinned in config \u2014 run `memlin add-project` first or set MEMLIN_PROJECT_ID for this invocation.\n"
-      );
-      process.exit(2);
-    }
-    if (!targetKind) {
-      process.stderr.write(
-        'usage: memlin handoffs create <target_agent_kind> "<task>" [--path P] [--decisions D] [--blockers B] [--memory M]\n'
-      );
-      process.exit(1);
-    }
-    const taskParts = [];
-    let path5 = null;
-    let decisions = null;
-    let blockers = null;
-    let memory = null;
-    for (let i = 2; i < args.length; i++) {
-      const a = args[i];
-      if (a === "--path" && i + 1 < args.length) {
-        path5 = args[++i] ?? null;
-        continue;
-      }
-      if (a === "--decisions" && i + 1 < args.length) {
-        decisions = args[++i] ?? null;
-        continue;
-      }
-      if (a === "--blockers" && i + 1 < args.length) {
-        blockers = args[++i] ?? null;
-        continue;
-      }
-      if (a === "--memory" && i + 1 < args.length) {
-        memory = args[++i] ?? null;
-        continue;
-      }
-      if (a?.startsWith("--")) {
-        process.stderr.write(`unknown flag: ${a}
-`);
-        process.exit(1);
-      }
-      taskParts.push(a ?? "");
-    }
-    const task = taskParts.join(" ").trim();
-    if (!task) {
-      process.stderr.write("memlin handoffs create: <task> is required\n");
-      process.exit(1);
-    }
-    try {
-      const result2 = await ctx.api.createHandoff({
-        project_id: projectId,
-        target_agent_kind: targetKind,
-        task,
-        path: path5,
-        decisions_made: decisions,
-        blockers,
-        relevant_memory: memory
-      });
-      process.stdout.write(`\u2713 created handoff ${result2.id.slice(0, 8)} for ${targetKind}
-`);
-      process.stdout.write(`  task: ${result2.task}
-`);
-      process.stdout.write(`  status: ${result2.status}
-`);
-      return;
-    } catch (err) {
-      process.stderr.write(
-        `memlin handoffs create failed: ${err instanceof Error ? err.message : String(err)}
-`
-      );
-      process.exit(1);
-    }
-  }
-  if (action !== "accept" && action !== "complete" && action !== "cancel") {
-    process.stderr.write(
-      'usage: memlin handoffs [list] | create <target> "<task>" | accept <id> | complete <id> | cancel <id>\n'
-    );
-    process.exit(1);
-  }
-  const needle = args[1];
-  if (!needle) {
-    process.stderr.write(`missing handoff id \u2014 usage: memlin handoffs ${action} <id>
-`);
-    process.exit(1);
-  }
-  const { handoffs } = await ctx.api.listHandoffs({
-    project_id: ctx.config.project_id ?? null,
-    target_agent_kind: target,
-    status: action === "complete" ? "accepted" : "pending",
-    limit: 50
-  });
-  const match = matchHandoff(handoffs, needle);
-  if ("error" in match) {
-    process.stderr.write(`${match.error}
-`);
+  const { api, config } = ctx;
+  const dirFlag = process.argv.indexOf("--dir");
+  const explicitDir = dirFlag >= 0 ? process.argv[dirFlag + 1] : null;
+  if (dirFlag >= 0 && !explicitDir) {
+    console.error("usage: memlin ingest-native-memory [--dir <path>]");
     process.exit(2);
   }
-  const result = await ctx.api.updateHandoff(match.id, action);
-  process.stdout.write(`\u2713 ${result.status} \u2014 ${match.task}
-`);
+  const cwd = runtimeCwd();
+  const candidates = explicitDir ? [path6.resolve(cwd, explicitDir)] : nativeMemoryDirCandidates(cwd);
+  const memoryDir = candidates.find((d) => existsSync2(path6.join(d, "MEMORY.md")));
+  if (!memoryDir) {
+    console.log("No native auto-memory found. Looked for MEMORY.md in:");
+    for (const d of candidates) console.log(`  ${d}`);
+    console.log("Nothing to ingest \u2014 native auto-memory may be off or empty.");
+    return;
+  }
+  const indexRaw = await fs4.readFile(path6.join(memoryDir, "MEMORY.md"), "utf8");
+  const satelliteFiles = (await fs4.readdir(memoryDir)).filter(
+    (f) => f.endsWith(".md") && f !== "MEMORY.md"
+  );
+  const resolved = await resolveProject(api, cwd, config.project_id);
+  console.log(
+    `memlin ingest-native-memory \u2014 ${memoryDir}
+  account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
+  );
+  const result = await api.ingestNativeMemory(
+    {
+      memory_index_md: indexRaw,
+      satellite_files: satelliteFiles,
+      project_id: resolved.project_id,
+      cwd
+    },
+    { accountId: config.account_id }
+  );
+  if (result.skipped) {
+    console.log(
+      `Parsed ${result.entries_parsed} entries; nothing ingested (${result.reason ?? "skipped"}).`
+    );
+    if (result.reason === "ai_access_blocked") {
+      console.log("AI access is blocked for this workspace \u2014 ingestion needs embeddings.");
+    }
+    return;
+  }
+  console.log(
+    `Ingested: ${result.proposals_persisted} new, ${result.proposals_corroborated ?? 0} corroborated existing, ${result.proposals_auto_activated ?? 0} auto-activated (from ${result.entries_parsed} index entries, ${result.proposals_built} candidates).`
+  );
+  console.log("Native auto-memory is now in Memlin \u2014 safe to turn it off:");
+  console.log("  memlin managed-memory disable");
 }
 main().catch((err) => {
-  process.stderr.write(
-    `memlin handoffs failed: ${err instanceof Error ? err.message : String(err)}
-`
-  );
+  console.error("memlin ingest-native-memory failed:", err instanceof Error ? err.message : err);
   process.exit(1);
 });
