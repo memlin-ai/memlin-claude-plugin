@@ -14741,11 +14741,37 @@ import { promises as fs18 } from "node:fs";
 import { existsSync as existsSync6 } from "node:fs";
 import os14 from "node:os";
 import path25 from "node:path";
+import { execFileSync } from "node:child_process";
+function gitMainRoot(cwd) {
+  try {
+    const common = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ).trim();
+    return common ? path25.dirname(common) : null;
+  } catch {
+    return null;
+  }
+}
+function encodings(p) {
+  return [p.replace(/[/.]/g, "-"), p.replace(/\//g, "-")];
+}
 function nativeMemoryDirCandidates(cwd) {
   const projects = path25.join(os14.homedir(), ".claude", "projects");
-  const enc1 = cwd.replace(/[/.]/g, "-");
-  const enc2 = cwd.replace(/\//g, "-");
-  return [path25.join(projects, enc1, "memory"), path25.join(projects, enc2, "memory")];
+  const roots = [gitMainRoot(cwd), cwd].filter((x) => !!x);
+  const seen = /* @__PURE__ */ new Set();
+  const out2 = [];
+  for (const r of roots) {
+    for (const enc of encodings(r)) {
+      const dir = path25.join(projects, enc, "memory");
+      if (!seen.has(dir)) {
+        seen.add(dir);
+        out2.push(dir);
+      }
+    }
+  }
+  return out2;
 }
 async function main25() {
   const ctx = await getApi();
@@ -14770,18 +14796,26 @@ async function main25() {
     return;
   }
   const indexRaw = await fs18.readFile(path25.join(memoryDir, "MEMORY.md"), "utf8");
-  const satelliteFiles = (await fs18.readdir(memoryDir)).filter(
+  const satelliteNames = (await fs18.readdir(memoryDir)).filter(
     (f) => f.endsWith(".md") && f !== "MEMORY.md"
   );
+  const satellites = [];
+  for (const name of satelliteNames.slice(0, 1e3)) {
+    try {
+      const content = await fs18.readFile(path25.join(memoryDir, name), "utf8");
+      if (content.length <= 1e5) satellites.push({ name, content });
+    } catch {
+    }
+  }
   const resolved = await resolveProject(api, cwd, config.project_id);
   console.log(
     `memlin ingest-native-memory \u2014 ${memoryDir}
-  account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
+  ${satellites.length} memories + index \xB7 account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
   );
   const result = await api.ingestNativeMemory(
     {
       memory_index_md: indexRaw,
-      satellite_files: satelliteFiles,
+      satellites,
       project_id: resolved.project_id,
       cwd
     },

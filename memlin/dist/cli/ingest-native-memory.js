@@ -783,6 +783,9 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
+// packages/plugin-core/src/cli/ingest-native-memory.ts
+import { execFileSync } from "node:child_process";
+
 // packages/plugin-core/src/project-resolver.ts
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -875,11 +878,36 @@ function detectGitRemotes(cwd) {
 }
 
 // packages/plugin-core/src/cli/ingest-native-memory.ts
+function gitMainRoot(cwd) {
+  try {
+    const common = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ).trim();
+    return common ? path6.dirname(common) : null;
+  } catch {
+    return null;
+  }
+}
+function encodings(p) {
+  return [p.replace(/[/.]/g, "-"), p.replace(/\//g, "-")];
+}
 function nativeMemoryDirCandidates(cwd) {
   const projects = path6.join(os5.homedir(), ".claude", "projects");
-  const enc1 = cwd.replace(/[/.]/g, "-");
-  const enc2 = cwd.replace(/\//g, "-");
-  return [path6.join(projects, enc1, "memory"), path6.join(projects, enc2, "memory")];
+  const roots = [gitMainRoot(cwd), cwd].filter((x) => !!x);
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const r of roots) {
+    for (const enc of encodings(r)) {
+      const dir = path6.join(projects, enc, "memory");
+      if (!seen.has(dir)) {
+        seen.add(dir);
+        out.push(dir);
+      }
+    }
+  }
+  return out;
 }
 async function main() {
   const ctx = await getApi();
@@ -904,18 +932,26 @@ async function main() {
     return;
   }
   const indexRaw = await fs4.readFile(path6.join(memoryDir, "MEMORY.md"), "utf8");
-  const satelliteFiles = (await fs4.readdir(memoryDir)).filter(
+  const satelliteNames = (await fs4.readdir(memoryDir)).filter(
     (f) => f.endsWith(".md") && f !== "MEMORY.md"
   );
+  const satellites = [];
+  for (const name of satelliteNames.slice(0, 1e3)) {
+    try {
+      const content = await fs4.readFile(path6.join(memoryDir, name), "utf8");
+      if (content.length <= 1e5) satellites.push({ name, content });
+    } catch {
+    }
+  }
   const resolved = await resolveProject(api, cwd, config.project_id);
   console.log(
     `memlin ingest-native-memory \u2014 ${memoryDir}
-  account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
+  ${satellites.length} memories + index \xB7 account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
   );
   const result = await api.ingestNativeMemory(
     {
       memory_index_md: indexRaw,
-      satellite_files: satelliteFiles,
+      satellites,
       project_id: resolved.project_id,
       cwd
     },
