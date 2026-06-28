@@ -14614,6 +14614,18 @@ var init_add_project = __esm({
 
 // packages/plugin-core/src/cli/managed-memory.ts
 var managed_memory_exports = {};
+async function fetchOrgPolicy() {
+  try {
+    const ctx = await getApi();
+    if (!ctx) return "off";
+    const me = await ctx.api.me();
+    const acct = me.accounts.find((a) => a.id === ctx.config.account_id) ?? me.accounts[0];
+    const p = acct?.managed_memory_policy;
+    return p === "recommended" || p === "required" ? p : "off";
+  } catch {
+    return "off";
+  }
+}
 function parseArgs7(argv) {
   const out2 = {};
   for (let i = 0; i < argv.length; i++) {
@@ -14663,6 +14675,14 @@ async function main24() {
     process.exit(0);
   }
   const paths = defaultUserSettingsPaths();
+  const policy = await fetchOrgPolicy();
+  function printPolicy() {
+    if (policy === "required") {
+      console.log("  Org policy: REQUIRED \u2014 your workspace asks that native auto-memory stay off.");
+    } else if (policy === "recommended") {
+      console.log("  Org policy: recommended \u2014 your workspace suggests handing memory to Memlin.");
+    }
+  }
   if (!parsed.mode || parsed.status) {
     const settings = await readClaudeUserSettings(paths);
     const presence = inspectManagedMemory(settings);
@@ -14676,8 +14696,16 @@ async function main24() {
       console.log("Native auto-memory: host default (on for Claude Code).");
       console.log("  Hand it to Memlin with: memlin managed-memory disable");
     }
+    if (policy === "required" && !presence.autoMemoryDisabled) {
+      console.log("  \u26A0 Native memory is still ON but your org policy is REQUIRED \u2014 run `disable`.");
+    }
+    printPolicy();
     console.log(`  Settings file: ${paths.settingsFile}`);
     return;
+  }
+  if (parsed.mode === "off" && policy === "required") {
+    console.log("\u26A0 Your org policy is REQUIRED (native auto-memory should stay off).");
+    console.log("  Reverting re-enables it against that policy. Continuing as requested.");
   }
   const result = await applyManagedMemoryMode(parsed.mode, paths);
   if (result.status === "failed") {
@@ -14699,6 +14727,7 @@ var init_managed_memory = __esm({
   "packages/plugin-core/src/cli/managed-memory.ts"() {
     "use strict";
     init_plugin_install();
+    init_client();
     main24().catch((err2) => {
       console.error("memlin managed-memory failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
