@@ -292,7 +292,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.37";
+  cachedAgentVersion = "0.2.38";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -836,7 +836,7 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
-// packages/plugin-core/src/cli/managed-memory.ts
+// packages/plugin-core/src/cli/manage-memory.ts
 async function fetchOrgPolicy() {
   try {
     const ctx = await getApi();
@@ -849,108 +849,123 @@ async function fetchOrgPolicy() {
     return "off";
   }
 }
-function parseArgs(argv) {
-  const out = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--help" || a === "-h") {
-      out.help = true;
-    } else if (a === "--status") {
-      out.status = true;
-    } else if (a === "disable" || a === "off" || a === "revert") {
-      if (out.mode) return { error: "specify a single mode (disable | revert)" };
-      out.mode = a === "revert" ? "off" : a;
-    } else if (a?.startsWith("-")) {
-      return { error: `unknown flag: ${a}` };
-    } else if (a) {
-      return { error: `unknown argument: ${a} (expected 'disable' or 'revert')` };
-    }
-  }
-  return out;
-}
 function printHelp() {
   console.log(
     [
-      "memlin managed-memory \u2014 hand your agent's native memory to Memlin",
+      "memlin manage-memory \u2014 let Memlin manage your agent's memory",
       "",
-      "This toggles CLAUDE CODE's built-in auto-memory. It NEVER touches Memlin \u2014",
-      "Memlin stays on and is your system of record either way.",
+      "This makes Memlin your single memory store by turning the EDITOR's built-in",
+      "native auto-memory on/off. It NEVER touches Memlin \u2014 Memlin stays on either way.",
       "",
       "Usage:",
-      "  memlin managed-memory            Show current state",
-      "  memlin managed-memory --status   Show current state",
-      "  memlin managed-memory disable    Turn OFF Claude Code's native auto-memory (hand to Memlin)",
-      "  memlin managed-memory revert     Turn it back ON (host default)   [alias: off]",
+      "  memlin manage-memory            Memlin takes over (editor native auto-memory off)",
+      "  memlin manage-memory --status   Show current state, change nothing",
+      "  memlin manage-memory --revert   Hand memory back to the editor (native on)",
       "",
-      "Disabling only stops Claude Code from keeping its own copy \u2014 Memlin keeps",
-      "capturing, and everything Memlin stores is fully exportable (`memlin pull`, or",
-      "Settings \u2192 Export memory). Reverse anytime with `memlin managed-memory revert`."
+      "Turning the editor's native memory off only stops it from keeping a redundant",
+      "copy \u2014 Memlin keeps capturing, and everything it stores is fully exportable",
+      "(`memlin pull`, or Settings \u2192 Export memory). Always reversible."
     ].join("\n")
   );
 }
-async function main() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs(argv);
-  if ("error" in parsed) {
-    console.error(`memlin managed-memory: ${parsed.error}`);
-    printHelp();
-    process.exit(2);
-  }
-  if (parsed.help) {
-    printHelp();
-    process.exit(0);
-  }
+async function runManageMemory(action) {
   const paths = defaultUserSettingsPaths();
   const policy = await fetchOrgPolicy();
   function printPolicy() {
     if (policy === "required") {
-      console.log("  Org policy: REQUIRED \u2014 your workspace asks that native auto-memory stay off.");
+      console.log("  Org policy: REQUIRED \u2014 your workspace asks that Memlin manage memory.");
     } else if (policy === "recommended") {
-      console.log("  Org policy: recommended \u2014 your workspace suggests handing memory to Memlin.");
+      console.log("  Org policy: recommended \u2014 your workspace suggests letting Memlin manage memory.");
     }
   }
-  if (!parsed.mode || parsed.status) {
+  if (action === "status") {
     const settings = await readClaudeUserSettings(paths);
     const presence = inspectManagedMemory(settings);
     if (presence.autoMemoryDisabled) {
-      console.log("Claude Code's native auto-memory: OFF (handed to Memlin).");
-      console.log("  Memlin stays on as your system of record. Revert: memlin managed-memory revert");
+      console.log("Memory: managed by Memlin \u2713  (the editor's native auto-memory is off).");
+      console.log("  Hand it back to the editor: memlin manage-memory --revert");
     } else if (presence.autoMemoryConfigured) {
-      console.log("Claude Code's native auto-memory: explicitly ON in settings.json.");
-      console.log("  Hand it to Memlin (Memlin stays on too): memlin managed-memory disable");
+      console.log("Memory: managed by the editor (its native auto-memory is explicitly ON).");
+      console.log("  Let Memlin manage it: memlin manage-memory");
     } else {
-      console.log("Claude Code's native auto-memory: host default (on).");
-      console.log("  Hand it to Memlin (Memlin stays on too): memlin managed-memory disable");
+      console.log("Memory: managed by the editor (native auto-memory is on by default).");
+      console.log("  Let Memlin manage it: memlin manage-memory");
     }
     if (policy === "required" && !presence.autoMemoryDisabled) {
-      console.log("  \u26A0 Native memory is still ON but your org policy is REQUIRED \u2014 run `disable`.");
+      console.log("  \u26A0 Org policy is REQUIRED \u2014 run `memlin manage-memory` to comply.");
     }
     printPolicy();
     console.log(`  Settings file: ${paths.settingsFile}`);
     return;
   }
-  if (parsed.mode === "off" && policy === "required") {
-    console.log("\u26A0 Your org policy is REQUIRED (native auto-memory should stay off).");
-    console.log("  Reverting re-enables it against that policy. Continuing as requested.");
+  if (action === "revert" && policy === "required") {
+    console.log("\u26A0 Your org policy is REQUIRED (Memlin should manage memory).");
+    console.log("  Handing it back to the editor goes against that policy. Continuing as requested.");
   }
-  const result = await applyManagedMemoryMode(parsed.mode, paths);
+  const mode = action === "manage" ? "disable" : "off";
+  const result = await applyManagedMemoryMode(mode, paths);
   if (result.status === "failed") {
-    console.error(`memlin managed-memory: ${result.detail}`);
+    console.error(`memlin manage-memory: ${result.detail}`);
     console.error(`  (settings file: ${result.settingsFile})`);
     process.exit(1);
   }
-  console.log(result.detail);
-  console.log(`  ${result.status === "applied" ? "wrote" : "unchanged"}: ${result.settingsFile}`);
-  if (parsed.mode === "disable") {
-    console.log("");
-    console.log("\u2713 Turned off CLAUDE CODE's native auto-memory \u2014 this did NOT touch Memlin.");
-    console.log("  Memlin stays on and is now your system of record; you lose nothing.");
-    console.log("  Your memory stays fully exportable: `memlin pull`, or Settings \u2192 Export memory.");
-    console.log("  Restart the agent for the change to take effect.");
-    console.log("  Reverse anytime: memlin managed-memory revert");
+  if (action === "manage") {
+    console.log("\u2713 Memlin now manages your memory.");
+    console.log("  The editor's native auto-memory is OFF \u2014 this did NOT change Memlin; it stays");
+    console.log("  on as your single store and keeps capturing. You lose nothing: fully exportable");
+    console.log("  (`memlin pull`, or Settings \u2192 Export memory). Restart the agent to apply.");
+    console.log("  Hand it back anytime: memlin manage-memory --revert");
+  } else {
+    console.log("\u2713 Memory handed back to the editor \u2014 its native auto-memory is ON again.");
+    console.log("  Memlin still works; it just no longer manages the native toggle.");
+    console.log("  Let Memlin manage it again: memlin manage-memory");
   }
+  console.log(`  ${result.status === "applied" ? "wrote" : "unchanged"}: ${result.settingsFile}`);
+}
+function parseAction(argv) {
+  let action = "manage";
+  for (const a of argv) {
+    if (a === "--help" || a === "-h") return "help";
+    else if (a === "--status" || a === "status") action = "status";
+    else if (a === "--revert" || a === "--off" || a === "revert" || a === "off") action = "revert";
+    else if (a === "on" || a === "manage") action = "manage";
+    else if (a?.startsWith("-")) return { error: `unknown flag: ${a}` };
+    else if (a) return { error: `unknown argument: ${a}` };
+  }
+  return action;
+}
+async function main() {
+  const parsed = parseAction(process.argv.slice(2));
+  if (parsed === "help") {
+    printHelp();
+    process.exit(0);
+  }
+  if (typeof parsed === "object") {
+    console.error(`memlin manage-memory: ${parsed.error}`);
+    printHelp();
+    process.exit(2);
+  }
+  await runManageMemory(parsed);
 }
 main().catch((err) => {
+  console.error("memlin manage-memory failed:", err instanceof Error ? err.message : err);
+  process.exit(1);
+});
+
+// packages/plugin-core/src/cli/managed-memory.ts
+async function main2() {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log("`memlin managed-memory` is now `memlin manage-memory`.");
+    console.log("Run: memlin manage-memory --help");
+    process.exit(0);
+  }
+  let action = "status";
+  if (argv.includes("disable")) action = "manage";
+  else if (argv.includes("off") || argv.includes("revert")) action = "revert";
+  await runManageMemory(action);
+}
+main2().catch((err) => {
   console.error("memlin managed-memory failed:", err instanceof Error ? err.message : err);
   process.exit(1);
 });

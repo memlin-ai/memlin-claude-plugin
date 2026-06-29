@@ -3,191 +3,107 @@ import { createRequire as __createRequire } from 'node:module'; const require = 
 import { fileURLToPath as __ftp } from 'node:url'; import { dirname as __dn } from 'node:path';
 const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 
-// packages/plugin-core/src/cli/pull.ts
-import path8 from "node:path";
-
-// packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
+// packages/plugin-core/src/plugin-install.ts
+import { promises as fs } from "node:fs";
+import { existsSync } from "node:fs";
 import path from "node:path";
-
-// packages/plugin-core/src/runtime-shared.ts
-var AGENT_KIND_HEADER = "Memlin-Agent-Kind";
-var AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
-var AGENT_VERSION_HEADER = "Memlin-Agent-Version";
-var AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
-var AGENT_EXPECTED_CAPABILITIES = {
-  "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
-  cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
-  codex: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
-  windsurf: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
-  // VS Code (apps/vscode-extension): MCP + CLI + copilot-instructions; plain
-  // VS Code has no lifecycle-hook or slash-command surface.
-  vscode: ["mcp", "cli", "rules", "resolve"],
-  gemini: ["mcp", "rules", "resolve"],
-  grok: ["mcp", "rules", "resolve"],
-  hermes: ["mcp", "resolve"],
-  openclaw: ["mcp", "rules", "resolve"],
-  antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
-  mcp: ["mcp", "resolve"],
-  "claude-ai": ["mcp", "resolve"]
-};
-var PROVIDER_HOSTS = [
-  "github.com",
-  "gitlab.com",
-  "bitbucket.org",
-  "dev.azure.com",
-  "ssh.dev.azure.com",
-  "codeberg.org",
-  "sr.ht",
-  "git.sr.ht"
-];
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash);
-    const rest = s.slice(slash);
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
+import os from "node:os";
+function defaultUserSettingsPaths() {
+  const claudeDir = path.join(os.homedir(), ".claude");
+  return { claudeDir, settingsFile: path.join(claudeDir, "settings.json") };
 }
-
-// packages/plugin-core/src/project-resolver.ts
-var WORKSPACE_ENV_VARS = [
-  // Claude Code exposes the original project dir to hooks/plugin commands.
-  "CLAUDE_PROJECT_DIR",
-  // Cursor/plugin shims and local tests can set this explicitly.
-  "CURSOR_WORKSPACE_ROOT",
-  "CURSOR_PROJECT_ROOT",
-  "MEMLIN_WORKSPACE_ROOT",
-  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
-  "INIT_CWD"
-];
-function runtimeCwd(fallback = process.cwd()) {
-  for (const name of WORKSPACE_ENV_VARS) {
-    const raw = process.env[name]?.trim();
-    if (raw && path.isAbsolute(raw)) return path.resolve(raw);
-  }
-  return path.resolve(fallback);
-}
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path.resolve(cwd);
-  const remotes = detectGitRemotes(cwd);
-  const hasGitRemote = remotes.length > 0;
+async function readClaudeUserSettings(paths) {
+  const p = paths ?? defaultUserSettingsPaths();
+  if (!existsSync(p.settingsFile)) return null;
+  let raw;
   try {
-    const result = await api.resolveProject({
-      // Primary remote (back-compat with the single-remote server path).
-      git_remote: remotes[0] ?? null,
-      // All detected remotes — for the workspace-root-of-repos case, this is
-      // every sibling repo so the server resolves to the owning project.
-      git_remotes: remotes,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason,
-        hasGitRemote
-      };
-    }
+    raw = await fs.readFile(p.settingsFile, "utf8");
   } catch {
+    return null;
   }
-  if (configProjectId) {
-    return {
-      project_id: configProjectId,
-      project_name: null,
-      account_id: null,
-      reason: "config",
-      hasGitRemote
-    };
-  }
-  return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
-}
-function readGitRemote(cwd) {
   try {
-    const url = execSync("git remote get-url origin", {
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;
   }
 }
-var MAX_WORKSPACE_SCAN = 64;
-function detectGitRemotes(cwd) {
-  const enclosing = readGitRemote(cwd);
-  if (enclosing) return [enclosing];
-  const out = [];
+async function applyManagedMemoryMode(mode, paths) {
+  const p = paths ?? defaultUserSettingsPaths();
   try {
-    let scanned = 0;
-    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
-      if (scanned >= MAX_WORKSPACE_SCAN) break;
-      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
-        continue;
+    await fs.mkdir(p.claudeDir, { recursive: true });
+    let current = {};
+    if (existsSync(p.settingsFile)) {
+      const raw = await fs.readFile(p.settingsFile, "utf8");
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") current = parsed;
+      } catch (err) {
+        return {
+          status: "failed",
+          mode,
+          settingsFile: p.settingsFile,
+          changed: [],
+          detail: `existing settings.json isn't valid JSON: ${err instanceof Error ? err.message : String(err)}`
+        };
       }
-      scanned++;
-      const child = path.join(cwd, entry.name);
-      if (!existsSync(path.join(child, ".git"))) continue;
-      const remote = readGitRemote(child);
-      if (remote && !out.includes(remote)) out.push(remote);
     }
-  } catch {
+    const next = { ...current };
+    const changed = [];
+    if (mode === "disable") {
+      if (current.autoMemoryEnabled !== false) {
+        next.autoMemoryEnabled = false;
+        changed.push("autoMemoryEnabled");
+      }
+    } else {
+      if ("autoMemoryEnabled" in next) {
+        delete next.autoMemoryEnabled;
+        changed.push("autoMemoryEnabled");
+      }
+    }
+    if (changed.length === 0) {
+      return {
+        status: "unchanged",
+        mode,
+        settingsFile: p.settingsFile,
+        changed,
+        detail: mode === "disable" ? "native auto-memory already disabled" : "no Memlin-managed memory setting to revert"
+      };
+    }
+    await fs.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
+    return {
+      status: "applied",
+      mode,
+      settingsFile: p.settingsFile,
+      changed,
+      detail: mode === "disable" ? "set autoMemoryEnabled: false \u2014 native auto-memory is off" : "removed Memlin-managed autoMemoryEnabled \u2014 reverted to host default"
+    };
+  } catch (err) {
+    return {
+      status: "failed",
+      mode,
+      settingsFile: p.settingsFile,
+      changed: [],
+      detail: err instanceof Error ? err.message : String(err)
+    };
   }
-  return out;
 }
-
-// packages/plugin-core/src/state.ts
-import { promises as fs } from "node:fs";
-import path2 from "node:path";
-import os from "node:os";
-import crypto from "node:crypto";
-var STATE_FILE = path2.join(os.homedir(), ".config", "memlin", "state.json");
-var EMPTY = { documents: {} };
-async function readState() {
-  try {
-    const raw = await fs.readFile(STATE_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return { ...EMPTY };
-  }
-}
-async function writeState(state) {
-  await fs.mkdir(path2.dirname(STATE_FILE), { recursive: true });
-  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await fs.rename(tmp, STATE_FILE);
-}
-function hash(content) {
-  return crypto.createHash("sha256").update(content).digest("hex");
+function inspectManagedMemory(settings) {
+  if (!settings) return { autoMemoryDisabled: false, autoMemoryConfigured: false };
+  return {
+    autoMemoryDisabled: settings.autoMemoryEnabled === false,
+    autoMemoryConfigured: "autoMemoryEnabled" in settings
+  };
 }
 
 // packages/plugin-core/src/client.ts
 import { promises as fs4 } from "node:fs";
-import path6 from "node:path";
+import path5 from "node:path";
 import os5 from "node:os";
 
 // packages/plugin-core/src/auth.ts
 import { promises as fs2 } from "node:fs";
-import path3 from "node:path";
+import path2 from "node:path";
 import os2 from "node:os";
 var MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
 var MEMLIN_PROD_AUTH0_CLIENT_ID = "fyYMQ4Cxc6Nu5juVwL8Ihqq4fgAFecG9";
@@ -195,7 +111,7 @@ var AUTH0_DOMAIN = process.env.MEMLIN_AUTH0_DOMAIN || MEMLIN_PROD_AUTH0_DOMAIN;
 var AUTH0_CLIENT_ID = process.env.MEMLIN_AUTH0_CLIENT_ID || MEMLIN_PROD_AUTH0_CLIENT_ID;
 var AUTH0_AUDIENCE = process.env.MEMLIN_AUTH0_AUDIENCE ?? "https://api.memlin.ai";
 function tokenFilePath() {
-  return process.env.MEMLIN_TOKEN_FILE || path3.join(os2.homedir(), ".config", "memlin", "token.json");
+  return process.env.MEMLIN_TOKEN_FILE || path2.join(os2.homedir(), ".config", "memlin", "token.json");
 }
 async function readPersistedToken() {
   try {
@@ -207,8 +123,8 @@ async function readPersistedToken() {
 }
 async function writePersistedToken(t) {
   const file = tokenFilePath();
-  await fs2.mkdir(path3.dirname(file), { recursive: true });
-  const tmp = path3.join(path3.dirname(file), `token.json.tmp-${process.pid}`);
+  await fs2.mkdir(path2.dirname(file), { recursive: true });
+  const tmp = path2.join(path2.dirname(file), `token.json.tmp-${process.pid}`);
   await fs2.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
   await fs2.chmod(tmp, 384).catch(() => {
   });
@@ -285,9 +201,31 @@ import os4 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// packages/plugin-core/src/runtime-shared.ts
+var AGENT_KIND_HEADER = "Memlin-Agent-Kind";
+var AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
+var AGENT_VERSION_HEADER = "Memlin-Agent-Version";
+var AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
+var AGENT_EXPECTED_CAPABILITIES = {
+  "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
+  cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
+  codex: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
+  windsurf: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
+  // VS Code (apps/vscode-extension): MCP + CLI + copilot-instructions; plain
+  // VS Code has no lifecycle-hook or slash-command surface.
+  vscode: ["mcp", "cli", "rules", "resolve"],
+  gemini: ["mcp", "rules", "resolve"],
+  grok: ["mcp", "rules", "resolve"],
+  hermes: ["mcp", "resolve"],
+  openclaw: ["mcp", "rules", "resolve"],
+  antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
+  mcp: ["mcp", "resolve"],
+  "claude-ai": ["mcp", "resolve"]
+};
+
 // packages/plugin-core/src/host.ts
 import os3 from "node:os";
-import path4 from "node:path";
+import path3 from "node:path";
 var BaseHost = class {
   constructor(kind, home) {
     this.kind = kind;
@@ -299,37 +237,37 @@ var BaseHost = class {
     return this.home;
   }
   plansDir() {
-    return path4.join(this.home, "plans");
+    return path3.join(this.home, "plans");
   }
 };
 var ClaudeCodeHost = class extends BaseHost {
   constructor() {
-    super("claude-code", path4.join(os3.homedir(), ".claude"));
+    super("claude-code", path3.join(os3.homedir(), ".claude"));
   }
 };
 var CursorHost = class extends BaseHost {
   constructor() {
-    super("cursor", path4.join(os3.homedir(), ".config", "memlin"));
+    super("cursor", path3.join(os3.homedir(), ".config", "memlin"));
   }
 };
 var CodexHost = class extends BaseHost {
   constructor() {
-    super("codex", path4.join(os3.homedir(), ".config", "memlin"));
+    super("codex", path3.join(os3.homedir(), ".config", "memlin"));
   }
 };
 var WindsurfHost = class extends BaseHost {
   constructor() {
-    super("windsurf", path4.join(os3.homedir(), ".config", "memlin"));
+    super("windsurf", path3.join(os3.homedir(), ".config", "memlin"));
   }
 };
 var AntigravityHost = class extends BaseHost {
   constructor() {
-    super("antigravity", path4.join(os3.homedir(), ".config", "memlin"));
+    super("antigravity", path3.join(os3.homedir(), ".config", "memlin"));
   }
 };
 var VSCodeHost = class extends BaseHost {
   constructor() {
-    super("vscode", path4.join(os3.homedir(), ".config", "memlin"));
+    super("vscode", path3.join(os3.homedir(), ".config", "memlin"));
   }
 };
 var HOSTS = {
@@ -822,13 +760,13 @@ function resolveApiUrl() {
 
 // packages/plugin-core/src/workspace-binding.ts
 import { promises as fs3 } from "node:fs";
-import path5 from "node:path";
+import path4 from "node:path";
 var WORKSPACE_DIR_NAME = ".memlin";
 var WORKSPACE_BINDING_FILE = "config.json";
 async function findWorkspaceBinding(startDir) {
-  let dir = path5.resolve(startDir);
+  let dir = path4.resolve(startDir);
   for (let i = 0; i < 64; i++) {
-    const candidate = path5.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+    const candidate = path4.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
     try {
       const raw = await fs3.readFile(candidate, "utf8");
       const parsed = JSON.parse(raw);
@@ -844,7 +782,7 @@ async function findWorkspaceBinding(startDir) {
       }
     } catch {
     }
-    const parent = path5.dirname(dir);
+    const parent = path4.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -852,9 +790,9 @@ async function findWorkspaceBinding(startDir) {
 }
 
 // packages/plugin-core/src/client.ts
-var CONFIG_DIR = path6.join(os5.homedir(), ".config", "memlin");
-var CONFIG_FILE = path6.join(CONFIG_DIR, "config.json");
-var TOKEN_FILE = path6.join(CONFIG_DIR, "token.json");
+var CONFIG_DIR = path5.join(os5.homedir(), ".config", "memlin");
+var CONFIG_FILE = path5.join(CONFIG_DIR, "config.json");
+var TOKEN_FILE = path5.join(CONFIG_DIR, "token.json");
 async function readConfig() {
   try {
     const raw = await fs4.readFile(CONFIG_FILE, "utf8");
@@ -898,205 +836,121 @@ function applyWorkspaceOverlay(config, overlay) {
   return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
 }
 
-// packages/plugin-core/src/apply.ts
-import { promises as fs5 } from "node:fs";
-import { existsSync as existsSync2 } from "node:fs";
-import os6 from "node:os";
-import path7 from "node:path";
-
-// packages/plugin-core/src/paths.ts
-var SLUG = /[^a-z0-9]+/g;
-function slugify(s) {
-  const cleaned = s.toLowerCase().replace(SLUG, "-").replace(/^-|-$/g, "");
-  return cleaned || "untitled";
+// packages/plugin-core/src/cli/manage-memory.ts
+async function fetchOrgPolicy() {
+  try {
+    const ctx = await getApi();
+    if (!ctx) return "off";
+    const me = await ctx.api.me();
+    const acct = me.accounts.find((a) => a.id === ctx.config.account_id) ?? me.accounts[0];
+    const p = acct?.managed_memory_policy;
+    return p === "recommended" || p === "required" ? p : "off";
+  } catch {
+    return "off";
+  }
 }
-function inferLocalPath(kind, title, existing) {
-  if (kind === "skill") {
-    if (existing && existing.endsWith("/SKILL.md")) return existing;
-    if (existing) {
-      const stripped = existing.replace(/\.md$/i, "");
-      return `${stripped}/SKILL.md`;
+function printHelp() {
+  console.log(
+    [
+      "memlin manage-memory \u2014 let Memlin manage your agent's memory",
+      "",
+      "This makes Memlin your single memory store by turning the EDITOR's built-in",
+      "native auto-memory on/off. It NEVER touches Memlin \u2014 Memlin stays on either way.",
+      "",
+      "Usage:",
+      "  memlin manage-memory            Memlin takes over (editor native auto-memory off)",
+      "  memlin manage-memory --status   Show current state, change nothing",
+      "  memlin manage-memory --revert   Hand memory back to the editor (native on)",
+      "",
+      "Turning the editor's native memory off only stops it from keeping a redundant",
+      "copy \u2014 Memlin keeps capturing, and everything it stores is fully exportable",
+      "(`memlin pull`, or Settings \u2192 Export memory). Always reversible."
+    ].join("\n")
+  );
+}
+async function runManageMemory(action) {
+  const paths = defaultUserSettingsPaths();
+  const policy = await fetchOrgPolicy();
+  function printPolicy() {
+    if (policy === "required") {
+      console.log("  Org policy: REQUIRED \u2014 your workspace asks that Memlin manage memory.");
+    } else if (policy === "recommended") {
+      console.log("  Org policy: recommended \u2014 your workspace suggests letting Memlin manage memory.");
     }
-    return `skills/${slugify(title)}/SKILL.md`;
   }
-  if (existing) return existing;
-  switch (kind) {
-    case "goal":
-      return `goals/${slugify(title)}.md`;
-    case "schema":
-      return `schemas/${slugify(title)}.json`;
-    case "memory":
-      return `memory/${slugify(title)}.md`;
-    default:
-      return `${kind}/${slugify(title)}.md`;
-  }
-}
-
-// packages/plugin-core/src/apply.ts
-function archiveRoot() {
-  return path7.join(os6.homedir(), ".config", "memlin", "archive");
-}
-async function archiveDestination(trackedRelPath) {
-  const base = path7.join(archiveRoot(), trackedRelPath);
-  if (!existsSync2(base)) return base;
-  const ext = path7.extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  for (let i = 1; i < 1e3; i++) {
-    const candidate = `${stem}.${i}${ext}`;
-    if (!existsSync2(candidate)) return candidate;
-  }
-  return `${stem}.${Date.now()}${ext}`;
-}
-async function applyPullToLocal(docs, state, now, rootOverride) {
-  const out = {
-    written: [],
-    unchanged: [],
-    removed: [],
-    archived: [],
-    keptEdited: [],
-    citations: {}
-  };
-  const currentPaths = /* @__PURE__ */ new Set();
-  const root = rootOverride ?? resolveHost().homeDir();
-  for (const d of docs) {
-    if (d.kind === "brand_guidelines") continue;
-    if (d.kind === "feedback") continue;
-    const localPath = inferLocalPath(d.kind, d.title, d.path);
-    currentPaths.add(localPath);
-    const full = path7.join(root, localPath);
-    const contentHash = hash(d.content);
-    let needsWrite = true;
-    try {
-      const local = await fs5.readFile(full, "utf8");
-      if (hash(local) === contentHash) needsWrite = false;
-    } catch {
-    }
-    if (needsWrite) {
-      await fs5.mkdir(path7.dirname(full), { recursive: true });
-      await fs5.writeFile(full, d.content, "utf8");
-      out.written.push(localPath);
+  if (action === "status") {
+    const settings = await readClaudeUserSettings(paths);
+    const presence = inspectManagedMemory(settings);
+    if (presence.autoMemoryDisabled) {
+      console.log("Memory: managed by Memlin \u2713  (the editor's native auto-memory is off).");
+      console.log("  Hand it back to the editor: memlin manage-memory --revert");
+    } else if (presence.autoMemoryConfigured) {
+      console.log("Memory: managed by the editor (its native auto-memory is explicitly ON).");
+      console.log("  Let Memlin manage it: memlin manage-memory");
     } else {
-      out.unchanged.push(localPath);
+      console.log("Memory: managed by the editor (native auto-memory is on by default).");
+      console.log("  Let Memlin manage it: memlin manage-memory");
     }
-    state.documents[localPath] = stateRow(d, contentHash, now);
-    out.citations[localPath] = {
-      localPath,
-      sourcePath: d.path ?? null,
-      version_number: d.version_number ?? state.documents[localPath]?.version_number ?? 1,
-      updated_at: d.updated_at ?? null
-    };
-  }
-  for (const tracked of Object.keys(state.documents)) {
-    if (currentPaths.has(tracked)) continue;
-    const full = path7.join(root, tracked);
-    if (existsSync2(full)) {
-      let userEdited = false;
-      try {
-        const local = await fs5.readFile(full, "utf8");
-        const prior = state.documents[tracked]?.content_hash;
-        userEdited = !prior || hash(local) !== prior;
-      } catch {
-        userEdited = true;
-      }
-      if (userEdited) {
-        out.keptEdited.push(tracked);
-        out.removed.push(`${tracked} (kept \u2014 locally edited)`);
-      } else {
-        const dest = await archiveDestination(tracked);
-        try {
-          await fs5.mkdir(path7.dirname(dest), { recursive: true });
-          await fs5.rename(full, dest);
-          out.archived.push(tracked);
-          out.removed.push(`${tracked} (archived)`);
-        } catch {
-          out.keptEdited.push(tracked);
-          out.removed.push(`${tracked} (kept \u2014 archive failed)`);
-        }
-      }
+    if (policy === "required" && !presence.autoMemoryDisabled) {
+      console.log("  \u26A0 Org policy is REQUIRED \u2014 run `memlin manage-memory` to comply.");
     }
-    delete state.documents[tracked];
+    printPolicy();
+    console.log(`  Settings file: ${paths.settingsFile}`);
+    return;
   }
-  return out;
-}
-function stateRow(d, h, at) {
-  return {
-    document_id: d.id,
-    version_id: "",
-    version_number: d.version_number ?? 0,
-    content_hash: h,
-    last_synced_at: at,
-    scope: d.scope,
-    kind: d.kind
-  };
-}
-
-// packages/plugin-core/src/cli/pull.ts
-async function main() {
-  const ctx = await getApi();
-  if (!ctx) {
-    console.error("memlin: not configured. Run `memlin login` first.");
+  if (action === "revert" && policy === "required") {
+    console.log("\u26A0 Your org policy is REQUIRED (Memlin should manage memory).");
+    console.log("  Handing it back to the editor goes against that policy. Continuing as requested.");
+  }
+  const mode = action === "manage" ? "disable" : "off";
+  const result = await applyManagedMemoryMode(mode, paths);
+  if (result.status === "failed") {
+    console.error(`memlin manage-memory: ${result.detail}`);
+    console.error(`  (settings file: ${result.settingsFile})`);
     process.exit(1);
   }
-  const { api, config } = ctx;
-  const resolved = await resolveProject(api, runtimeCwd(), config.project_id);
-  const memoryAndSkills = await api.listDocuments({
-    kinds: ["memory", "skill"],
-    project_id: resolved.project_id
-  });
-  const goals = await api.listDocuments({
-    kinds: ["goal"],
-    statuses: ["approved"],
-    project_id: resolved.project_id
-  });
-  const docs = [...memoryAndSkills, ...goals];
-  console.log(
-    `memlin pull \u2014 account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id?.slice(0, 8) ?? "(none)"} (${resolved.reason})`
-  );
-  const targetFlag = process.argv.indexOf("--target");
-  const targetDir = targetFlag >= 0 ? process.argv[targetFlag + 1] : null;
-  if (targetFlag >= 0 && !targetDir) {
-    console.error("usage: memlin pull [--target <dir>]");
+  if (action === "manage") {
+    console.log("\u2713 Memlin now manages your memory.");
+    console.log("  The editor's native auto-memory is OFF \u2014 this did NOT change Memlin; it stays");
+    console.log("  on as your single store and keeps capturing. You lose nothing: fully exportable");
+    console.log("  (`memlin pull`, or Settings \u2192 Export memory). Restart the agent to apply.");
+    console.log("  Hand it back anytime: memlin manage-memory --revert");
+  } else {
+    console.log("\u2713 Memory handed back to the editor \u2014 its native auto-memory is ON again.");
+    console.log("  Memlin still works; it just no longer manages the native toggle.");
+    console.log("  Let Memlin manage it again: memlin manage-memory");
+  }
+  console.log(`  ${result.status === "applied" ? "wrote" : "unchanged"}: ${result.settingsFile}`);
+}
+function parseAction(argv) {
+  let action = "manage";
+  for (const a of argv) {
+    if (a === "--help" || a === "-h") return "help";
+    else if (a === "--status" || a === "status") action = "status";
+    else if (a === "--revert" || a === "--off" || a === "revert" || a === "off") action = "revert";
+    else if (a === "on" || a === "manage") action = "manage";
+    else if (a?.startsWith("-")) return { error: `unknown flag: ${a}` };
+    else if (a) return { error: `unknown argument: ${a}` };
+  }
+  return action;
+}
+async function main() {
+  const parsed = parseAction(process.argv.slice(2));
+  if (parsed === "help") {
+    printHelp();
+    process.exit(0);
+  }
+  if (typeof parsed === "object") {
+    console.error(`memlin manage-memory: ${parsed.error}`);
+    printHelp();
     process.exit(2);
   }
-  const state = targetDir ? { documents: {} } : await readState();
-  const result = await applyPullToLocal(
-    docs,
-    state,
-    (/* @__PURE__ */ new Date()).toISOString(),
-    targetDir ? path8.resolve(runtimeCwd(), targetDir) : void 0
-  );
-  if (targetDir) {
-    console.log(`  (export mode \u2014 wrote under ${targetDir}; sync state untouched)`);
-  } else {
-    await writeState(state);
-  }
-  for (const p of result.written) {
-    console.log(`  \u2193 ${p}`);
-    const cite = result.citations[p];
-    if (cite)
-      console.log(
-        `    source: ${formatCitation(cite.sourcePath, cite.version_number, cite.updated_at)}`
-      );
-  }
-  for (const p of result.archived) console.log(`  \u293F ${p} \u2192 archived (preserved, no longer in scope)`);
-  for (const p of result.keptEdited) console.log(`  \u2022 ${p} (kept \u2014 locally edited)`);
-  console.log(
-    `  ${result.written.length} written, ${result.unchanged.length} unchanged, ${result.archived.length} archived (${memoryAndSkills.length} memory/skill, ${goals.length} approved goals) \u2014 nothing deleted`
-  );
-}
-function formatCitation(sourcePath, versionNumber, updatedAt) {
-  const parts = [];
-  parts.push(sourcePath ?? "(no path)");
-  parts.push(`v${versionNumber}`);
-  if (updatedAt) {
-    const t = new Date(updatedAt);
-    if (!isNaN(t.getTime())) {
-      parts.push(t.toISOString().replace(/\.\d{3}Z$/, "Z"));
-    }
-  }
-  return parts.join(" \xB7 ");
+  await runManageMemory(parsed);
 }
 main().catch((err) => {
-  console.error("memlin pull failed:", err instanceof Error ? err.message : err);
+  console.error("memlin manage-memory failed:", err instanceof Error ? err.message : err);
   process.exit(1);
 });
+export {
+  runManageMemory
+};

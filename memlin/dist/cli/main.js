@@ -8466,15 +8466,15 @@ var init_memlin_commands = __esm({
       },
       {
         section: "",
-        cmd: "managed-memory",
-        blurb: "hand memory to Memlin (turn off native auto-memory)",
-        details: "Turns off this host's built-in native auto-memory so it stops keeping a redundant, machine-bound copy that loads an unranked blob into context every session. Run with no args to see the current state, `disable` to turn it off, or `off` to revert to the host default. It only changes the single native toggle; Memlin keeps capturing, so you lose nothing, and everything Memlin stores is fully exportable (memlin pull, or Settings \u2192 Export memory). Always reversible."
+        cmd: "manage-memory",
+        blurb: "let Memlin manage your memory (turn off the editor\u2019s native auto-memory)",
+        details: "Makes Memlin your single memory store by turning OFF the editor's built-in native auto-memory, which otherwise keeps a redundant, machine-bound copy that loads an unranked blob into context every session. NEVER touches Memlin \u2014 Memlin stays on either way. Run with no args to let Memlin take over, `--status` to see state without changing anything, or `--revert` to hand memory back to the editor. Memlin keeps capturing, so you lose nothing, and everything it stores is fully exportable (memlin pull, or Settings \u2192 Export memory). Always reversible. (Old alias: `managed-memory disable`.)"
       },
       {
         section: "",
         cmd: "ingest-native-memory",
         blurb: "pull this host's native auto-memory into Memlin",
-        details: "Reads this host's native auto-memory index (Claude Code's ~/.claude/projects/<repo>/memory/MEMORY.md) and runs each entry through the Memlin scribe dedup, so native learnings corroborate what Memlin already knows instead of duplicating. Run once before `managed-memory disable` so turning native memory off is lossless \u2014 everything moves into the governed, fully exportable corpus."
+        details: "Reads this host's native auto-memory index (Claude Code's ~/.claude/projects/<repo>/memory/MEMORY.md) and runs each entry through the Memlin scribe dedup, so native learnings corroborate what Memlin already knows instead of duplicating. Run once before `manage-memory` so letting Memlin take over is lossless \u2014 everything moves into the governed, fully exportable corpus."
       }
     ];
   }
@@ -8898,7 +8898,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.37";
+  cachedAgentVersion = "0.2.38";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -14612,8 +14612,11 @@ var init_add_project = __esm({
   }
 });
 
-// packages/plugin-core/src/cli/managed-memory.ts
-var managed_memory_exports = {};
+// packages/plugin-core/src/cli/manage-memory.ts
+var manage_memory_exports = {};
+__export(manage_memory_exports, {
+  runManageMemory: () => runManageMemory
+});
 async function fetchOrgPolicy() {
   try {
     const ctx = await getApi();
@@ -14626,113 +14629,135 @@ async function fetchOrgPolicy() {
     return "off";
   }
 }
-function parseArgs7(argv) {
-  const out2 = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--help" || a === "-h") {
-      out2.help = true;
-    } else if (a === "--status") {
-      out2.status = true;
-    } else if (a === "disable" || a === "off" || a === "revert") {
-      if (out2.mode) return { error: "specify a single mode (disable | revert)" };
-      out2.mode = a === "revert" ? "off" : a;
-    } else if (a?.startsWith("-")) {
-      return { error: `unknown flag: ${a}` };
-    } else if (a) {
-      return { error: `unknown argument: ${a} (expected 'disable' or 'revert')` };
-    }
-  }
-  return out2;
-}
 function printHelp7() {
   console.log(
     [
-      "memlin managed-memory \u2014 hand your agent's native memory to Memlin",
+      "memlin manage-memory \u2014 let Memlin manage your agent's memory",
       "",
-      "This toggles CLAUDE CODE's built-in auto-memory. It NEVER touches Memlin \u2014",
-      "Memlin stays on and is your system of record either way.",
+      "This makes Memlin your single memory store by turning the EDITOR's built-in",
+      "native auto-memory on/off. It NEVER touches Memlin \u2014 Memlin stays on either way.",
       "",
       "Usage:",
-      "  memlin managed-memory            Show current state",
-      "  memlin managed-memory --status   Show current state",
-      "  memlin managed-memory disable    Turn OFF Claude Code's native auto-memory (hand to Memlin)",
-      "  memlin managed-memory revert     Turn it back ON (host default)   [alias: off]",
+      "  memlin manage-memory            Memlin takes over (editor native auto-memory off)",
+      "  memlin manage-memory --status   Show current state, change nothing",
+      "  memlin manage-memory --revert   Hand memory back to the editor (native on)",
       "",
-      "Disabling only stops Claude Code from keeping its own copy \u2014 Memlin keeps",
-      "capturing, and everything Memlin stores is fully exportable (`memlin pull`, or",
-      "Settings \u2192 Export memory). Reverse anytime with `memlin managed-memory revert`."
+      "Turning the editor's native memory off only stops it from keeping a redundant",
+      "copy \u2014 Memlin keeps capturing, and everything it stores is fully exportable",
+      "(`memlin pull`, or Settings \u2192 Export memory). Always reversible."
     ].join("\n")
   );
 }
-async function main24() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs7(argv);
-  if ("error" in parsed) {
-    console.error(`memlin managed-memory: ${parsed.error}`);
-    printHelp7();
-    process.exit(2);
-  }
-  if (parsed.help) {
-    printHelp7();
-    process.exit(0);
-  }
+async function runManageMemory(action) {
   const paths = defaultUserSettingsPaths();
   const policy = await fetchOrgPolicy();
   function printPolicy() {
     if (policy === "required") {
-      console.log("  Org policy: REQUIRED \u2014 your workspace asks that native auto-memory stay off.");
+      console.log("  Org policy: REQUIRED \u2014 your workspace asks that Memlin manage memory.");
     } else if (policy === "recommended") {
-      console.log("  Org policy: recommended \u2014 your workspace suggests handing memory to Memlin.");
+      console.log("  Org policy: recommended \u2014 your workspace suggests letting Memlin manage memory.");
     }
   }
-  if (!parsed.mode || parsed.status) {
+  if (action === "status") {
     const settings = await readClaudeUserSettings(paths);
     const presence = inspectManagedMemory(settings);
     if (presence.autoMemoryDisabled) {
-      console.log("Claude Code's native auto-memory: OFF (handed to Memlin).");
-      console.log("  Memlin stays on as your system of record. Revert: memlin managed-memory revert");
+      console.log("Memory: managed by Memlin \u2713  (the editor's native auto-memory is off).");
+      console.log("  Hand it back to the editor: memlin manage-memory --revert");
     } else if (presence.autoMemoryConfigured) {
-      console.log("Claude Code's native auto-memory: explicitly ON in settings.json.");
-      console.log("  Hand it to Memlin (Memlin stays on too): memlin managed-memory disable");
+      console.log("Memory: managed by the editor (its native auto-memory is explicitly ON).");
+      console.log("  Let Memlin manage it: memlin manage-memory");
     } else {
-      console.log("Claude Code's native auto-memory: host default (on).");
-      console.log("  Hand it to Memlin (Memlin stays on too): memlin managed-memory disable");
+      console.log("Memory: managed by the editor (native auto-memory is on by default).");
+      console.log("  Let Memlin manage it: memlin manage-memory");
     }
     if (policy === "required" && !presence.autoMemoryDisabled) {
-      console.log("  \u26A0 Native memory is still ON but your org policy is REQUIRED \u2014 run `disable`.");
+      console.log("  \u26A0 Org policy is REQUIRED \u2014 run `memlin manage-memory` to comply.");
     }
     printPolicy();
     console.log(`  Settings file: ${paths.settingsFile}`);
     return;
   }
-  if (parsed.mode === "off" && policy === "required") {
-    console.log("\u26A0 Your org policy is REQUIRED (native auto-memory should stay off).");
-    console.log("  Reverting re-enables it against that policy. Continuing as requested.");
+  if (action === "revert" && policy === "required") {
+    console.log("\u26A0 Your org policy is REQUIRED (Memlin should manage memory).");
+    console.log("  Handing it back to the editor goes against that policy. Continuing as requested.");
   }
-  const result = await applyManagedMemoryMode(parsed.mode, paths);
+  const mode = action === "manage" ? "disable" : "off";
+  const result = await applyManagedMemoryMode(mode, paths);
   if (result.status === "failed") {
-    console.error(`memlin managed-memory: ${result.detail}`);
+    console.error(`memlin manage-memory: ${result.detail}`);
     console.error(`  (settings file: ${result.settingsFile})`);
     process.exit(1);
   }
-  console.log(result.detail);
-  console.log(`  ${result.status === "applied" ? "wrote" : "unchanged"}: ${result.settingsFile}`);
-  if (parsed.mode === "disable") {
-    console.log("");
-    console.log("\u2713 Turned off CLAUDE CODE's native auto-memory \u2014 this did NOT touch Memlin.");
-    console.log("  Memlin stays on and is now your system of record; you lose nothing.");
-    console.log("  Your memory stays fully exportable: `memlin pull`, or Settings \u2192 Export memory.");
-    console.log("  Restart the agent for the change to take effect.");
-    console.log("  Reverse anytime: memlin managed-memory revert");
+  if (action === "manage") {
+    console.log("\u2713 Memlin now manages your memory.");
+    console.log("  The editor's native auto-memory is OFF \u2014 this did NOT change Memlin; it stays");
+    console.log("  on as your single store and keeps capturing. You lose nothing: fully exportable");
+    console.log("  (`memlin pull`, or Settings \u2192 Export memory). Restart the agent to apply.");
+    console.log("  Hand it back anytime: memlin manage-memory --revert");
+  } else {
+    console.log("\u2713 Memory handed back to the editor \u2014 its native auto-memory is ON again.");
+    console.log("  Memlin still works; it just no longer manages the native toggle.");
+    console.log("  Let Memlin manage it again: memlin manage-memory");
   }
+  console.log(`  ${result.status === "applied" ? "wrote" : "unchanged"}: ${result.settingsFile}`);
 }
-var init_managed_memory = __esm({
-  "packages/plugin-core/src/cli/managed-memory.ts"() {
+function parseAction(argv) {
+  let action = "manage";
+  for (const a of argv) {
+    if (a === "--help" || a === "-h") return "help";
+    else if (a === "--status" || a === "status") action = "status";
+    else if (a === "--revert" || a === "--off" || a === "revert" || a === "off") action = "revert";
+    else if (a === "on" || a === "manage") action = "manage";
+    else if (a?.startsWith("-")) return { error: `unknown flag: ${a}` };
+    else if (a) return { error: `unknown argument: ${a}` };
+  }
+  return action;
+}
+async function main24() {
+  const parsed = parseAction(process.argv.slice(2));
+  if (parsed === "help") {
+    printHelp7();
+    process.exit(0);
+  }
+  if (typeof parsed === "object") {
+    console.error(`memlin manage-memory: ${parsed.error}`);
+    printHelp7();
+    process.exit(2);
+  }
+  await runManageMemory(parsed);
+}
+var init_manage_memory = __esm({
+  "packages/plugin-core/src/cli/manage-memory.ts"() {
     "use strict";
     init_plugin_install();
     init_client();
     main24().catch((err2) => {
+      console.error("memlin manage-memory failed:", err2 instanceof Error ? err2.message : err2);
+      process.exit(1);
+    });
+  }
+});
+
+// packages/plugin-core/src/cli/managed-memory.ts
+var managed_memory_exports = {};
+async function main25() {
+  const argv = process.argv.slice(2);
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log("`memlin managed-memory` is now `memlin manage-memory`.");
+    console.log("Run: memlin manage-memory --help");
+    process.exit(0);
+  }
+  let action = "status";
+  if (argv.includes("disable")) action = "manage";
+  else if (argv.includes("off") || argv.includes("revert")) action = "revert";
+  await runManageMemory(action);
+}
+var init_managed_memory = __esm({
+  "packages/plugin-core/src/cli/managed-memory.ts"() {
+    "use strict";
+    init_manage_memory();
+    main25().catch((err2) => {
       console.error("memlin managed-memory failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14777,7 +14802,7 @@ function nativeMemoryDirCandidates(cwd) {
   }
   return out2;
 }
-async function main25() {
+async function main26() {
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
@@ -14837,15 +14862,15 @@ async function main25() {
   console.log(
     `Ingested: ${result.proposals_persisted} new, ${result.proposals_corroborated ?? 0} corroborated existing, ${result.proposals_auto_activated ?? 0} auto-activated (from ${result.entries_parsed} index entries, ${result.proposals_built} candidates).`
   );
-  console.log("Native auto-memory is now in Memlin \u2014 safe to turn it off:");
-  console.log("  memlin managed-memory disable");
+  console.log("Native auto-memory is now in Memlin \u2014 safe to let Memlin manage it:");
+  console.log("  memlin manage-memory");
 }
 var init_ingest_native_memory = __esm({
   "packages/plugin-core/src/cli/ingest-native-memory.ts"() {
     "use strict";
     init_client();
     init_project_resolver();
-    main25().catch((err2) => {
+    main26().catch((err2) => {
       console.error("memlin ingest-native-memory failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14855,7 +14880,7 @@ var init_ingest_native_memory = __esm({
 // packages/plugin-core/src/cli/attach-path.ts
 var attach_path_exports = {};
 import path26 from "node:path";
-function parseArgs8(argv) {
+function parseArgs7(argv) {
   const out2 = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -14893,8 +14918,8 @@ function printHelp8() {
     ].join("\n")
   );
 }
-async function main26() {
-  const parsed = parseArgs8(process.argv.slice(2));
+async function main27() {
+  const parsed = parseArgs7(process.argv.slice(2));
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp8();
@@ -14986,7 +15011,7 @@ var init_attach_path = __esm({
     init_project_resolver();
     init_workspace_binding();
     init_sibling_detect();
-    main26().catch((err2) => {
+    main27().catch((err2) => {
       console.error("memlin attach-path failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -14995,7 +15020,7 @@ var init_attach_path = __esm({
 
 // packages/plugin-core/src/cli/audit-replay.ts
 var audit_replay_exports = {};
-function parseArgs9(argv) {
+function parseArgs8(argv) {
   const positional = [];
   for (const a of argv) {
     if (a === "--help" || a === "-h") return { error: "help" };
@@ -15050,8 +15075,8 @@ function renderItem2(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main27() {
-  const parsed = parseArgs9(argvAsSlashArgs());
+async function main28() {
+  const parsed = parseArgs8(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp9();
@@ -15133,7 +15158,7 @@ var init_audit_replay = __esm({
     "use strict";
     init_client();
     init_args();
-    main27().catch((err2) => {
+    main28().catch((err2) => {
       console.error("memlin audit replay failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -15142,7 +15167,7 @@ var init_audit_replay = __esm({
 
 // packages/plugin-core/src/cli/audit-explain.ts
 var audit_explain_exports = {};
-function parseArgs10(argv) {
+function parseArgs9(argv) {
   const positional = [];
   for (const a of argv) {
     if (a === "--help" || a === "-h") return { error: "help" };
@@ -15211,8 +15236,8 @@ function renderItem3(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main28() {
-  const parsed = parseArgs10(argvAsSlashArgs());
+async function main29() {
+  const parsed = parseArgs9(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp10();
@@ -15286,7 +15311,7 @@ var init_audit_explain = __esm({
     "use strict";
     init_client();
     init_args();
-    main28().catch((err2) => {
+    main29().catch((err2) => {
       console.error("memlin audit explain failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -15295,7 +15320,7 @@ var init_audit_explain = __esm({
 
 // packages/plugin-core/src/cli/actions-list.ts
 var actions_list_exports = {};
-function parseArgs11(argv) {
+function parseArgs10(argv) {
   let filter;
   let limit;
   let json = false;
@@ -15355,8 +15380,8 @@ function renderRow(a) {
     `  invoke:       POST ${a.invoke_url}  body={"input":${inputSummary}}`
   ].join("\n");
 }
-async function main29() {
-  const parsed = parseArgs11(argvAsSlashArgs());
+async function main30() {
+  const parsed = parseArgs10(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp11();
@@ -15400,7 +15425,7 @@ var init_actions_list = __esm({
     "use strict";
     init_client();
     init_args();
-    main29().catch((err2) => {
+    main30().catch((err2) => {
       console.error("memlin actions list failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -15410,7 +15435,7 @@ var init_actions_list = __esm({
 // packages/plugin-core/src/cli/actions-execute.ts
 var actions_execute_exports = {};
 import { readFileSync as readFileSync2 } from "node:fs";
-function parseArgs12(argv) {
+function parseArgs11(argv) {
   const positional = [];
   let inputJson = null;
   let stdinFlag = false;
@@ -15474,8 +15499,8 @@ function printHelp12() {
     ].join("\n")
   );
 }
-async function main30() {
-  const parsed = parseArgs12(argvAsSlashArgs());
+async function main31() {
+  const parsed = parseArgs11(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp12();
@@ -15536,7 +15561,7 @@ var init_actions_execute = __esm({
     "use strict";
     init_client();
     init_args();
-    main30().catch((err2) => {
+    main31().catch((err2) => {
       console.error("memlin actions execute failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -15561,7 +15586,7 @@ function printHelp13() {
     ].join("\n")
   );
 }
-async function main31() {
+async function main32() {
   const argv = argvAsSlashArgs();
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp13();
@@ -15682,7 +15707,7 @@ var init_prompt_ci = __esm({
     init_local_scan();
     init_state();
     init_args();
-    main31().catch((err2) => {
+    main32().catch((err2) => {
       console.error("memlin prompt-ci failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
     });
@@ -261105,7 +261130,7 @@ import path37 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { existsSync as existsSync8 } from "node:fs";
 import { gzipSync } from "node:zlib";
-function parseArgs13(argv) {
+function parseArgs12(argv) {
   const out2 = {};
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -261171,8 +261196,8 @@ function configureBundledWasmDir() {
   } catch {
   }
 }
-async function main32() {
-  const args2 = parseArgs13(process.argv);
+async function main33() {
+  const args2 = parseArgs12(process.argv);
   if (args2.help) {
     printHelp14();
     return;
@@ -261286,7 +261311,7 @@ var init_scan = __esm({
     init_auth();
     init_project_resolver();
     init_run_scan();
-    main32().catch((err2) => {
+    main33().catch((err2) => {
       console.error(`memlin: ${err2 instanceof Error ? err2.stack ?? err2.message : String(err2)}`);
       process.exit(2);
     });
@@ -261319,7 +261344,9 @@ var RUN = {
   revert: () => Promise.resolve().then(() => (init_revert(), revert_exports)),
   pin: () => Promise.resolve().then(() => (init_pin(), pin_exports)),
   "add-project": () => Promise.resolve().then(() => (init_add_project(), add_project_exports)),
+  "manage-memory": () => Promise.resolve().then(() => (init_manage_memory(), manage_memory_exports)),
   "managed-memory": () => Promise.resolve().then(() => (init_managed_memory(), managed_memory_exports)),
+  // back-compat alias
   "ingest-native-memory": () => Promise.resolve().then(() => (init_ingest_native_memory(), ingest_native_memory_exports)),
   "attach-path": () => Promise.resolve().then(() => (init_attach_path(), attach_path_exports)),
   "audit-replay": () => Promise.resolve().then(() => (init_audit_replay(), audit_replay_exports)),
@@ -261329,7 +261356,7 @@ var RUN = {
   "prompt-ci": () => Promise.resolve().then(() => (init_prompt_ci(), prompt_ci_exports)),
   scan: () => Promise.resolve().then(() => (init_scan(), scan_exports))
 };
-async function main33() {
+async function main34() {
   let sub = process.argv[2];
   if (sub === "audit") {
     const action = process.argv[3];
@@ -261351,7 +261378,7 @@ async function main33() {
   process.argv.splice(2, 1);
   await run2();
 }
-main33().catch((err2) => {
+main34().catch((err2) => {
   process.stderr.write(`memlin: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
   process.exit(1);

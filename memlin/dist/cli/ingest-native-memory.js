@@ -239,7 +239,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.37";
+  cachedAgentVersion = "0.2.38";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -969,8 +969,8 @@ async function main() {
   console.log(
     `Ingested: ${result.proposals_persisted} new, ${result.proposals_corroborated ?? 0} corroborated existing, ${result.proposals_auto_activated ?? 0} auto-activated (from ${result.entries_parsed} index entries, ${result.proposals_built} candidates).`
   );
-  console.log("Native auto-memory is now in Memlin \u2014 safe to turn it off:");
-  console.log("  memlin managed-memory disable");
+  console.log("Native auto-memory is now in Memlin \u2014 safe to let Memlin manage it:");
+  console.log("  memlin manage-memory");
 }
 main().catch((err) => {
   console.error("memlin ingest-native-memory failed:", err instanceof Error ? err.message : err);
