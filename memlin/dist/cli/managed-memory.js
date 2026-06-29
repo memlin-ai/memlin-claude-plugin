@@ -292,7 +292,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.36";
+  cachedAgentVersion = "0.2.37";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -857,13 +857,13 @@ function parseArgs(argv) {
       out.help = true;
     } else if (a === "--status") {
       out.status = true;
-    } else if (a === "disable" || a === "off") {
-      if (out.mode) return { error: "specify a single mode (disable | off)" };
-      out.mode = a;
+    } else if (a === "disable" || a === "off" || a === "revert") {
+      if (out.mode) return { error: "specify a single mode (disable | revert)" };
+      out.mode = a === "revert" ? "off" : a;
     } else if (a?.startsWith("-")) {
       return { error: `unknown flag: ${a}` };
     } else if (a) {
-      return { error: `unknown argument: ${a} (expected 'disable' or 'off')` };
+      return { error: `unknown argument: ${a} (expected 'disable' or 'revert')` };
     }
   }
   return out;
@@ -871,17 +871,20 @@ function parseArgs(argv) {
 function printHelp() {
   console.log(
     [
-      "memlin managed-memory \u2014 hand memory to Memlin by turning off native auto-memory",
+      "memlin managed-memory \u2014 hand your agent's native memory to Memlin",
+      "",
+      "This toggles CLAUDE CODE's built-in auto-memory. It NEVER touches Memlin \u2014",
+      "Memlin stays on and is your system of record either way.",
       "",
       "Usage:",
       "  memlin managed-memory            Show current state",
       "  memlin managed-memory --status   Show current state",
-      "  memlin managed-memory disable    Turn off native auto-memory (autoMemoryEnabled: false)",
-      "  memlin managed-memory off        Revert to the host default",
+      "  memlin managed-memory disable    Turn OFF Claude Code's native auto-memory (hand to Memlin)",
+      "  memlin managed-memory revert     Turn it back ON (host default)   [alias: off]",
       "",
-      "Only stops THIS host from keeping its own copy \u2014 Memlin keeps capturing,",
-      "and everything Memlin stores is fully exportable (`memlin pull`, or",
-      "Settings \u2192 Export memory). Reverse anytime with `memlin managed-memory off`."
+      "Disabling only stops Claude Code from keeping its own copy \u2014 Memlin keeps",
+      "capturing, and everything Memlin stores is fully exportable (`memlin pull`, or",
+      "Settings \u2192 Export memory). Reverse anytime with `memlin managed-memory revert`."
     ].join("\n")
   );
 }
@@ -910,14 +913,14 @@ async function main() {
     const settings = await readClaudeUserSettings(paths);
     const presence = inspectManagedMemory(settings);
     if (presence.autoMemoryDisabled) {
-      console.log("Native auto-memory: OFF (handed to Memlin).");
-      console.log("  Revert with: memlin managed-memory off");
+      console.log("Claude Code's native auto-memory: OFF (handed to Memlin).");
+      console.log("  Memlin stays on as your system of record. Revert: memlin managed-memory revert");
     } else if (presence.autoMemoryConfigured) {
-      console.log("Native auto-memory: explicitly ON in settings.json.");
-      console.log("  Hand it to Memlin with: memlin managed-memory disable");
+      console.log("Claude Code's native auto-memory: explicitly ON in settings.json.");
+      console.log("  Hand it to Memlin (Memlin stays on too): memlin managed-memory disable");
     } else {
-      console.log("Native auto-memory: host default (on for Claude Code).");
-      console.log("  Hand it to Memlin with: memlin managed-memory disable");
+      console.log("Claude Code's native auto-memory: host default (on).");
+      console.log("  Hand it to Memlin (Memlin stays on too): memlin managed-memory disable");
     }
     if (policy === "required" && !presence.autoMemoryDisabled) {
       console.log("  \u26A0 Native memory is still ON but your org policy is REQUIRED \u2014 run `disable`.");
@@ -940,10 +943,11 @@ async function main() {
   console.log(`  ${result.status === "applied" ? "wrote" : "unchanged"}: ${result.settingsFile}`);
   if (parsed.mode === "disable") {
     console.log("");
-    console.log("Memlin keeps capturing \u2014 you lose nothing. Your memory stays fully");
-    console.log("exportable: `memlin pull`, or Settings \u2192 Export memory in the web app.");
-    console.log("Restart the agent for the change to take effect.");
-    console.log("Reverse anytime: memlin managed-memory off");
+    console.log("\u2713 Turned off CLAUDE CODE's native auto-memory \u2014 this did NOT touch Memlin.");
+    console.log("  Memlin stays on and is now your system of record; you lose nothing.");
+    console.log("  Your memory stays fully exportable: `memlin pull`, or Settings \u2192 Export memory.");
+    console.log("  Restart the agent for the change to take effect.");
+    console.log("  Reverse anytime: memlin managed-memory revert");
   }
 }
 main().catch((err) => {

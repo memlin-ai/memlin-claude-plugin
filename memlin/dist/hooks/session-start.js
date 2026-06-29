@@ -577,7 +577,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.36";
+  cachedAgentVersion = "0.2.37";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -1387,38 +1387,45 @@ function isWorkspaceActive(input) {
 // packages/plugin-core/dist/session-banner.js
 init_state();
 import { fileURLToPath as fileURLToPath2 } from "node:url";
-var GITHUB_API = "https://api.github.com/repos/memlin-ai/memlin-claude-plugin/commits/main";
-var SHORT_SHA_LEN = 12;
+var VERSION_URL = "https://raw.githubusercontent.com/memlin-ai/memlin-claude-plugin/main/.claude-plugin/marketplace.json";
 var FRESHNESS_TTL_MS = 6 * 60 * 60 * 1e3;
-function detectLocalPluginSha() {
+function detectLocalPluginVersion() {
   try {
     const filePath = fileURLToPath2(import.meta.url);
-    const match = filePath.match(/\/memlin-ai\/memlin\/([0-9a-f]{8,40})\//i);
-    return match ? match[1].slice(0, SHORT_SHA_LEN) : null;
+    const match = filePath.match(/\/memlin-ai\/memlin\/(\d+\.\d+\.\d+)\//);
+    return match ? match[1] : null;
   } catch {
     return null;
   }
 }
-async function getLatestMainSha(state) {
+function isOlderVersion(a, b) {
+  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] ?? 0;
+    const y = pb[i] ?? 0;
+    if (x < y) return true;
+    if (x > y) return false;
+  }
+  return false;
+}
+async function getLatestPublishedVersion(state) {
   const cache = state.plugin_version;
   if (cache && Date.now() - cache.checked_at < FRESHNESS_TTL_MS) {
-    return cache.latest_main_sha;
+    return cache.latest_version ?? null;
   }
   try {
-    const res = await fetch(GITHUB_API, {
-      headers: { Accept: "application/vnd.github+json" }
-    });
-    if (!res.ok) return cache?.latest_main_sha ?? null;
+    const res = await fetch(VERSION_URL, { headers: { Accept: "application/json" } });
+    if (!res.ok) return cache?.latest_version ?? null;
     const json = await res.json();
-    if (typeof json.sha !== "string") return cache?.latest_main_sha ?? null;
-    state.plugin_version = {
-      latest_main_sha: json.sha.slice(0, SHORT_SHA_LEN),
-      checked_at: Date.now()
-    };
+    const v = json.plugins?.[0]?.version;
+    if (typeof v !== "string") return cache?.latest_version ?? null;
+    state.plugin_version = { latest_version: v, checked_at: Date.now() };
     await writeState(state);
-    return state.plugin_version.latest_main_sha;
+    return v;
   } catch {
-    return cache?.latest_main_sha ?? null;
+    return cache?.latest_version ?? null;
   }
 }
 function formatBanner(opts) {
@@ -1434,22 +1441,23 @@ function formatBanner(opts) {
       "Memlin: idle (this directory isn't a known Memlin project). Run /memlin-add-project to register it, or /memlin-link to pin it to an existing project."
     );
   }
-  if (opts.localSha && opts.latestSha && opts.localSha !== opts.latestSha) {
+  if (opts.localVersion && opts.latestVersion && isOlderVersion(opts.localVersion, opts.latestVersion)) {
+    lines.push(`Memlin: plugin update available \u2014 ${opts.localVersion} \u2192 ${opts.latestVersion}`);
     lines.push(
-      `Memlin: plugin update available \u2014 run /plugin update memlin (you: ${opts.localSha}, latest: ${opts.latestSha})`
+      "  Update: /plugin marketplace update memlin-ai  then  /plugin update memlin  (restart after)"
     );
   }
   return lines.join("\n");
 }
 async function buildSessionBanner(binding, opts = { authenticated: true }) {
   const state = await readState();
-  const localSha = detectLocalPluginSha();
-  const latestSha = localSha ? await getLatestMainSha(state) : null;
+  const localVersion = detectLocalPluginVersion();
+  const latestVersion = localVersion ? await getLatestPublishedVersion(state) : null;
   return formatBanner({
     binding,
     authenticated: opts.authenticated,
-    localSha,
-    latestSha,
+    localVersion,
+    latestVersion,
     hazardWarning: opts.hazardWarning ?? null
   });
 }
