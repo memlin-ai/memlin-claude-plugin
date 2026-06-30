@@ -8006,6 +8006,20 @@ var init_redact = __esm({
         description: "Slack bot/user/app token (xoxb-/xoxp-/xoxa-/xoxr-)",
         regex: /xox[bpar]-[A-Za-z0-9-]{10,}/g
       },
+      // ---------- Supabase ----------
+      {
+        name: "supabase-access-token",
+        description: "Supabase personal / Management-API token (sbp_\u2026)",
+        // The CLI / Management-API token shape — sbp_ + a long body. This is the
+        // exact shape that leaked into a transcript and went undetected before this
+        // rule existed. The project anon/service keys are JWTs (caught below).
+        regex: /\bsbp_[A-Za-z0-9]{20,}\b/g
+      },
+      {
+        name: "supabase-secret-key",
+        description: "Supabase secret API key (sb_secret_\u2026)",
+        regex: /\bsb_secret_[A-Za-z0-9_-]{20,}\b/g
+      },
       // ---------- JWTs (catch-all for bearer-token leaks) ----------
       {
         name: "jwt",
@@ -8021,6 +8035,13 @@ var init_redact = __esm({
         throw new Error(`redact: pattern '${p.name}' must use the 'g' flag`);
       }
     }
+  }
+});
+
+// packages/shared/dist/sensitive-topics.js
+var init_sensitive_topics = __esm({
+  "packages/shared/dist/sensitive-topics.js"() {
+    "use strict";
   }
 });
 
@@ -8556,6 +8577,7 @@ var init_dist = __esm({
     init_brand_guidelines_import();
     init_git_remote();
     init_redact();
+    init_sensitive_topics();
     init_guardrails();
     init_action_metadata();
     init_task_classifier();
