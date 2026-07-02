@@ -408,6 +408,9 @@ function compileBundle(result, parsedTask, agent) {
             out.push("    # Read the PR before building anything under those paths.");
           }
         }
+        for (const p of w.proposals ?? []) {
+          out.push(`    # proposed (unreviewed) from this PR: "${p.title}" [${p.kind}]`);
+        }
       }
       out.push("");
     }
@@ -429,13 +432,15 @@ function compileBundle(result, parsedTask, agent) {
     if (concurrent.length > 0) {
       out.push("## CONCURRENT WORK");
       out.push("");
-      out.push(
-        `# ${concurrent.length} other session(s) resolved on this project in the last 20 min \u2014`
-      );
-      out.push("# co-activity, not contention: check the task before assuming overlap.");
+      const live = concurrent.filter((e) => (e.presence ?? "live") === "live");
+      if (live.length > 0) {
+        out.push(`# ${live.length} other session(s) resolved on this project in the last 20 min \u2014`);
+        out.push("# co-activity, not contention: check the task before assuming overlap.");
+      }
       for (const e of concurrent) {
         const where = e.component ? `component "${e.component}"` : "project-wide";
-        out.push(`  - ${where} \xB7 ${attribution(e)}${e.minutes_ago}m ago \xB7 task: ${e.task}`);
+        const cont = e.presence === "open_pr" && e.open_pr_number ? ` \xB7 continues in OPEN PR #${e.open_pr_number}` : "";
+        out.push(`  - ${where} \xB7 ${attribution(e)}${e.minutes_ago}m ago${cont} \xB7 task: ${e.task}`);
       }
       out.push("");
     }

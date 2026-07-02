@@ -3757,7 +3757,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.38";
+  cachedAgentVersion = "0.2.39";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -9048,6 +9048,19 @@ function repoRelativePath(absPath, cwd) {
   }
   return path8.basename(absPath);
 }
+function readGitBranch(cwd) {
+  try {
+    const branch = execSync2("git rev-parse --abbrev-ref HEAD", {
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+      timeout: 250
+    }).trim();
+    return branch && branch !== "HEAD" ? branch : null;
+  } catch {
+    return null;
+  }
+}
 async function recordEditActivity(ctx, payload) {
   try {
     const rawPaths = editedPathsFromHook(payload.tool_name, payload.tool_input);
@@ -9067,13 +9080,16 @@ async function recordEditActivity(ctx, payload) {
         metadata: {
           project_id: resolved.project_id,
           session_id: payload.session_id ?? null,
-          paths: relPaths
+          paths: relPaths,
+          git_branch: readGitBranch(cwd)
         }
       },
       accountOverride ? { accountId: accountOverride } : {}
     );
   } catch (err) {
-    log(`edit-activity: record failed (ignored): ${err instanceof Error ? err.message : String(err)}`);
+    log(
+      `edit-activity: record failed (ignored): ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
 
