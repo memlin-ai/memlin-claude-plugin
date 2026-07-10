@@ -5,8 +5,8 @@ const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
 import { spawn as spawn2 } from "node:child_process";
 import { promises as fs3 } from "node:fs";
-import path3 from "node:path";
-import os3 from "node:os";
+import path4 from "node:path";
+import os4 from "node:os";
 import { fileURLToPath } from "node:url";
 
 // packages/plugin-core/dist/state.js
@@ -30,6 +30,7 @@ async function writeState(state) {
   await fs.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
   await fs.rename(tmp, STATE_FILE);
 }
+var LOCK_DIR = `${STATE_FILE}.lock`;
 
 // packages/plugin-core/dist/continuity.js
 var CONTINUITY_WINDOW_MS = 10 * 60 * 1e3;
@@ -222,10 +223,130 @@ async function takeCorrectionNotice(currentSessionId) {
   ].join("\n");
 }
 
+// packages/plugin-core/dist/companion-client.js
+import http from "node:http";
+import os3 from "node:os";
+import path3 from "node:path";
+var COMPANION_PROTOCOL = 1;
+var MIN_COMPANION_PROTOCOL = 1;
+var MAX_COMPANION_PROTOCOL = 1;
+var NO_COMPANION_ENV = "MEMLIN_NO_DAEMON";
+var IS_COMPANION_ENV = "MEMLIN_DAEMON";
+var COMPANION_SOCKET_ENV = "MEMLIN_COMPANION_SOCKET";
+function companionSocketPath(env = process.env) {
+  const override = env[COMPANION_SOCKET_ENV];
+  if (override) return override;
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\memlin-companion-${os3.userInfo().username}`;
+  }
+  return path3.join(os3.homedir(), ".config", "memlin", "run", "companion.sock");
+}
+var CONNECT_TIMEOUT_MS = 150;
+var DEFAULT_CALL_TIMEOUT_MS = 1e3;
+var CALL_TIMEOUTS = {
+  "workspace.resolve": 2e3,
+  "sync.now": 5e3,
+  "login.start": 1e4
+};
+var socketDeadUntil = 0;
+var SOCKET_DEAD_TTL_MS = 5e3;
+function companionDisabled(env = process.env) {
+  const off = env[NO_COMPANION_ENV];
+  if (off === "1" || off === "true" || off === "yes") return true;
+  return env[IS_COMPANION_ENV] === "1";
+}
+async function companionRequest(method, body, opts = {}) {
+  const env = opts.env ?? process.env;
+  if (companionDisabled(env)) return null;
+  if (Date.now() < socketDeadUntil) return null;
+  const timeoutMs = opts.timeoutMs ?? CALL_TIMEOUTS[method] ?? DEFAULT_CALL_TIMEOUT_MS;
+  const payload = JSON.stringify(body ?? {});
+  return new Promise((resolve) => {
+    let settled = false;
+    const fail = (markDead) => {
+      if (settled) return;
+      settled = true;
+      if (markDead) socketDeadUntil = Date.now() + SOCKET_DEAD_TTL_MS;
+      resolve(null);
+    };
+    const req = http.request(
+      {
+        socketPath: companionSocketPath(env),
+        path: `/v1/${method}`,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(payload),
+          "memlin-client-protocol": String(COMPANION_PROTOCOL)
+        },
+        // Overall call budget; the connect phase gets its own tighter cap
+        // below via the socket timeout before the connection exists.
+        timeout: timeoutMs
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          if (settled) return;
+          settled = true;
+          if (res.statusCode !== 200) return resolve(null);
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on("error", () => fail(false));
+      }
+    );
+    const connectTimer = setTimeout(() => {
+      req.destroy();
+      fail(true);
+    }, CONNECT_TIMEOUT_MS);
+    connectTimer.unref?.();
+    req.on("socket", (socket) => {
+      socket.once("connect", () => clearTimeout(connectTimer));
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      fail(false);
+    });
+    req.on("error", () => fail(true));
+    req.end(payload);
+  });
+}
+async function companionStatus() {
+  const status = await companionRequest("status.get", {});
+  if (!status) return null;
+  if (status.protocol < MIN_COMPANION_PROTOCOL || status.protocol > MAX_COMPANION_PROTOCOL) {
+    return null;
+  }
+  return status;
+}
+function isCompanionHealthyForDelegation(status) {
+  if (!status) return false;
+  if (status.auth.state !== "ok") return false;
+  if (status.sync.mode === "realtime") return true;
+  if (status.sync.mode !== "polling") return false;
+  if (!status.sync.last_delta_at) return false;
+  const age = Date.now() - Date.parse(status.sync.last_delta_at);
+  return Number.isFinite(age) && age < 5 * 6e4;
+}
+var USE_COMPANION_ENV = "MEMLIN_USE_DAEMON";
+function companionDelegationEnabled(env = process.env) {
+  const v = env[USE_COMPANION_ENV];
+  return v === "1" || v === "true" || v === "yes";
+}
+async function companionForDelegation() {
+  if (!companionDelegationEnabled()) return null;
+  const status = await companionStatus();
+  return isCompanionHealthyForDelegation(status) ? status : null;
+}
+
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
-var hookDir = path3.dirname(fileURLToPath(import.meta.url));
-var RESOLVE_BIN = path3.resolve(hookDir, "../cli/resolve.js");
-var PULL_PLANS_BIN = path3.resolve(hookDir, "../cli/pull-plans.js");
+var hookDir = path4.dirname(fileURLToPath(import.meta.url));
+var RESOLVE_BIN = path4.resolve(hookDir, "../cli/resolve.js");
+var PULL_PLANS_BIN = path4.resolve(hookDir, "../cli/pull-plans.js");
 function firePlanSync(cwd) {
   try {
     const child = spawn2(process.execPath, [PULL_PLANS_BIN], {
@@ -256,7 +377,7 @@ function isTrivial(prompt) {
 async function readPersistedTokenFreshness() {
   try {
     const raw = await fs3.readFile(
-      path3.join(os3.homedir(), ".config", "memlin", "token.json"),
+      path4.join(os4.homedir(), ".config", "memlin", "token.json"),
       "utf8"
     );
     const t = JSON.parse(raw);
@@ -316,7 +437,8 @@ async function main() {
   } catch {
   }
   const lateBundle = await takePendingBundle(cwd, "claude-code");
-  firePlanSync(cwd);
+  const companion = await companionForDelegation().catch(() => null);
+  if (!companion) firePlanSync(cwd);
   const outcome = await runResolveWithBudget({
     resolveBin: RESOLVE_BIN,
     task: prompt,

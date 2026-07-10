@@ -12,15 +12,183 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// packages/plugin-core/dist/companion-client.js
+var companion_client_exports = {};
+__export(companion_client_exports, {
+  COMPANION_PROTOCOL: () => COMPANION_PROTOCOL,
+  COMPANION_SOCKET_ENV: () => COMPANION_SOCKET_ENV,
+  IS_COMPANION_ENV: () => IS_COMPANION_ENV,
+  MAX_COMPANION_PROTOCOL: () => MAX_COMPANION_PROTOCOL,
+  MIN_COMPANION_PROTOCOL: () => MIN_COMPANION_PROTOCOL,
+  NO_COMPANION_ENV: () => NO_COMPANION_ENV,
+  USE_COMPANION_ENV: () => USE_COMPANION_ENV,
+  companionDelegationEnabled: () => companionDelegationEnabled,
+  companionForDelegation: () => companionForDelegation,
+  companionGetToken: () => companionGetToken,
+  companionReportSession: () => companionReportSession,
+  companionRequest: () => companionRequest,
+  companionResolveWorkspace: () => companionResolveWorkspace,
+  companionRunDir: () => companionRunDir,
+  companionSocketPath: () => companionSocketPath,
+  companionStatus: () => companionStatus,
+  companionSyncNow: () => companionSyncNow,
+  isCompanionHealthyForDelegation: () => isCompanionHealthyForDelegation,
+  resetCompanionClientCache: () => resetCompanionClientCache
+});
+import http from "node:http";
+import os from "node:os";
+import path from "node:path";
+function companionSocketPath(env = process.env) {
+  const override = env[COMPANION_SOCKET_ENV];
+  if (override) return override;
+  if (process.platform === "win32") {
+    return `\\\\.\\pipe\\memlin-companion-${os.userInfo().username}`;
+  }
+  return path.join(os.homedir(), ".config", "memlin", "run", "companion.sock");
+}
+function companionRunDir() {
+  return path.join(os.homedir(), ".config", "memlin", "run");
+}
+function companionDisabled(env = process.env) {
+  const off = env[NO_COMPANION_ENV];
+  if (off === "1" || off === "true" || off === "yes") return true;
+  return env[IS_COMPANION_ENV] === "1";
+}
+async function companionRequest(method, body, opts = {}) {
+  const env = opts.env ?? process.env;
+  if (companionDisabled(env)) return null;
+  if (Date.now() < socketDeadUntil) return null;
+  const timeoutMs = opts.timeoutMs ?? CALL_TIMEOUTS[method] ?? DEFAULT_CALL_TIMEOUT_MS;
+  const payload = JSON.stringify(body ?? {});
+  return new Promise((resolve) => {
+    let settled = false;
+    const fail = (markDead) => {
+      if (settled) return;
+      settled = true;
+      if (markDead) socketDeadUntil = Date.now() + SOCKET_DEAD_TTL_MS;
+      resolve(null);
+    };
+    const req = http.request(
+      {
+        socketPath: companionSocketPath(env),
+        path: `/v1/${method}`,
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(payload),
+          "memlin-client-protocol": String(COMPANION_PROTOCOL)
+        },
+        // Overall call budget; the connect phase gets its own tighter cap
+        // below via the socket timeout before the connection exists.
+        timeout: timeoutMs
+      },
+      (res) => {
+        const chunks = [];
+        res.on("data", (c) => chunks.push(c));
+        res.on("end", () => {
+          if (settled) return;
+          settled = true;
+          if (res.statusCode !== 200) return resolve(null);
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch {
+            resolve(null);
+          }
+        });
+        res.on("error", () => fail(false));
+      }
+    );
+    const connectTimer = setTimeout(() => {
+      req.destroy();
+      fail(true);
+    }, CONNECT_TIMEOUT_MS);
+    connectTimer.unref?.();
+    req.on("socket", (socket) => {
+      socket.once("connect", () => clearTimeout(connectTimer));
+    });
+    req.on("timeout", () => {
+      req.destroy();
+      fail(false);
+    });
+    req.on("error", () => fail(true));
+    req.end(payload);
+  });
+}
+async function companionStatus() {
+  const status = await companionRequest("status.get", {});
+  if (!status) return null;
+  if (status.protocol < MIN_COMPANION_PROTOCOL || status.protocol > MAX_COMPANION_PROTOCOL) {
+    return null;
+  }
+  return status;
+}
+async function companionGetToken() {
+  const token = await companionRequest("token.get", {});
+  if (!token || token.expires_at <= Date.now() + 6e4) return null;
+  return token;
+}
+async function companionResolveWorkspace(cwd) {
+  return companionRequest("workspace.resolve", { cwd });
+}
+async function companionSyncNow(req) {
+  return companionRequest("sync.now", req);
+}
+async function companionReportSession(req) {
+  return (await companionRequest("session.report", req))?.registered ?? false;
+}
+function isCompanionHealthyForDelegation(status) {
+  if (!status) return false;
+  if (status.auth.state !== "ok") return false;
+  if (status.sync.mode === "realtime") return true;
+  if (status.sync.mode !== "polling") return false;
+  if (!status.sync.last_delta_at) return false;
+  const age = Date.now() - Date.parse(status.sync.last_delta_at);
+  return Number.isFinite(age) && age < 5 * 6e4;
+}
+function companionDelegationEnabled(env = process.env) {
+  const v = env[USE_COMPANION_ENV];
+  return v === "1" || v === "true" || v === "yes";
+}
+async function companionForDelegation() {
+  if (!companionDelegationEnabled()) return null;
+  const status = await companionStatus();
+  return isCompanionHealthyForDelegation(status) ? status : null;
+}
+function resetCompanionClientCache() {
+  socketDeadUntil = 0;
+}
+var COMPANION_PROTOCOL, MIN_COMPANION_PROTOCOL, MAX_COMPANION_PROTOCOL, NO_COMPANION_ENV, IS_COMPANION_ENV, COMPANION_SOCKET_ENV, CONNECT_TIMEOUT_MS, DEFAULT_CALL_TIMEOUT_MS, CALL_TIMEOUTS, socketDeadUntil, SOCKET_DEAD_TTL_MS, USE_COMPANION_ENV;
+var init_companion_client = __esm({
+  "packages/plugin-core/dist/companion-client.js"() {
+    "use strict";
+    COMPANION_PROTOCOL = 1;
+    MIN_COMPANION_PROTOCOL = 1;
+    MAX_COMPANION_PROTOCOL = 1;
+    NO_COMPANION_ENV = "MEMLIN_NO_DAEMON";
+    IS_COMPANION_ENV = "MEMLIN_DAEMON";
+    COMPANION_SOCKET_ENV = "MEMLIN_COMPANION_SOCKET";
+    CONNECT_TIMEOUT_MS = 150;
+    DEFAULT_CALL_TIMEOUT_MS = 1e3;
+    CALL_TIMEOUTS = {
+      "workspace.resolve": 2e3,
+      "sync.now": 5e3,
+      "login.start": 1e4
+    };
+    socketDeadUntil = 0;
+    SOCKET_DEAD_TTL_MS = 5e3;
+    USE_COMPANION_ENV = "MEMLIN_USE_DAEMON";
+  }
+});
+
 // packages/plugin-core/dist/host.js
-import os2 from "node:os";
-import path2 from "node:path";
+import os3 from "node:os";
+import path3 from "node:path";
 function resolveHost() {
   const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
   const make = HOSTS[envHost];
   return (make ?? HOSTS["claude-code"])();
 }
-var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, HOSTS;
+var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, CompanionHost, HOSTS;
 var init_host = __esm({
   "packages/plugin-core/dist/host.js"() {
     "use strict";
@@ -35,37 +203,42 @@ var init_host = __esm({
         return this.home;
       }
       plansDir() {
-        return path2.join(this.home, "plans");
+        return path3.join(this.home, "plans");
       }
     };
     ClaudeCodeHost = class extends BaseHost {
       constructor() {
-        super("claude-code", path2.join(os2.homedir(), ".claude"));
+        super("claude-code", path3.join(os3.homedir(), ".claude"));
       }
     };
     CursorHost = class extends BaseHost {
       constructor() {
-        super("cursor", path2.join(os2.homedir(), ".config", "memlin"));
+        super("cursor", path3.join(os3.homedir(), ".config", "memlin"));
       }
     };
     CodexHost = class extends BaseHost {
       constructor() {
-        super("codex", path2.join(os2.homedir(), ".config", "memlin"));
+        super("codex", path3.join(os3.homedir(), ".config", "memlin"));
       }
     };
     WindsurfHost = class extends BaseHost {
       constructor() {
-        super("windsurf", path2.join(os2.homedir(), ".config", "memlin"));
+        super("windsurf", path3.join(os3.homedir(), ".config", "memlin"));
       }
     };
     AntigravityHost = class extends BaseHost {
       constructor() {
-        super("antigravity", path2.join(os2.homedir(), ".config", "memlin"));
+        super("antigravity", path3.join(os3.homedir(), ".config", "memlin"));
       }
     };
     VSCodeHost = class extends BaseHost {
       constructor() {
-        super("vscode", path2.join(os2.homedir(), ".config", "memlin"));
+        super("vscode", path3.join(os3.homedir(), ".config", "memlin"));
+      }
+    };
+    CompanionHost = class extends BaseHost {
+      constructor() {
+        super("companion", path3.join(os3.homedir(), ".config", "memlin"));
       }
     };
     HOSTS = {
@@ -74,15 +247,16 @@ var init_host = __esm({
       codex: () => new CodexHost(),
       windsurf: () => new WindsurfHost(),
       antigravity: () => new AntigravityHost(),
-      vscode: () => new VSCodeHost()
+      vscode: () => new VSCodeHost(),
+      companion: () => new CompanionHost()
     };
   }
 });
 
 // packages/plugin-core/dist/state.js
 import { promises as fs4 } from "node:fs";
-import path5 from "node:path";
-import os5 from "node:os";
+import path6 from "node:path";
+import os6 from "node:os";
 import crypto from "node:crypto";
 async function readState() {
   try {
@@ -93,20 +267,61 @@ async function readState() {
   }
 }
 async function writeState(state) {
-  await fs4.mkdir(path5.dirname(STATE_FILE), { recursive: true });
+  await fs4.mkdir(path6.dirname(STATE_FILE), { recursive: true });
   const tmp = `${STATE_FILE}.${process.pid}.tmp`;
   await fs4.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
   await fs4.rename(tmp, STATE_FILE);
 }
+async function acquireStateLock() {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (; ; ) {
+    try {
+      await fs4.mkdir(LOCK_DIR);
+      return true;
+    } catch {
+      try {
+        const stat = await fs4.stat(LOCK_DIR);
+        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+          await fs4.rmdir(LOCK_DIR).catch(() => {
+          });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+}
+async function releaseStateLock() {
+  await fs4.rmdir(LOCK_DIR).catch(() => {
+  });
+}
+async function updateState(mutate) {
+  const locked = await acquireStateLock();
+  try {
+    const state = await readState();
+    await mutate(state);
+    await writeState(state);
+    return state;
+  } finally {
+    if (locked) await releaseStateLock();
+  }
+}
 function hash(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
-var STATE_FILE, EMPTY;
+var STATE_FILE, EMPTY, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
 var init_state = __esm({
   "packages/plugin-core/dist/state.js"() {
     "use strict";
-    STATE_FILE = path5.join(os5.homedir(), ".config", "memlin", "state.json");
+    STATE_FILE = path6.join(os6.homedir(), ".config", "memlin", "state.json");
     EMPTY = { documents: {} };
+    LOCK_DIR = `${STATE_FILE}.lock`;
+    LOCK_STALE_MS = 2e3;
+    LOCK_WAIT_MS = 2e3;
+    LOCK_RETRY_MS = 50;
   }
 });
 
@@ -123,20 +338,21 @@ __export(plan_sync_exports, {
   stampPlanFile: () => stampPlanFile
 });
 import { promises as fs7 } from "node:fs";
-import path9 from "node:path";
-function homeBase() {
-  return resolveHost().homeDir();
+import path10 from "node:path";
+function homeBase(host) {
+  return (host ?? resolveHost()).homeDir();
 }
-function plansDir() {
-  return resolveHost().plansDir();
+function plansDir(host) {
+  return (host ?? resolveHost()).plansDir();
 }
 async function pullPlans(api, opts = {}) {
   const fetchOpts = {};
   if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
   if (opts.since) fetchOpts.updated_after = opts.since;
   const list = await api.listPlans(fetchOpts);
-  await fs7.mkdir(plansDir(), { recursive: true });
+  await fs7.mkdir(plansDir(opts.host), { recursive: true });
   const state = await readState();
+  const newEntries = {};
   const pulled = [];
   const unchanged = [];
   const removed = [];
@@ -145,8 +361,8 @@ async function pullPlans(api, opts = {}) {
   for (const p of list) {
     const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
     const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path9.join("plans", filename);
-    const full = path9.join(plansDir(), filename);
+    const localPath = path10.join("plans", filename);
+    const full = path10.join(plansDir(opts.host), filename);
     seenPaths.add(localPath);
     let body;
     try {
@@ -167,7 +383,7 @@ async function pullPlans(api, opts = {}) {
     }
     await fs7.writeFile(full, fileContent, "utf8");
     pulled.push(localPath);
-    state.documents[localPath] = {
+    newEntries[localPath] = {
       document_id: p.document_id,
       version_id: "",
       version_number: p.version_number,
@@ -177,14 +393,16 @@ async function pullPlans(api, opts = {}) {
       kind: "plan"
     };
   }
-  if (isFullSync) {
-    for (const tracked of Object.keys(state.documents)) {
-      if (!tracked.startsWith("plans/")) continue;
-      if (seenPaths.has(tracked)) continue;
-      delete state.documents[tracked];
+  await updateState((s) => {
+    Object.assign(s.documents, newEntries);
+    if (isFullSync) {
+      for (const tracked of Object.keys(s.documents)) {
+        if (!tracked.startsWith("plans/")) continue;
+        if (seenPaths.has(tracked)) continue;
+        delete s.documents[tracked];
+      }
     }
-  }
-  await writeState(state);
+  });
   return { pulled, unchanged, removed };
 }
 function resolveTargetDocId(stateEntry, binding) {
@@ -196,7 +414,7 @@ async function pushPlanFile(api, file, opts = {}) {
   if (!body.trim()) {
     throw new Error("plan body is empty");
   }
-  const relPath = path9.relative(homeBase(), file);
+  const relPath = path10.relative(homeBase(opts.host), file);
   const state = await readState();
   const existing = state.documents[relPath];
   const targetDocId = resolveTargetDocId(existing, existingBinding);
@@ -211,16 +429,17 @@ async function pushPlanFile(api, file, opts = {}) {
       projectId: existingBinding?.projectId ?? null
     });
     const stampedUpdate = await fs7.readFile(file, "utf8").catch(() => raw);
-    state.documents[relPath] = {
-      document_id: result2.document_id,
-      version_id: existing?.version_id ?? "",
-      version_number: result2.version_number,
-      content_hash: hash(stampedUpdate),
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
-      kind: "plan"
-    };
-    await writeState(state);
+    await updateState((s) => {
+      s.documents[relPath] = {
+        document_id: result2.document_id,
+        version_id: existing?.version_id ?? "",
+        version_number: result2.version_number,
+        content_hash: hash(stampedUpdate),
+        last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+        scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
+        kind: "plan"
+      };
+    });
     return {
       document_id: result2.document_id,
       version_number: result2.version_number,
@@ -233,23 +452,26 @@ async function pushPlanFile(api, file, opts = {}) {
     cwd: opts.cwd ?? null,
     git_remote: opts.gitRemote ?? null
   });
-  state.documents[relPath] = {
-    document_id: result.document_id,
-    version_id: "",
-    version_number: result.version_number,
-    content_hash: hash(raw),
-    last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-    scope: result.project_id ? "project" : "personal",
-    kind: "plan"
-  };
-  await writeState(state);
+  await updateState((s) => {
+    s.documents[relPath] = {
+      document_id: result.document_id,
+      version_id: "",
+      version_number: result.version_number,
+      content_hash: hash(raw),
+      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+      scope: result.project_id ? "project" : "personal",
+      kind: "plan"
+    };
+  });
   await stampPlanFile(file, {
     documentId: result.document_id,
     projectId: result.project_id
   });
   const stamped = await fs7.readFile(file, "utf8").catch(() => raw);
-  state.documents[relPath].content_hash = hash(stamped);
-  await writeState(state);
+  await updateState((s) => {
+    const entry = s.documents[relPath];
+    if (entry) entry.content_hash = hash(stamped);
+  });
   return {
     document_id: result.document_id,
     version_number: result.version_number,
@@ -262,14 +484,14 @@ async function reconcileKnownPlans(api, opts = {}) {
   const failed = [];
   let entries;
   try {
-    entries = await fs7.readdir(plansDir());
+    entries = await fs7.readdir(plansDir(opts.host));
   } catch {
     return { pushed, skipped, failed };
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path9.join(plansDir(), f);
+    const abs = path10.join(plansDir(opts.host), f);
     let raw;
     try {
       const st = await fs7.stat(abs);
@@ -278,7 +500,7 @@ async function reconcileKnownPlans(api, opts = {}) {
     } catch {
       continue;
     }
-    const relPath = path9.relative(homeBase(), abs);
+    const relPath = path10.relative(homeBase(opts.host), abs);
     const tracked = state.documents[relPath]?.document_id;
     const { binding } = parsePlanFile(raw);
     const isKnown = Boolean(tracked) || Boolean(binding?.documentId);
@@ -299,18 +521,18 @@ async function reconcileKnownPlans(api, opts = {}) {
   }
   return { pushed, skipped, failed };
 }
-async function listUnboundPlans() {
+async function listUnboundPlans(host) {
   const out = [];
   let entries;
   try {
-    entries = await fs7.readdir(plansDir());
+    entries = await fs7.readdir(plansDir(host));
   } catch {
     return out;
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path9.join(plansDir(), f);
+    const abs = path10.join(plansDir(host), f);
     let raw;
     let size = 0;
     try {
@@ -321,7 +543,7 @@ async function listUnboundPlans() {
     } catch {
       continue;
     }
-    const relPath = path9.relative(homeBase(), abs);
+    const relPath = path10.relative(homeBase(host), abs);
     const { title, binding } = parsePlanFile(raw);
     if (state.documents[relPath]?.document_id || binding?.documentId) continue;
     out.push({ file: f, title, size });
@@ -391,20 +613,20 @@ var init_plan_sync = __esm({
 
 // packages/plugin-core/dist/client.js
 import { promises as fs3 } from "node:fs";
-import path4 from "node:path";
-import os4 from "node:os";
+import path5 from "node:path";
+import os5 from "node:os";
 
 // packages/plugin-core/dist/auth.js
 import { promises as fs } from "node:fs";
-import path from "node:path";
-import os from "node:os";
+import path2 from "node:path";
+import os2 from "node:os";
 var MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
 var MEMLIN_PROD_AUTH0_CLIENT_ID = "fyYMQ4Cxc6Nu5juVwL8Ihqq4fgAFecG9";
 var AUTH0_DOMAIN = process.env.MEMLIN_AUTH0_DOMAIN || MEMLIN_PROD_AUTH0_DOMAIN;
 var AUTH0_CLIENT_ID = process.env.MEMLIN_AUTH0_CLIENT_ID || MEMLIN_PROD_AUTH0_CLIENT_ID;
 var AUTH0_AUDIENCE = process.env.MEMLIN_AUTH0_AUDIENCE ?? "https://api.memlin.ai";
 function tokenFilePath() {
-  return process.env.MEMLIN_TOKEN_FILE || path.join(os.homedir(), ".config", "memlin", "token.json");
+  return process.env.MEMLIN_TOKEN_FILE || path2.join(os2.homedir(), ".config", "memlin", "token.json");
 }
 async function readPersistedToken() {
   try {
@@ -416,8 +638,8 @@ async function readPersistedToken() {
 }
 async function writePersistedToken(t) {
   const file = tokenFilePath();
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = path.join(path.dirname(file), `token.json.tmp-${process.pid}`);
+  await fs.mkdir(path2.dirname(file), { recursive: true });
+  const tmp = path2.join(path2.dirname(file), `token.json.tmp-${process.pid}`);
   await fs.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
   await fs.chmod(tmp, 384).catch(() => {
   });
@@ -442,19 +664,31 @@ async function refreshAccessToken(refreshToken) {
   return toPersisted(json, refreshToken);
 }
 var refreshInFlight = null;
+var DEFAULT_FRESHNESS_MARGIN_MS = 6e4;
 async function getValidAccessToken() {
+  return ensureFreshToken(DEFAULT_FRESHNESS_MARGIN_MS);
+}
+async function ensureFreshToken(marginMs = DEFAULT_FRESHNESS_MARGIN_MS) {
   const persisted = await readPersistedToken();
   if (!persisted) throw new Error("not signed in \u2014 run `memlin login`");
-  if (Date.now() < persisted.expires_at - 6e4) return persisted.access_token;
+  if (Date.now() < persisted.expires_at - marginMs) return persisted.access_token;
   if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = doRefresh(persisted).finally(() => {
+  refreshInFlight = doRefresh(persisted, marginMs).finally(() => {
     refreshInFlight = null;
   });
   return refreshInFlight;
 }
-async function doRefresh(stale) {
+async function doRefresh(stale, marginMs) {
   const latest = await readPersistedToken();
-  if (latest && Date.now() < latest.expires_at - 6e4) return latest.access_token;
+  if (latest && Date.now() < latest.expires_at - marginMs) return latest.access_token;
+  try {
+    const { companionGetToken: companionGetToken2 } = await Promise.resolve().then(() => (init_companion_client(), companion_client_exports));
+    const fromDaemon = await companionGetToken2();
+    if (fromDaemon && Date.now() < fromDaemon.expires_at - marginMs) {
+      return fromDaemon.access_token;
+    }
+  } catch {
+  }
   const refreshToken = latest?.refresh_token ?? stale.refresh_token;
   if (!refreshToken) {
     throw new Error("access token expired and no refresh token saved \u2014 run `memlin login`");
@@ -490,7 +724,7 @@ function requireClientId() {
 
 // packages/plugin-core/dist/memlin-api-client.js
 import { readFileSync } from "node:fs";
-import os3 from "node:os";
+import os4 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -513,7 +747,11 @@ var AGENT_EXPECTED_CAPABILITIES = {
   openclaw: ["mcp", "rules", "resolve"],
   antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
   mcp: ["mcp", "resolve"],
-  "claude-ai": ["mcp", "resolve"]
+  "claude-ai": ["mcp", "resolve"],
+  // Companion daemon (apps/companion): background token keeper + realtime
+  // plan sync + local IPC socket other agents delegate to. No hooks/commands
+  // of its own.
+  companion: ["cli", "sync", "realtime", "resolve"]
 };
 var PROVIDER_HOSTS = [
   "github.com",
@@ -572,7 +810,7 @@ async function closeHttpSockets() {
 init_host();
 var DEFAULT_API_URL = "https://memlin.ai/api/v1";
 function agentDevice() {
-  return process.env.MEMLIN_AGENT_DEVICE || os3.hostname() || "unknown";
+  return process.env.MEMLIN_AGENT_DEVICE || os4.hostname() || "unknown";
 }
 var cachedAgentVersion = null;
 function agentVersion() {
@@ -637,6 +875,17 @@ var MemlinApiClient = class {
   /** GET /me — identity + account list. No account header sent (this is the discovery call). */
   async me() {
     return this.request("GET", "/me", void 0, { includeAccount: false });
+  }
+  /**
+   * GET /realtime/config — Supabase connection info for the caller's
+   * effective account. The client config file is deliberately
+   * backend-agnostic (no Supabase URL / anon key), so Realtime subscribers
+   * — the Companion daemon (packages/companion-core) — bootstrap the
+   * connection from here. Dedicated-instance (paid org) accounts get THEIR
+   * instance's values, which is why this rides normal account-header auth.
+   */
+  async getRealtimeConfig(opts = {}) {
+    return this.request("GET", "/realtime/config", void 0, { accountId: opts.accountId });
   }
   /**
    * POST /roles/assign — set a member's functional roles (backend, sre,
@@ -1046,13 +1295,13 @@ function resolveApiUrl() {
 
 // packages/plugin-core/dist/workspace-binding.js
 import { promises as fs2 } from "node:fs";
-import path3 from "node:path";
+import path4 from "node:path";
 var WORKSPACE_DIR_NAME = ".memlin";
 var WORKSPACE_BINDING_FILE = "config.json";
 async function findWorkspaceBinding(startDir) {
-  let dir = path3.resolve(startDir);
+  let dir = path4.resolve(startDir);
   for (let i = 0; i < 64; i++) {
-    const candidate = path3.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+    const candidate = path4.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
     try {
       const raw = await fs2.readFile(candidate, "utf8");
       const parsed = JSON.parse(raw);
@@ -1068,16 +1317,16 @@ async function findWorkspaceBinding(startDir) {
       }
     } catch {
     }
-    const parent = path3.dirname(dir);
+    const parent = path4.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
   return null;
 }
 async function writeWorkspaceBinding(workspaceRoot, binding) {
-  const dir = path3.join(path3.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
+  const dir = path4.join(path4.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
   await fs2.mkdir(dir, { recursive: true });
-  const file = path3.join(dir, WORKSPACE_BINDING_FILE);
+  const file = path4.join(dir, WORKSPACE_BINDING_FILE);
   const body = JSON.stringify(
     {
       account_id: binding.account_id,
@@ -1095,9 +1344,9 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
 function exitClean(code) {
   void closeHttpSockets().finally(() => process.exit(code));
 }
-var CONFIG_DIR = path4.join(os4.homedir(), ".config", "memlin");
-var CONFIG_FILE = path4.join(CONFIG_DIR, "config.json");
-var TOKEN_FILE = path4.join(CONFIG_DIR, "token.json");
+var CONFIG_DIR = path5.join(os5.homedir(), ".config", "memlin");
+var CONFIG_FILE = path5.join(CONFIG_DIR, "config.json");
+var TOKEN_FILE = path5.join(CONFIG_DIR, "token.json");
 async function readConfig() {
   try {
     const raw = await fs3.readFile(CONFIG_FILE, "utf8");
@@ -1154,8 +1403,8 @@ init_state();
 init_state();
 import { promises as fs5 } from "node:fs";
 import { existsSync } from "node:fs";
-import os6 from "node:os";
-import path6 from "node:path";
+import os7 from "node:os";
+import path7 from "node:path";
 
 // packages/plugin-core/dist/paths.js
 var SLUG = /[^a-z0-9]+/g;
@@ -1188,12 +1437,12 @@ function inferLocalPath(kind, title, existing) {
 // packages/plugin-core/dist/apply.js
 init_host();
 function archiveRoot() {
-  return path6.join(os6.homedir(), ".config", "memlin", "archive");
+  return path7.join(os7.homedir(), ".config", "memlin", "archive");
 }
 async function archiveDestination(trackedRelPath) {
-  const base = path6.join(archiveRoot(), trackedRelPath);
+  const base = path7.join(archiveRoot(), trackedRelPath);
   if (!existsSync(base)) return base;
-  const ext = path6.extname(base);
+  const ext = path7.extname(base);
   const stem = base.slice(0, base.length - ext.length);
   for (let i = 1; i < 1e3; i++) {
     const candidate = `${stem}.${i}${ext}`;
@@ -1217,7 +1466,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     if (d.kind === "feedback") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
     currentPaths.add(localPath);
-    const full = path6.join(root, localPath);
+    const full = path7.join(root, localPath);
     const contentHash = hash(d.content);
     let needsWrite = true;
     try {
@@ -1226,7 +1475,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     } catch {
     }
     if (needsWrite) {
-      await fs5.mkdir(path6.dirname(full), { recursive: true });
+      await fs5.mkdir(path7.dirname(full), { recursive: true });
       await fs5.writeFile(full, d.content, "utf8");
       out.written.push(localPath);
     } else {
@@ -1242,7 +1491,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
   }
   for (const tracked of Object.keys(state.documents)) {
     if (currentPaths.has(tracked)) continue;
-    const full = path6.join(root, tracked);
+    const full = path7.join(root, tracked);
     if (existsSync(full)) {
       let userEdited = false;
       try {
@@ -1258,7 +1507,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
       } else {
         const dest = await archiveDestination(tracked);
         try {
-          await fs5.mkdir(path6.dirname(dest), { recursive: true });
+          await fs5.mkdir(path7.dirname(dest), { recursive: true });
           await fs5.rename(full, dest);
           out.archived.push(tracked);
           out.removed.push(`${tracked} (archived)`);
@@ -1287,7 +1536,7 @@ function stateRow(d, h, at) {
 // packages/plugin-core/dist/project-resolver.js
 import { execSync } from "node:child_process";
 import { existsSync as existsSync2, readdirSync } from "node:fs";
-import path7 from "node:path";
+import path8 from "node:path";
 var ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
 function allowAccountMismatch(env = process.env) {
   const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
@@ -1313,7 +1562,7 @@ function formatAccountMismatchWarning(input) {
   ].join("\n");
 }
 async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path7.resolve(cwd);
+  const absCwd = path8.resolve(cwd);
   const remotes = detectGitRemotes(cwd);
   const hasGitRemote = remotes.length > 0;
   try {
@@ -1372,8 +1621,8 @@ function detectGitRemotes(cwd) {
         continue;
       }
       scanned++;
-      const child = path7.join(cwd, entry.name);
-      if (!existsSync2(path7.join(child, ".git"))) continue;
+      const child = path8.join(cwd, entry.name);
+      if (!existsSync2(path8.join(child, ".git"))) continue;
       const remote = readGitRemote(child);
       if (remote && !out.includes(remote)) out.push(remote);
     }
@@ -1493,20 +1742,20 @@ function renderHandoffContext(handoff) {
 
 // packages/plugin-core/dist/auto-bind.js
 import { promises as fs6 } from "node:fs";
-import path8 from "node:path";
+import path9 from "node:path";
 async function findWorkspaceRoot(cwd) {
-  let dir = path8.resolve(cwd);
+  let dir = path9.resolve(cwd);
   for (let i = 0; i < 64; i++) {
     try {
-      const stat = await fs6.stat(path8.join(dir, ".git"));
+      const stat = await fs6.stat(path9.join(dir, ".git"));
       if (stat.isDirectory() || stat.isFile()) return dir;
     } catch {
     }
-    const parent = path8.dirname(dir);
+    const parent = path9.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return path8.resolve(cwd);
+  return path9.resolve(cwd);
 }
 async function autoBindWorkspaceIfMatched(args) {
   if (args.workspaceAlreadyBound) {
@@ -1538,6 +1787,7 @@ async function autoBindWorkspaceIfMatched(args) {
 
 // apps/cli-plugin/src/hooks/session-start.ts
 init_plan_sync();
+init_companion_client();
 async function main() {
   const ctx = await getApi();
   if (!ctx) {
@@ -1545,18 +1795,27 @@ async function main() {
     return;
   }
   const { api, config, workspaceBound } = ctx;
-  let resolved;
-  try {
-    resolved = await resolveProject(api, process.cwd(), config.project_id);
-  } catch (err) {
-    log(`project resolve failed: ${err instanceof Error ? err.message : String(err)}`);
-    resolved = {
-      project_id: null,
-      project_name: null,
-      account_id: null,
-      reason: "none",
-      hasGitRemote: false
-    };
+  const companion = await companionForDelegation().catch(() => null);
+  if (companion) {
+    await companionReportSession({ cwd: process.cwd(), host: "claude-code" }).catch(() => false);
+  }
+  let resolved = null;
+  if (companion) {
+    resolved = await companionResolveWorkspace(process.cwd()).catch(() => null);
+  }
+  if (!resolved) {
+    try {
+      resolved = await resolveProject(api, process.cwd(), config.project_id);
+    } catch (err) {
+      log(`project resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+      resolved = {
+        project_id: null,
+        project_name: null,
+        account_id: null,
+        reason: "none",
+        hasGitRemote: false
+      };
+    }
   }
   let autoBoundJustNow = false;
   try {
@@ -1587,25 +1846,40 @@ async function main() {
     return;
   }
   try {
-    const state = await readState();
-    const result = await applyPullToLocal([], state, (/* @__PURE__ */ new Date()).toISOString());
-    const planResult = await pullPlans(ctx.api, {
-      projectId: resolved.project_id
-    });
-    setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
-    await writeState(state);
-    const reconcile = await reconcileKnownPlans(ctx.api, {
-      cwd: process.cwd()
-    }).catch((err) => {
-      log(`plan reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
-      return { pushed: [], skipped: [], failed: [] };
-    });
+    let result;
+    let planResult;
+    let reconcile;
+    if (companion) {
+      await updateState(async (s) => {
+        result = await applyPullToLocal([], s, (/* @__PURE__ */ new Date()).toISOString());
+      });
+      const synced = await companionSyncNow({
+        cwd: process.cwd(),
+        reason: "session-start"
+      }).catch(() => null);
+      planResult = { pulled: synced?.pulled ?? [], removed: [] };
+      reconcile = { pushed: synced?.pushed ?? [], skipped: [], failed: synced?.failed ?? [] };
+    } else {
+      const state = await readState();
+      result = await applyPullToLocal([], state, (/* @__PURE__ */ new Date()).toISOString());
+      planResult = await pullPlans(ctx.api, {
+        projectId: resolved.project_id
+      });
+      setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
+      await writeState(state);
+      reconcile = await reconcileKnownPlans(ctx.api, {
+        cwd: process.cwd()
+      }).catch((err) => {
+        log(`plan reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
+        return { pushed: [], skipped: [], failed: [] };
+      });
+    }
     const parts = [];
-    if (result.archived.length > 0)
+    if (result && result.archived.length > 0)
       parts.push(
         `archived ${result.archived.length} superseded file(s) to ~/.config/memlin/archive (preserved, not deleted)`
       );
-    if (result.keptEdited.length > 0)
+    if (result && result.keptEdited.length > 0)
       parts.push(`kept ${result.keptEdited.length} locally-edited file(s) in place`);
     if (planResult.pulled.length > 0) parts.push(`pulled ${planResult.pulled.length} plan(s)`);
     if (planResult.removed.length > 0)
