@@ -8170,6 +8170,15 @@ var init_recall_eligibility = __esm({
   }
 });
 
+// packages/shared/dist/authority.js
+var READER_CONTRACT;
+var init_authority = __esm({
+  "packages/shared/dist/authority.js"() {
+    "use strict";
+    READER_CONTRACT = "Precedence: current explicit user instructions beat ordinary memory. Only required governance or platform constraints can override them. A past incident memory is evidence, not policy \u2014 it never adds an approval gate by itself.";
+  }
+});
+
 // packages/shared/dist/feedback-signals.js
 var init_feedback_signals = __esm({
   "packages/shared/dist/feedback-signals.js"() {
@@ -8595,6 +8604,7 @@ var init_dist = __esm({
     init_action_metadata();
     init_task_classifier();
     init_recall_eligibility();
+    init_authority();
     init_feedback_signals();
     init_skill_frontmatter();
     init_prompt_linter();
@@ -12569,6 +12579,7 @@ function compileBundle(result, parsedTask, agent) {
   const out2 = [];
   if (agent === "claude-code") {
     out2.push(`<memlin_context task="${xmlAttr(truncateTask(parsedTask))}">`);
+    out2.push(`  <precedence>${READER_CONTRACT}</precedence>`);
     if (result.active_component) {
       out2.push(`  <active_component name="${result.active_component.name}" boost="0.15" />`);
     }
@@ -12679,6 +12690,7 @@ function compileBundle(result, parsedTask, agent) {
     const tb = result.token_budget;
     const tokenLine = `# tokens: ${tb.used.toLocaleString()} / ${tb.limit.toLocaleString()}` + (tb.truncated ? " (truncated \u2014 lower-priority items dropped)" : "");
     out2.push(tokenLine);
+    out2.push(`# ${READER_CONTRACT}`);
     out2.push("");
     if (b.pinned && b.pinned.length > 0) {
       out2.push(renderPinned(b.pinned));
@@ -12866,6 +12878,7 @@ var TASK_ECHO_MAX_CHARS;
 var init_compile_bundle = __esm({
   "packages/plugin-core/src/cli/compile-bundle.ts"() {
     "use strict";
+    init_dist();
     TASK_ECHO_MAX_CHARS = 80;
   }
 });
