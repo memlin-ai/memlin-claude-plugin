@@ -8163,6 +8163,13 @@ var init_task_classifier = __esm({
   }
 });
 
+// packages/shared/dist/recall-eligibility.js
+var init_recall_eligibility = __esm({
+  "packages/shared/dist/recall-eligibility.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/feedback-signals.js
 var init_feedback_signals = __esm({
   "packages/shared/dist/feedback-signals.js"() {
@@ -8587,6 +8594,7 @@ var init_dist = __esm({
     init_guardrails();
     init_action_metadata();
     init_task_classifier();
+    init_recall_eligibility();
     init_feedback_signals();
     init_skill_frontmatter();
     init_prompt_linter();
