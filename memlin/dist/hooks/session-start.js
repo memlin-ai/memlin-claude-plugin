@@ -815,7 +815,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.42";
+  cachedAgentVersion = "0.2.43";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -1788,7 +1788,36 @@ async function autoBindWorkspaceIfMatched(args) {
 // apps/cli-plugin/src/hooks/session-start.ts
 init_plan_sync();
 init_companion_client();
+async function readStdinJson() {
+  return new Promise((resolve) => {
+    process.stdin.setEncoding("utf8");
+    const chunks = [];
+    let timeout = setTimeout(() => {
+      timeout = null;
+      resolve(null);
+    }, 1e3);
+    process.stdin.on("data", (c) => chunks.push(String(c)));
+    process.stdin.on("end", () => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = null;
+      }
+      try {
+        const text = chunks.join("");
+        if (!text.trim()) {
+          resolve(null);
+          return;
+        }
+        resolve(JSON.parse(text));
+      } catch {
+        resolve(null);
+      }
+    });
+    process.stdin.on("error", () => resolve(null));
+  });
+}
 async function main() {
+  const payload = await readStdinJson();
   const ctx = await getApi();
   if (!ctx) {
     log("not configured \u2014 skipping pull");
@@ -1922,11 +1951,14 @@ async function main() {
   if (banner) {
     process.stdout.write(banner + "\n");
   }
-  try {
-    const handoffContext = await acceptPendingHandoffContext(api, resolved.project_id);
-    if (handoffContext) process.stdout.write(`${handoffContext}
+  const isFreshSession = payload?.source === void 0 || payload.source === "startup";
+  if (isFreshSession) {
+    try {
+      const handoffContext = await acceptPendingHandoffContext(api, resolved.project_id);
+      if (handoffContext) process.stdout.write(`${handoffContext}
 `);
-  } catch {
+    } catch {
+    }
   }
   try {
     const { listUnboundPlans: listUnboundPlans2 } = await Promise.resolve().then(() => (init_plan_sync(), plan_sync_exports));
