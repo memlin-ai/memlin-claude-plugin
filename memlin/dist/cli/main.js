@@ -4148,7 +4148,7 @@ var init_zod = __esm({
 });
 
 // packages/shared/dist/constants.js
-var DOCUMENT_KINDS, DOCUMENT_SCOPES, DOCUMENT_STATUSES, MEMORY_TYPES, AGENT_KINDS, MEMBER_ROLES, ACCOUNT_TIERS, FREE_TIER_METERS, METERED_EVENT_TYPES;
+var DOCUMENT_KINDS, DOCUMENT_SCOPES, DOCUMENT_STATUSES, SEARCHABLE_KINDS, MEMORY_TYPES, AGENT_KINDS, MEMBER_ROLES, ACCOUNT_TIERS, FREE_TIER_METERS, METERED_EVENT_TYPES;
 var init_constants = __esm({
   "packages/shared/dist/constants.js"() {
     "use strict";
@@ -4189,6 +4189,7 @@ var init_constants = __esm({
     ];
     DOCUMENT_SCOPES = ["personal", "project", "team"];
     DOCUMENT_STATUSES = ["draft", "in_review", "approved", "archived"];
+    SEARCHABLE_KINDS = ["skill", "memory", "goal", "schema", "decision"];
     MEMORY_TYPES = ["correction", "preference", "fact", "reference", "episodic"];
     AGENT_KINDS = [
       "claude-code",
@@ -8374,7 +8375,7 @@ var init_memlin_commands = __esm({
         section: "Discovery",
         cmd: "ask",
         blurb: "ask your workspace anything",
-        details: "Run a natural-language question against your team's shared memory, skills, approved goals, and schemas. The resolver assembles a cited answer pulling from across documents \u2014 each citation shows a path and version so you can click through to the source."
+        details: "Run a natural-language question against your team's shared memory, skills, approved goals, schemas, and decisions. The resolver assembles a cited answer pulling from across documents \u2014 each citation shows a path and version so you can click through to the source."
       },
       {
         section: "",
@@ -9138,7 +9139,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.48";
+  cachedAgentVersion = "0.2.49";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -9678,7 +9679,7 @@ var init_resolver_skill = __esm({
     ];
     RESOLVER_SKILL_MD = `---
 name: Memlin
-description: Memlin auto-resolves project context (skills, memory, approved goals, schemas) into your prompt before you process it. This skill tells you how to *use* that context, and when to fall back to invoking memlin_resolve_task manually.
+description: Memlin auto-resolves project context (skills, memory, approved goals, schemas, decisions) into your prompt before you process it. This skill tells you how to *use* that context, and when to fall back to invoking memlin_resolve_task manually.
 examples:
   - "A <memlin-resolved-context> block is present \u2014 apply the primary skill's framework and cite memory facts by path + version."
   - "A resolved memory fact conflicts with your training data \u2014 treat the resolved fact as project ground truth."
@@ -9696,7 +9697,7 @@ The Memlin plugin's UserPromptSubmit hook auto-injects a \`<memlin-resolved-cont
 block into every non-trivial user prompt \u2014 *before* you see the prompt. The
 block contains the same scope-correct, citation-bearing bundle that
 \`memlin_resolve_task\` would return: top skills, memory, approved goals,
-schemas, kind-weighted and threshold-filtered to ~4k tokens.
+schemas, and decisions, kind-weighted and threshold-filtered to ~4k tokens.
 
 ## How to use the pre-resolved bundle
 
@@ -9706,7 +9707,8 @@ schemas, kind-weighted and threshold-filtered to ~4k tokens.
 2. **Apply the primary skill's framework** first. Use supporting skills for
    complementary perspectives. **Treat memory facts as project ground truth**
    (more authoritative than your training data when they conflict). **Honor
-   goals as constraints.** **Validate against any schemas.**
+   approved goals and required/pinned decisions as constraints.** Use other
+   decisions as cited project context. **Validate against any schemas.**
 3. **Cite your sources.** When stating a fact or following a constraint from
    the bundle, mention the source path + version. Example: "Per
    \`goals/auth-required.md\` v1, every new endpoint requires authn."
@@ -13053,10 +13055,8 @@ var init_compile_bundle = __esm({
   }
 });
 
-// packages/plugin-core/src/cli/resolve.ts
-var resolve_exports = {};
-import { execSync as execSync4 } from "node:child_process";
-function parseArgs3(argv) {
+// packages/plugin-core/src/cli/resolve-args.ts
+function parseResolveArgs(argv) {
   const positional = [];
   let project;
   let maxTokens;
@@ -13077,8 +13077,8 @@ function parseArgs3(argv) {
     } else if (a === "--kind" || a === "-k") {
       const v = argv[++i];
       if (!v) return { error: "--kind requires a value" };
-      if (!["skill", "memory", "goal", "schema"].includes(v)) {
-        return { error: `--kind: must be one of skill|memory|goal|schema (got "${v}")` };
+      if (!SEARCHABLE_KINDS.includes(v)) {
+        return { error: `--kind: must be one of ${SEARCHABLE_KINDS.join("|")} (got "${v}")` };
       }
       kinds.push(v);
     } else if (a === "--agent" || a === "-a") {
@@ -13112,6 +13112,16 @@ function parseArgs3(argv) {
     ...agent !== void 0 ? { agent } : {}
   };
 }
+var init_resolve_args = __esm({
+  "packages/plugin-core/src/cli/resolve-args.ts"() {
+    "use strict";
+    init_dist();
+  }
+});
+
+// packages/plugin-core/src/cli/resolve.ts
+var resolve_exports = {};
+import { execSync as execSync4 } from "node:child_process";
 function printHelp2() {
   console.log(
     [
@@ -13124,7 +13134,7 @@ function printHelp2() {
       "  --project <id>      Override the auto-resolved project scope",
       "  --max-tokens <n>    Bundle token budget (default 4000)",
       "  --kind <k>          Restrict to a kind. Repeatable.",
-      "                      One of: skill, memory, goal, schema",
+      `                      One of: ${SEARCHABLE_KINDS.join(", ")}`,
       "  --agent <a_type>    Compile bundle for agent (claude-code|cursor|antigravity|codex|windsurf)",
       "  --hybrid            Use hybrid retrieval (BM25 + cosine via RRF).",
       "                      This is the server default.",
@@ -13166,7 +13176,7 @@ async function main12() {
   const deadlineMsRaw = Number(process.env.MEMLIN_RESOLVE_DEADLINE_MS);
   const deadlineMs = Number.isFinite(deadlineMsRaw) && deadlineMsRaw > 0 ? deadlineMsRaw : null;
   const argv = process.argv.slice(2);
-  const parsed = parseArgs3(argv);
+  const parsed = parseResolveArgs(argv);
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp2();
@@ -13309,12 +13319,14 @@ async function main12() {
 var init_resolve = __esm({
   "packages/plugin-core/src/cli/resolve.ts"() {
     "use strict";
+    init_dist();
     init_client();
     init_project_resolver();
     init_state();
     init_pending_bundle();
     init_continuity();
     init_compile_bundle();
+    init_resolve_args();
     main12().catch((err2) => {
       console.error("memlin resolve failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
@@ -13325,7 +13337,7 @@ var init_resolve = __esm({
 // packages/plugin-core/src/cli/ask.ts
 var ask_exports = {};
 import { execSync as execSync5 } from "node:child_process";
-function parseArgs4(argv) {
+function parseArgs3(argv) {
   const positional = [];
   let org;
   let maxTokens;
@@ -13390,7 +13402,7 @@ function readGitRemote5(cwd) {
 }
 async function main13() {
   const argv = process.argv.slice(2);
-  const parsed = parseArgs4(argv);
+  const parsed = parseArgs3(argv);
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp3();
@@ -14713,7 +14725,7 @@ var init_features = __esm({
 // packages/plugin-core/src/cli/link.ts
 var link_exports = {};
 import path24 from "node:path";
-function parseArgs5(argv) {
+function parseArgs4(argv) {
   const out2 = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -14766,7 +14778,7 @@ function chooseAccount(accounts, needle) {
 }
 async function main21() {
   const argv = process.argv.slice(2);
-  const parsed = parseArgs5(argv);
+  const parsed = parseArgs4(argv);
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp5();
@@ -15059,7 +15071,7 @@ var add_project_exports = {};
 import { execSync as execSync7 } from "node:child_process";
 import path26 from "node:path";
 import readline3 from "node:readline";
-function parseArgs6(argv) {
+function parseArgs5(argv) {
   const out2 = { kind: "code" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -15132,7 +15144,7 @@ function pickAccount2(accounts, needle, fallback) {
 }
 async function main24() {
   const argv = process.argv.slice(2);
-  const parsed = parseArgs6(argv);
+  const parsed = parseArgs5(argv);
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp7();
@@ -15630,7 +15642,7 @@ var init_ingest_native_memory = __esm({
 // packages/plugin-core/src/cli/attach-path.ts
 var attach_path_exports = {};
 import path28 from "node:path";
-function parseArgs7(argv) {
+function parseArgs6(argv) {
   const out2 = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -15669,7 +15681,7 @@ function printHelp9() {
   );
 }
 async function main28() {
-  const parsed = parseArgs7(process.argv.slice(2));
+  const parsed = parseArgs6(process.argv.slice(2));
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp9();
@@ -15854,7 +15866,7 @@ var init_audit_replay_renderer = __esm({
 
 // packages/plugin-core/src/cli/audit-replay.ts
 var audit_replay_exports = {};
-function parseArgs8(argv) {
+function parseArgs7(argv) {
   const positional = [];
   for (const a of argv) {
     if (a === "--help" || a === "-h") return { error: "help" };
@@ -15910,7 +15922,7 @@ function renderItem2(item) {
   return lines.join("\n");
 }
 async function main29() {
-  const parsed = parseArgs8(argvAsSlashArgs());
+  const parsed = parseArgs7(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp10();
@@ -16022,7 +16034,7 @@ var init_audit_replay = __esm({
 
 // packages/plugin-core/src/cli/audit-explain.ts
 var audit_explain_exports = {};
-function parseArgs9(argv) {
+function parseArgs8(argv) {
   const positional = [];
   for (const a of argv) {
     if (a === "--help" || a === "-h") return { error: "help" };
@@ -16092,7 +16104,7 @@ function renderItem3(item) {
   return lines.join("\n");
 }
 async function main30() {
-  const parsed = parseArgs9(argvAsSlashArgs());
+  const parsed = parseArgs8(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp11();
@@ -16175,7 +16187,7 @@ var init_audit_explain = __esm({
 
 // packages/plugin-core/src/cli/actions-list.ts
 var actions_list_exports = {};
-function parseArgs10(argv) {
+function parseArgs9(argv) {
   let filter;
   let limit;
   let json = false;
@@ -16236,7 +16248,7 @@ function renderRow(a) {
   ].join("\n");
 }
 async function main31() {
-  const parsed = parseArgs10(argvAsSlashArgs());
+  const parsed = parseArgs9(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp12();
@@ -16290,7 +16302,7 @@ var init_actions_list = __esm({
 // packages/plugin-core/src/cli/actions-execute.ts
 var actions_execute_exports = {};
 import { readFileSync as readFileSync2 } from "node:fs";
-function parseArgs11(argv) {
+function parseArgs10(argv) {
   const positional = [];
   let inputJson = null;
   let stdinFlag = false;
@@ -16355,7 +16367,7 @@ function printHelp13() {
   );
 }
 async function main32() {
-  const parsed = parseArgs11(argvAsSlashArgs());
+  const parsed = parseArgs10(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp13();
@@ -264251,7 +264263,7 @@ import path39 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 import { existsSync as existsSync8 } from "node:fs";
 import { gzipSync } from "node:zlib";
-function parseArgs12(argv) {
+function parseArgs11(argv) {
   const out2 = {};
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -264318,7 +264330,7 @@ function configureBundledWasmDir() {
   }
 }
 async function main34() {
-  const args2 = parseArgs12(process.argv);
+  const args2 = parseArgs11(process.argv);
   if (args2.help) {
     printHelp15();
     return;

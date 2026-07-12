@@ -536,8 +536,9 @@ async function main() {
     process.stdout.write(
       scribeNotice + [
         "<memlin-resolved-context>",
-        "# Auto-resolved by Memlin \u2014 authoritative project context. Apply skills, honor",
-        "# goals, validate schemas, cite sources; do not re-invoke memlin_resolve_task.",
+        "# Auto-resolved by Memlin \u2014 authoritative project context. Apply skills; honor",
+        "# approved goals and required/pinned decisions/directives; use other decisions as cited",
+        "# context; validate schemas; cite sources; do not re-invoke memlin_resolve_task.",
         "",
         outcome.bundle.rendered,
         "</memlin-resolved-context>"

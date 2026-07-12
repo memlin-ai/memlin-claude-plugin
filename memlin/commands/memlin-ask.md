@@ -1,6 +1,6 @@
 ---
 name: memlin-ask
-description: Ask your team's Memlin workspace a natural-language question. Resolver gathers the relevant memory + skills + goals + schemas; Claude answers from that context with clickable citations. The discovery layer.
+description: Ask your team's Memlin workspace a natural-language question. Resolver gathers the relevant memory + skills + goals + schemas + decisions; Claude answers from that context with clickable citations. The discovery layer.
 allowed-tools: Bash
 ---
 
