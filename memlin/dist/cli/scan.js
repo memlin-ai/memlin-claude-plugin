@@ -246013,7 +246013,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.47";
+  cachedAgentVersion = "0.2.48";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -246811,7 +246811,7 @@ var COMPONENT_MANIFEST_NAMES = /* @__PURE__ */ new Set([
   "gemfile",
   "composer.json"
 ]);
-var COMPONENT_SCAN_SKIP = /* @__PURE__ */ new Set(["bin", "obj", "packages", "vendor", ".vs"]);
+var COMPONENT_SCAN_SKIP = /* @__PURE__ */ new Set(["bin", "obj", "vendor", ".vs"]);
 var MAX_MARKDOWN_FILES = 30;
 var MAX_MARKDOWN_FILE_BYTES = 50 * 1024;
 var MAX_MARKDOWN_TOTAL_BYTES = 400 * 1024;
@@ -246986,7 +246986,7 @@ async function findComponentRoots(root) {
     for (const e of entries) {
       if (!e.isDirectory())
         continue;
-      if (SKIP_DIRS.has(e.name) || COMPONENT_SCAN_SKIP.has(e.name))
+      if (SKIP_DIRS.has(e.name) || COMPONENT_SCAN_SKIP.has(e.name) || e.name === "packages" && depth > 0)
         continue;
       await walk(path8.join(dir, e.name), rel ? `${rel}/${e.name}` : e.name, depth + 1);
     }

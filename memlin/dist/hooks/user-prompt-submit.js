@@ -31,31 +31,115 @@ async function writeState(state) {
   await fs.rename(tmp, STATE_FILE);
 }
 var LOCK_DIR = `${STATE_FILE}.lock`;
+var LOCK_STALE_MS = 2e3;
+var LOCK_WAIT_MS = 2e3;
+var LOCK_RETRY_MS = 50;
+async function acquireStateLock() {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (; ; ) {
+    try {
+      await fs.mkdir(LOCK_DIR);
+      return true;
+    } catch {
+      try {
+        const stat = await fs.stat(LOCK_DIR);
+        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+          await fs.rmdir(LOCK_DIR).catch(() => {
+          });
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+}
+async function releaseStateLock() {
+  await fs.rmdir(LOCK_DIR).catch(() => {
+  });
+}
+async function updateState(mutate) {
+  const locked = await acquireStateLock();
+  try {
+    const state = await readState();
+    await mutate(state);
+    await writeState(state);
+    return state;
+  } finally {
+    if (locked) await releaseStateLock();
+  }
+}
+function getLastResolveForSession(state, sessionId) {
+  if (sessionId) {
+    return state.last_resolves?.[sessionId] ?? (state.last_resolve?.session_id === sessionId ? state.last_resolve : void 0);
+  }
+  return state.last_resolve?.session_id ? void 0 : state.last_resolve;
+}
+async function markLastResolveDelivered(input) {
+  if (!input.auditId) return;
+  try {
+    await updateState((state) => {
+      const entry = getLastResolveForSession(state, input.sessionId);
+      if (entry?.audit_id !== input.auditId || entry.host !== input.host || entry.cwd !== input.cwd) {
+        return;
+      }
+      entry.delivered = true;
+      if (state.last_resolve?.audit_id === input.auditId && state.last_resolve.session_id === entry.session_id) {
+        state.last_resolve.delivered = true;
+      }
+    });
+  } catch {
+  }
+}
 
 // packages/plugin-core/dist/continuity.js
 var CONTINUITY_WINDOW_MS = 10 * 60 * 1e3;
 var CONTINUATION_PATTERNS = [
-  /^\s*(and|also|then|now|next|plus|but|or|so)\b/i,
+  /^\s*(and|also|then|now|next|plus|but|or|so)\b(?=\s+\S)/i,
   /^\s*(what about|how about|tell me more|go on|continue|keep going)\b/i,
   /^\s*(explain|show me|expand|elaborate)\s+(that|this|it|the|more)\b/i,
-  /^\s*(yes|yeah|ok|sure|right),?\s+(now|and|so|continue|keep)\b/i,
+  /^\s*(yes|yeah|yep|ok|okay|sure|right|sounds good)[,;:]?\s+(now|and|so|continue|keep|do|ship|merge|apply|proceed)\b/i,
   /^\s*(can you|could you)\s+(also|now|then|continue|elaborate)\b/i,
+  /^\s*(can|could|would|will)\s+you\s+(please\s+)?(do|fix|change|update|ship|merge|apply|open|show|explain|retry|run|test)\s+(it|that|this|them|those|these)\b/i,
+  /^\s*(do|fix|change|update|ship|merge|apply|open|show|explain|expand|remove|delete|revert|retry|run|test|review|check)\s+(it|that|this|them|those|these|the same)\b/i,
+  /^\s*(go ahead|please do|do it|ship it|merge it|apply it|try again|same (for|with)|one more time)\b/i,
+  /^\s*(why|how|how so|where|when|what next|which one|show me|more)\s*[?.!]*$/i,
+  /^\s*(the (first|second|third|last|other) one|option\s+(one|two|three|[1-3]))\s*[?.!]*$/i,
+  /^\s*(actually|instead|rather|to clarify|i mean|correction:)\b/i,
+  /^\s*(here(?:'s| is) (the|that|it|what)|here you go)\b/i,
   /\b(the one|that|those|these)\b.*\?$/i
-  // referential question
 ];
+var IGNORABLE_PROMPT_PATTERNS = [
+  /^\s*(hi|hey|hello|yo|sup|thanks?|thx|ty|ok|okay|cool|nice|got it|sounds good)[!.\s]*$/i,
+  /^\s*(yes|no|yep|nope|sure|maybe|idk)[!.\s]*$/i,
+  /^\s*\/[a-z-]+(?:\s|$)/i,
+  // slash commands are handled by the host/agent
+  /^\s*[<>][a-z]/i
+  // partial host tags / XML envelopes
+];
+function isIgnorablePrompt(prompt) {
+  const trimmed = prompt.trim();
+  if (!trimmed) return true;
+  return IGNORABLE_PROMPT_PATTERNS.some((re) => re.test(trimmed));
+}
 function isContinuation(prompt, cwd, host, last, sessionId) {
   if (last.host !== host) return false;
-  if (sessionId && last.session_id && last.session_id !== sessionId) return false;
+  if ((sessionId ?? null) !== (last.session_id ?? null)) return false;
   if (last.delivered === false) return false;
   if (last.cwd !== cwd) return false;
   if (Date.now() - last.resolved_at > CONTINUITY_WINDOW_MS) return false;
   if (!last.had_content) return false;
   const trimmed = prompt.trim();
-  if (trimmed.length <= 80) return true;
   for (const re of CONTINUATION_PATTERNS) {
     if (re.test(trimmed)) return true;
   }
   return false;
+}
+function continuationForPrompt(state, prompt, cwd, host, sessionId) {
+  const last = getLastResolveForSession(state, sessionId);
+  return last && isContinuation(prompt, cwd, host, last, sessionId) ? last : null;
 }
 function buildContinuityMarker(auditId) {
   return [
@@ -366,21 +450,6 @@ function firePlanSync(cwd) {
   } catch {
   }
 }
-var TRIVIAL_PATTERNS = [
-  /^\s*(hi|hey|hello|yo|sup|thanks?|thx|ty|ok|okay|cool|nice|got it|sounds good)[!.\s]*$/i,
-  /^\s*(yes|no|yep|nope|sure|maybe|idk)[!.\s]*$/i,
-  /^\s*\/[a-z-]+/i,
-  // slash commands like /clear, /memlin-status — agent will handle.
-  /^\s*[<>][a-z]/i
-  // tags or partial XML
-];
-function isTrivial(prompt) {
-  const trimmed = prompt.trim();
-  if (!trimmed) return true;
-  const tokens = trimmed.split(/\s+/).filter(Boolean);
-  if (tokens.length < 4) return true;
-  return TRIVIAL_PATTERNS.some((re) => re.test(trimmed));
-}
 async function readPersistedTokenFreshness() {
   try {
     const raw = await fs3.readFile(
@@ -428,23 +497,31 @@ async function main() {
   }
   const prompt = payload.prompt;
   const cwd = payload.cwd || process.cwd();
-  if (isTrivial(prompt)) {
+  const sessionId = payload.session_id ?? null;
+  if (isIgnorablePrompt(prompt)) {
     process.exit(0);
   }
   if (!await readPersistedTokenFreshness()) {
     process.exit(0);
   }
-  const scribeNotice = await takeCorrectionNotice(payload.session_id) + await takeScribeNotice(payload.session_id);
+  const scribeNotice = await takeCorrectionNotice(sessionId ?? void 0) + await takeScribeNotice(sessionId ?? void 0);
   try {
     const state = await readState();
-    if (state.last_resolve && isContinuation(prompt, cwd, "claude-code", state.last_resolve, payload.session_id ?? null)) {
-      process.stdout.write(scribeNotice + buildContinuityMarker(state.last_resolve.audit_id));
+    const continuation = continuationForPrompt(
+      state,
+      prompt,
+      cwd,
+      "claude-code",
+      sessionId
+    );
+    if (continuation) {
+      process.stdout.write(scribeNotice + buildContinuityMarker(continuation.audit_id));
       process.exit(0);
     }
   } catch {
   }
   const lateBundle = await takePendingBundle(cwd, "claude-code", {
-    sessionId: payload.session_id ?? null
+    sessionId
   });
   const companion = await companionForDelegation().catch(() => null);
   if (!companion) firePlanSync(cwd);
@@ -453,7 +530,7 @@ async function main() {
     task: prompt,
     cwd,
     host: "claude-code",
-    sessionId: payload.session_id ?? null
+    sessionId
   });
   if (outcome.bundle?.rendered) {
     process.stdout.write(
@@ -470,14 +547,12 @@ async function main() {
   }
   if (lateBundle) {
     process.stdout.write(scribeNotice + buildLateDeliveryEnvelope(lateBundle));
-    try {
-      const state = await readState();
-      if (state.last_resolve && state.last_resolve.audit_id === lateBundle.audit_id) {
-        state.last_resolve.delivered = true;
-        await writeState(state);
-      }
-    } catch {
-    }
+    await markLastResolveDelivered({
+      auditId: lateBundle.audit_id,
+      sessionId,
+      host: "claude-code",
+      cwd
+    });
     process.exit(0);
   }
   if (scribeNotice) process.stdout.write(scribeNotice);

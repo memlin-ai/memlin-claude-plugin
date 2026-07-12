@@ -4305,7 +4305,11 @@ var init_schemas = __esm({
       // Optional CRDT state from collaborative editors — base64-encoded Y.Doc
       // state-as-update. When present, restored on next load so reloads don't
       // lose in-flight collab edits.
-      yjs_state_b64: external_exports.string().nullable().optional()
+      yjs_state_b64: external_exports.string().nullable().optional(),
+      // Service-role automation may attribute a write to a specific account
+      // member. The database ignores this for non-service callers, preventing
+      // ordinary clients from spoofing authorship.
+      author_id: UUID.nullable().optional()
     });
     DocumentPatchSchema = external_exports.object({
       document_id: UUID,
@@ -9134,7 +9138,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.47";
+  cachedAgentVersion = "0.2.48";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -10493,10 +10497,21 @@ async function updateState(mutate) {
 function hash(content) {
   return crypto.createHash("sha256").update(content).digest("hex");
 }
+function cacheLastResolve(state, entry) {
+  state.last_resolve = entry;
+  if (!entry.session_id) return;
+  state.last_resolves ??= {};
+  state.last_resolves[entry.session_id] = entry;
+  const entries = Object.entries(state.last_resolves);
+  if (entries.length <= MAX_LAST_RESOLVE_SESSIONS) return;
+  entries.sort(([, a], [, b]) => b.resolved_at - a.resolved_at).slice(MAX_LAST_RESOLVE_SESSIONS).forEach(([sessionId]) => {
+    delete state.last_resolves?.[sessionId];
+  });
+}
 async function recordLastResolve(entry) {
   try {
     await updateState((state) => {
-      state.last_resolve = entry;
+      cacheLastResolve(state, entry);
     });
   } catch {
   }
@@ -10517,11 +10532,12 @@ function diffStates(prev, current) {
   }
   return { added, modified, deleted };
 }
-var STATE_FILE, EMPTY2, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
+var STATE_FILE, MAX_LAST_RESOLVE_SESSIONS, EMPTY2, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
 var init_state = __esm({
   "packages/plugin-core/src/state.ts"() {
     "use strict";
     STATE_FILE = path11.join(os10.homedir(), ".config", "memlin", "state.json");
+    MAX_LAST_RESOLVE_SESSIONS = 32;
     EMPTY2 = { documents: {} };
     LOCK_DIR = `${STATE_FILE}.lock`;
     LOCK_STALE_MS = 2e3;
@@ -12369,6 +12385,20 @@ var init_pending_bundle = __esm({
   }
 });
 
+// packages/plugin-core/src/continuity.ts
+function bundleHasContinuityContent(bundle) {
+  const claims = bundle.claim_guardrails;
+  return Boolean(bundle.primary_skill) || bundle.supporting_skills.length > 0 || bundle.memory.length > 0 || bundle.goals.length > 0 || bundle.schemas.length > 0 || (bundle.decisions?.length ?? 0) > 0 || (bundle.required_core?.length ?? 0) > 0 || (bundle.pinned?.length ?? 0) > 0 || (bundle.open_threads?.length ?? 0) > 0 || (bundle.pack_context?.length ?? 0) > 0 || (claims?.approved.length ?? 0) > 0 || (claims?.blocked.length ?? 0) > 0 || (claims?.competitor_facts.length ?? 0) > 0;
+}
+var CONTINUITY_WINDOW_MS;
+var init_continuity = __esm({
+  "packages/plugin-core/src/continuity.ts"() {
+    "use strict";
+    init_state();
+    CONTINUITY_WINDOW_MS = 10 * 60 * 1e3;
+  }
+});
+
 // packages/plugin-core/src/cli/compile-bundle.ts
 function formatCitation3(c) {
   const parts = [];
@@ -12518,6 +12548,81 @@ function renderPinned(items) {
   }
   return lines.join("\n");
 }
+function hasRequiredCoreLane(bundle) {
+  return (bundle.required_core?.length ?? 0) > 0 || (bundle.required_core_status?.expected_ids.length ?? 0) > 0 || bundle.required_core_status?.complete === false;
+}
+function renderRequiredCore(items, status) {
+  const lines = [];
+  lines.push("## REQUIRED CORE (mandatory governance-required context \u2014 obey these)");
+  lines.push("# Deterministically included by workspace governance, not selected by similarity");
+  lines.push("# and not equivalent to a user pin. These requirements outrank retrieved context.");
+  if (status) {
+    lines.push(
+      `# delivery receipt: ${status.delivered_ids.length}/${status.expected_ids.length} required item(s) delivered`
+    );
+  }
+  if (status?.complete === false) {
+    lines.push("# !!! REQUIRED CORE DEGRADED \u2014 MANDATORY GOVERNANCE CONTEXT IS INCOMPLETE !!!");
+    lines.push("# STOP: do not claim governance compliance or proceed as if the full core was read.");
+    lines.push(`# missing required IDs: ${status.missing_ids.join(", ") || "(none reported)"}`);
+    lines.push(`# resolver errors: ${status.errors.join(" | ") || "(none reported)"}`);
+    lines.push("# Re-resolve or surface this degraded state before governed work continues.");
+  }
+  lines.push("");
+  for (const item of items) {
+    lines.push(`### [${item.kind.toUpperCase()}] ${item.title}`);
+    lines.push(`# source: ${formatCitation3(item)} \xB7 required-core \xB7 governance-required`);
+    lines.push("");
+    lines.push(item.body.trimEnd());
+    lines.push("");
+  }
+  if (items.length === 0) {
+    lines.push("# (no required-core documents were delivered)");
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+function renderRequiredCoreXml(items, status) {
+  const lines = [];
+  const complete = status ? String(status.complete) : "unknown";
+  const expected = status?.expected_ids.length ?? items.length;
+  const delivered = status?.delivered_ids.length ?? items.length;
+  lines.push(
+    `  <required_core mandatory="true" governance_required="true" complete="${complete}" expected_count="${expected}" delivered_count="${delivered}">`
+  );
+  if (status?.complete === false) {
+    lines.push('    <degraded_warning severity="critical">');
+    lines.push(
+      "      REQUIRED CORE DEGRADED: mandatory governance context is incomplete. Do not claim governance compliance or proceed as if the full core was read."
+    );
+    if (status.missing_ids.length > 0) {
+      lines.push("      <missing_ids>");
+      for (const id of status.missing_ids) lines.push(`        <id>${xmlText(id)}</id>`);
+      lines.push("      </missing_ids>");
+    } else {
+      lines.push('      <missing_ids none_reported="true" />');
+    }
+    if (status.errors.length > 0) {
+      lines.push("      <errors>");
+      for (const error of status.errors) lines.push(`        <error>${xmlText(error)}</error>`);
+      lines.push("      </errors>");
+    } else {
+      lines.push('      <errors none_reported="true" />');
+    }
+    lines.push("    </degraded_warning>");
+  }
+  for (const item of items) {
+    lines.push(
+      renderItemXml("required_item", item, {
+        kind: item.kind,
+        mandatory: "true",
+        inclusion: "governance-required"
+      })
+    );
+  }
+  lines.push("  </required_core>");
+  return lines;
+}
 function bundleSummary(r) {
   const b = r.bundle;
   const totalSkills = (b.primary_skill ? 1 : 0) + b.supporting_skills.length;
@@ -12530,6 +12635,15 @@ function bundleSummary(r) {
   pieces.push(`${b.schemas.length} ${b.schemas.length === 1 ? "schema" : "schemas"}`);
   const decisionCount = b.decisions?.length ?? 0;
   pieces.push(`${decisionCount} ${decisionCount === 1 ? "decision" : "decisions"}`);
+  const requiredCoreCount = b.required_core?.length ?? 0;
+  if (hasRequiredCoreLane(b)) {
+    const status = b.required_core_status;
+    const errorCount = status?.errors.length ?? 0;
+    const delivery = status?.complete === false ? ` (INCOMPLETE: ${status.missing_ids.length} missing, ${errorCount} ${errorCount === 1 ? "error" : "errors"})` : status?.complete === true ? " (complete)" : "";
+    pieces.push(
+      `${requiredCoreCount} required-core ${requiredCoreCount === 1 ? "item" : "items"}${delivery}`
+    );
+  }
   const pinnedCount = b.pinned?.length ?? 0;
   if (pinnedCount > 0) {
     pieces.push(`${pinnedCount} pinned`);
@@ -12567,6 +12681,9 @@ function truncateTask(task) {
 function xmlAttr(value) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
 }
+function xmlText(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+}
 function attribution(e) {
   if (e.same_user) return "your other session \xB7 ";
   const bits = [];
@@ -12583,12 +12700,58 @@ function compileBundle(result, parsedTask, agent) {
     if (result.active_component) {
       out2.push(`  <active_component name="${result.active_component.name}" boost="0.15" />`);
     }
+    if (hasRequiredCoreLane(b)) {
+      out2.push(...renderRequiredCoreXml(b.required_core ?? [], b.required_core_status));
+    }
     if (b.pinned && b.pinned.length > 0) {
       out2.push("  <standing_directives>");
       for (const item of b.pinned) {
         out2.push(renderItemXml("directive", item, { kind: item.kind }));
       }
       out2.push("  </standing_directives>");
+    }
+    const openThreads = b.open_threads ?? [];
+    if (openThreads.length > 0) {
+      out2.push('  <open_threads recall="entity-and-status" similarity_bypass="true">');
+      for (const item of openThreads) {
+        out2.push(
+          renderItemXml("open_thread", item, {
+            status: item.thread?.status ?? "open",
+            occurred_at: xmlAttr(item.thread?.occurred_at ?? ""),
+            entities: xmlAttr(item.thread?.entities.join(", ") ?? "")
+          })
+        );
+      }
+      out2.push("  </open_threads>");
+    }
+    const packContext = b.pack_context ?? [];
+    if (packContext.length > 0) {
+      out2.push('  <pack_context read_only="true" publisher_attributed="true">');
+      for (const item of packContext) {
+        out2.push(
+          renderItemXml("pack_item", item, {
+            kind: item.kind,
+            pack_slug: xmlAttr(item.pack?.slug ?? ""),
+            pack_name: xmlAttr(item.pack?.name ?? ""),
+            pack_version: String(item.pack?.version ?? ""),
+            publisher: xmlAttr(item.pack?.publisher_name ?? "")
+          })
+        );
+      }
+      out2.push("  </pack_context>");
+    }
+    if (b.claim_guardrails) {
+      out2.push("  <claim_guardrails>");
+      for (const item of b.claim_guardrails.approved) {
+        out2.push(renderItemXml("approved_claim", item));
+      }
+      for (const item of b.claim_guardrails.blocked) {
+        out2.push(renderItemXml("blocked_claim", item, { prohibited: "true" }));
+      }
+      for (const item of b.claim_guardrails.competitor_facts) {
+        out2.push(renderItemXml("competitor_fact", item));
+      }
+      out2.push("  </claim_guardrails>");
     }
     if (b.architecture) {
       out2.push("  <architecture>");
@@ -12692,6 +12855,9 @@ function compileBundle(result, parsedTask, agent) {
     out2.push(tokenLine);
     out2.push(`# ${READER_CONTRACT}`);
     out2.push("");
+    if (hasRequiredCoreLane(b)) {
+      out2.push(renderRequiredCore(b.required_core ?? [], b.required_core_status));
+    }
     if (b.pinned && b.pinned.length > 0) {
       out2.push(renderPinned(b.pinned));
     }
@@ -13116,7 +13282,7 @@ async function main12() {
     }
   }
   if (result.audit_id) {
-    const bundleHasContent = Boolean(result.bundle.primary_skill) || result.bundle.supporting_skills.length > 0 || result.bundle.memory.length > 0 || result.bundle.goals.length > 0 || result.bundle.schemas.length > 0 || (result.bundle.decisions?.length ?? 0) > 0 || (result.bundle.pinned?.length ?? 0) > 0;
+    const bundleHasContent = bundleHasContinuityContent(result.bundle);
     await recordLastResolve({
       task: parsed.task,
       audit_id: result.audit_id,
@@ -13143,6 +13309,7 @@ var init_resolve = __esm({
     init_project_resolver();
     init_state();
     init_pending_bundle();
+    init_continuity();
     init_compile_bundle();
     main12().catch((err2) => {
       console.error("memlin resolve failed:", err2 instanceof Error ? err2.message : err2);
@@ -15499,6 +15666,90 @@ var init_attach_path = __esm({
   }
 });
 
+// packages/plugin-core/src/audit-replay-renderer.ts
+function auditReplaySourceLaneLabel(sourceLane) {
+  const labels = {
+    open_thread: "OPEN THREAD",
+    pack_context: "SUBSCRIBED PACK CONTEXT",
+    claim_guardrail_approved: "APPROVED CLAIM",
+    claim_guardrail_blocked: "BLOCKED CLAIM \u2014 DO NOT SAY",
+    claim_guardrail_competitor_fact: "COMPETITOR FACT"
+  };
+  return labels[sourceLane] ?? (sourceLane || "supplemental").replace(/_/g, " ").toUpperCase();
+}
+function receiptToReplayItem(item) {
+  return {
+    id: item.document_id,
+    kind: item.kind,
+    rank: item.lane_rank,
+    similarity: item.similarity,
+    version_number: item.version_number,
+    path: item.path,
+    role: item.kind,
+    component_id: item.component_id,
+    component_name: item.component_name,
+    title: item.title,
+    content: item.content,
+    author_id: item.author_id,
+    source_lane: item.source_lane,
+    delivery_role: item.role,
+    inclusion_reason: item.inclusion_reason,
+    estimated_tokens: item.estimated_tokens,
+    repo: item.repo,
+    drift: item.drift
+  };
+}
+function supplementalItemsForReplay(replay) {
+  if (Array.isArray(replay.supplemental_context)) return replay.supplemental_context;
+  if (!Array.isArray(replay.delivered_items)) return [];
+  return replay.delivered_items.filter((item) => !CLASSIFIED_REPLAY_LANES.has(item.source_lane)).map(receiptToReplayItem);
+}
+function driftVersion(item) {
+  if (!item.drift.drifted) return `v${item.version_number}`;
+  const head = item.drift.current_version_number;
+  return head == null ? `v${item.version_number} (drift)` : `v${item.version_number} (head is now v${head} \u2014 drift)`;
+}
+function renderAuditSupplementalContext(items) {
+  if (items.length === 0) return "";
+  const lines = [
+    "## SUPPLEMENTAL CONTEXT (exact receipt-only resolver lanes)",
+    "# Non-semantic context delivered by resolver feeds outside required core and user pins.",
+    ""
+  ];
+  for (const item of items) {
+    const sourceLane = item.source_lane ?? "supplemental";
+    lines.push(`### ${auditReplaySourceLaneLabel(sourceLane)}: ${item.title}`);
+    lines.push(
+      `# source-lane: ${sourceLane} \xB7 ${item.path ?? "(no path)"} \xB7 ${driftVersion(item)}`
+    );
+    if (item.inclusion_reason || item.delivery_role) {
+      lines.push(
+        `# delivery: ${item.inclusion_reason ?? "(unspecified)"}${item.delivery_role ? ` \xB7 role: ${item.delivery_role}` : ""}`
+      );
+    }
+    lines.push("");
+    lines.push(item.content.trimEnd());
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+var CLASSIFIED_REPLAY_LANES;
+var init_audit_replay_renderer = __esm({
+  "packages/plugin-core/src/audit-replay-renderer.ts"() {
+    "use strict";
+    CLASSIFIED_REPLAY_LANES = /* @__PURE__ */ new Set([
+      "primary_skill",
+      "supporting_skill",
+      "goal",
+      "decision",
+      "schema",
+      "memory",
+      "required",
+      "pinned"
+    ]);
+  }
+});
+
 // packages/plugin-core/src/cli/audit-replay.ts
 var audit_replay_exports = {};
 function parseArgs8(argv) {
@@ -15580,6 +15831,7 @@ async function main28() {
     console.error(`memlin audit replay failed: ${msg}`);
     process.exit(1);
   }
+  const supplementalContext = supplementalItemsForReplay(replay);
   const out2 = [];
   out2.push(`# Memlin Audit Replay \u2014 resolved ${replay.resolved_at}`);
   out2.push(`# audit_id: ${replay.audit_id}`);
@@ -15608,6 +15860,14 @@ async function main28() {
       '#   See per-item "head is now vN" annotations below.'
     );
   }
+  if (replay.required_core_status && !replay.required_core_status.complete) {
+    const required = replay.required_core_status;
+    out2.push(
+      "# REQUIRED CORE DEGRADED \u2014 mandatory context was incomplete at resolve time.",
+      `#   missing: ${required.missing_ids.join(", ") || "(none listed)"}`,
+      ...required.errors.map((error) => `#   error: ${error}`)
+    );
+  }
   out2.push("");
   if (replay.brand_guidelines) {
     const bg = replay.brand_guidelines;
@@ -15615,6 +15875,14 @@ async function main28() {
     const cite = `brand-guidelines://${bg.id} \xB7 ${bg.updated_at_at_resolve ?? "(unknown)"}` + (bg.drifted ? ` \xB7 DRIFT (current updated_at: ${bg.current_updated_at})` : "");
     out2.push(`# source: ${cite}`);
     out2.push("");
+  }
+  if (replay.required_core && replay.required_core.length > 0) {
+    out2.push("## REQUIRED CORE (mandatory at resolve time)");
+    out2.push("# Governance-required context delivered regardless of similarity or token cap.");
+    out2.push("");
+    for (const item of replay.required_core) {
+      out2.push(renderItem2(item));
+    }
   }
   if (replay.pinned && replay.pinned.length > 0) {
     out2.push("## STANDING DIRECTIVES (pinned at resolve time)");
@@ -15624,7 +15892,10 @@ async function main28() {
       out2.push(renderItem2(item));
     }
   }
-  if (replay.items.length === 0) {
+  if (supplementalContext.length > 0) {
+    out2.push(renderAuditSupplementalContext(supplementalContext));
+  }
+  if (replay.items.length === 0 && (!replay.required_core || replay.required_core.length === 0) && (!replay.pinned || replay.pinned.length === 0) && supplementalContext.length === 0) {
     out2.push("# (no items above threshold at resolve time)");
   } else {
     for (const item of replay.items) {
@@ -15639,6 +15910,7 @@ var init_audit_replay = __esm({
     "use strict";
     init_client();
     init_args();
+    init_audit_replay_renderer();
     main28().catch((err2) => {
       console.error("memlin audit replay failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
@@ -18070,7 +18342,7 @@ async function findComponentRoots(root) {
     for (const e of entries) {
       if (!e.isDirectory())
         continue;
-      if (SKIP_DIRS.has(e.name) || COMPONENT_SCAN_SKIP.has(e.name))
+      if (SKIP_DIRS.has(e.name) || COMPONENT_SCAN_SKIP.has(e.name) || e.name === "packages" && depth > 0)
         continue;
       await walk(path31.join(dir, e.name), rel ? `${rel}/${e.name}` : e.name, depth + 1);
     }
@@ -18643,7 +18915,7 @@ var init_repo_walker = __esm({
       "gemfile",
       "composer.json"
     ]);
-    COMPONENT_SCAN_SKIP = /* @__PURE__ */ new Set(["bin", "obj", "packages", "vendor", ".vs"]);
+    COMPONENT_SCAN_SKIP = /* @__PURE__ */ new Set(["bin", "obj", "vendor", ".vs"]);
     MAX_MARKDOWN_FILES = 30;
     MAX_MARKDOWN_FILE_BYTES = 50 * 1024;
     MAX_MARKDOWN_TOTAL_BYTES = 400 * 1024;
