@@ -2,7 +2,7 @@
 name: memlin-features
 description: Create and tag Features / Workstreams — project-scoped units of work that gather the thoughts, plans, goals, and PRs behind one thing. Usage - /memlin-features [list | create "<title>" | add <feature-id> <kind> <id>]
 allowed-tools: Bash
-argument-hint: [list | create "<title>" [--summary S] | add <feature-id> <kind> <id>]
+argument-hint: '[list | create "<title>" [--summary S] | add <feature-id> <kind> <id>]'
 ---
 
 # /memlin-features

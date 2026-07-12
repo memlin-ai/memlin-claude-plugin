@@ -2,7 +2,7 @@
 name: memlin-actions-list
 description: List callable Memlin actions in this workspace (id, schema, invoke URL). Usage - /memlin-actions-list [--filter s] [--limit n] [--json]
 allowed-tools: Bash
-argument-hint: [--filter <substring>] [--limit <n>] [--json]
+argument-hint: '[--filter <substring>] [--limit <n>] [--json]'
 ---
 
 # /memlin-actions-list

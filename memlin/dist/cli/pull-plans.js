@@ -578,6 +578,10 @@ var MemlinApiClient = class {
   async writeDocument(input) {
     return this.request("POST", "/documents", input);
   }
+  /** Atomically compare-and-sync the server-owned project CONTRACT.md. */
+  async syncWorkspaceContract(input) {
+    return this.request("POST", "/workspace-contract/sync", input);
+  }
   /** GET /documents/{id} — fetch one doc with body + metadata. */
   async getDocument(documentId) {
     return this.request("GET", `/documents/${encodeURIComponent(documentId)}`);

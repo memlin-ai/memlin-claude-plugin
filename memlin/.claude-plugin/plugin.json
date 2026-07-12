@@ -1,5 +1,6 @@
 {
   "name": "memlin",
+  "version": "0.2.48",
   "description": "Memlin — sync memory, skills, goals, and schemas from your Memlin workspace.",
   "author": {
     "name": "Memlin",
