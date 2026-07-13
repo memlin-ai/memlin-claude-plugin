@@ -9139,7 +9139,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.49";
+  cachedAgentVersion = "0.2.50";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -10086,6 +10086,7 @@ var init_login = __esm({
 });
 
 // packages/plugin-core/src/workspace-binding.ts
+import { randomUUID } from "node:crypto";
 import { promises as fs6 } from "node:fs";
 import path7 from "node:path";
 async function findWorkspaceBinding(startDir) {
@@ -10114,9 +10115,35 @@ async function findWorkspaceBinding(startDir) {
   return null;
 }
 async function writeWorkspaceBinding(workspaceRoot, binding) {
-  const dir = path7.join(path7.resolve(workspaceRoot), WORKSPACE_DIR_NAME);
-  await fs6.mkdir(dir, { recursive: true });
+  if (typeof binding.account_id !== "string" || binding.account_id.length === 0) {
+    throw new Error("Workspace binding account_id is required.");
+  }
+  const root = await fs6.realpath(path7.resolve(workspaceRoot));
+  const rootEntry = await fs6.stat(root);
+  if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
+  const dir = path7.join(root, WORKSPACE_DIR_NAME);
+  try {
+    const entry = await fs6.lstat(dir);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Refusing an unsafe Memlin workspace directory at ${dir}`);
+    }
+  } catch (error) {
+    if (!isFileNotFound(error)) throw error;
+    await fs6.mkdir(dir, { mode: 448, recursive: true });
+    const entry = await fs6.lstat(dir);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Refusing an unsafe Memlin workspace directory at ${dir}`);
+    }
+  }
   const file = path7.join(dir, WORKSPACE_BINDING_FILE);
+  try {
+    const existing = await fs6.lstat(file);
+    if (!existing.isFile() || existing.isSymbolicLink()) {
+      throw new Error(`Refusing to replace an unsafe workspace binding at ${file}`);
+    }
+  } catch (error) {
+    if (!isFileNotFound(error)) throw error;
+  }
   const body2 = JSON.stringify(
     {
       account_id: binding.account_id,
@@ -10126,17 +10153,54 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
     null,
     2
   );
-  await fs6.writeFile(file, body2 + "\n", "utf8");
-  return file;
+  const temporary = path7.join(dir, `.config.${randomUUID()}.tmp`);
+  let handle2;
+  try {
+    handle2 = await fs6.open(temporary, "wx", 384);
+    await handle2.writeFile(body2 + "\n", "utf8");
+    await handle2.sync();
+    await handle2.close();
+    handle2 = void 0;
+    await fs6.rename(temporary, file);
+    const installed = await fs6.lstat(file);
+    if (!installed.isFile() || installed.isSymbolicLink()) {
+      throw new Error(`Workspace binding verification failed at ${file}`);
+    }
+    return file;
+  } finally {
+    await handle2?.close().catch(() => void 0);
+    await fs6.unlink(temporary).catch(() => void 0);
+  }
 }
 async function clearWorkspaceBinding(workspaceRoot) {
-  const file = path7.join(path7.resolve(workspaceRoot), WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+  const root = await fs6.realpath(path7.resolve(workspaceRoot));
+  const rootEntry = await fs6.stat(root);
+  if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
+  const dir = path7.join(root, WORKSPACE_DIR_NAME);
   try {
+    const entry = await fs6.lstat(dir);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) {
+      throw new Error(`Refusing an unsafe Memlin workspace directory at ${dir}`);
+    }
+  } catch (error) {
+    if (isFileNotFound(error)) return false;
+    throw error;
+  }
+  const file = path7.join(dir, WORKSPACE_BINDING_FILE);
+  try {
+    const entry = await fs6.lstat(file);
+    if (!entry.isFile() || entry.isSymbolicLink()) {
+      throw new Error(`Refusing to remove an unsafe workspace binding at ${file}`);
+    }
     await fs6.unlink(file);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isFileNotFound(error)) return false;
+    throw error;
   }
+}
+function isFileNotFound(error) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE;
 var init_workspace_binding = __esm({
