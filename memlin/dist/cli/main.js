@@ -9139,7 +9139,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.50";
+  cachedAgentVersion = "0.2.51";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -10087,9 +10087,9 @@ var init_login = __esm({
 
 // packages/plugin-core/src/workspace-binding.ts
 import { randomUUID } from "node:crypto";
-import { promises as fs6 } from "node:fs";
+import { constants, promises as fs6 } from "node:fs";
 import path7 from "node:path";
-async function findWorkspaceBinding(startDir) {
+async function walkForWorkspaceBinding(startDir) {
   let dir = path7.resolve(startDir);
   for (let i = 0; i < 64; i++) {
     const candidate = path7.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
@@ -10113,6 +10113,169 @@ async function findWorkspaceBinding(startDir) {
     dir = parent;
   }
   return null;
+}
+async function readSmallRegularFile(file) {
+  let before;
+  try {
+    before = await fs6.lstat(file);
+  } catch (error) {
+    return isFileNotFound(error) ? { kind: "missing" } : { kind: "invalid" };
+  }
+  try {
+    if (before.isSymbolicLink() || !before.isFile() || before.size > GIT_POINTER_MAX_BYTES) {
+      return { kind: "invalid" };
+    }
+    const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+    const handle2 = await fs6.open(file, constants.O_RDONLY | noFollow);
+    try {
+      const opened = await handle2.stat();
+      if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size || opened.size > GIT_POINTER_MAX_BYTES) {
+        return { kind: "invalid" };
+      }
+      const bytes = await handle2.readFile();
+      const [after, afterPath] = await Promise.all([handle2.stat(), fs6.lstat(file)]);
+      if (afterPath.isSymbolicLink() || !afterPath.isFile() || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || afterPath.dev !== opened.dev || afterPath.ino !== opened.ino || afterPath.size !== opened.size || bytes.byteLength !== opened.size || bytes.includes(0)) {
+        return { kind: "invalid" };
+      }
+      return { kind: "ok", value: bytes.toString("utf8") };
+    } finally {
+      await handle2.close();
+    }
+  } catch {
+    return { kind: "invalid" };
+  }
+}
+function containedBy(parent, child) {
+  const relative = path7.relative(parent, child);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relative);
+}
+async function canonicalSafeDirectory(candidate) {
+  try {
+    const before = await fs6.lstat(candidate);
+    if (before.isSymbolicLink() || !before.isDirectory()) return null;
+    await fs6.access(candidate, constants.R_OK | constants.X_OK);
+    const canonical = await fs6.realpath(candidate);
+    const after = await fs6.lstat(candidate);
+    if (after.isSymbolicLink() || !after.isDirectory() || after.dev !== before.dev || after.ino !== before.ino) {
+      return null;
+    }
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+function gitIdentity(checkoutRoot, state, repositoryRoot = checkoutRoot) {
+  return {
+    checkout_root: checkoutRoot,
+    repository_root: repositoryRoot,
+    state
+  };
+}
+async function resolveGitWorkspaceIdentity(startDir) {
+  const requested = path7.resolve(startDir);
+  let canonicalStart;
+  try {
+    canonicalStart = await fs6.realpath(requested);
+    const startEntry = await fs6.stat(canonicalStart);
+    if (!startEntry.isDirectory()) return gitIdentity(canonicalStart, "unknown");
+  } catch {
+    return gitIdentity(requested, "unknown");
+  }
+  let dir = canonicalStart;
+  for (let i = 0; i < 64; i++) {
+    const gitEntry = path7.join(dir, ".git");
+    let entry;
+    try {
+      entry = await fs6.lstat(gitEntry);
+    } catch (error) {
+      if (!isFileNotFound(error)) return gitIdentity(dir, "unknown");
+      const parent = path7.dirname(dir);
+      if (parent === dir) return gitIdentity(canonicalStart, "none");
+      dir = parent;
+      continue;
+    }
+    const checkoutRoot = dir;
+    if (entry.isSymbolicLink()) return gitIdentity(checkoutRoot, "unknown");
+    if (entry.isDirectory()) {
+      if (!await canonicalSafeDirectory(gitEntry)) return gitIdentity(checkoutRoot, "unknown");
+      return gitIdentity(checkoutRoot, "main");
+    }
+    if (!entry.isFile()) return gitIdentity(checkoutRoot, "unknown");
+    const pointerRead = await readSmallRegularFile(gitEntry);
+    if (pointerRead.kind !== "ok" || pointerRead.value.includes("\0")) {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const pointerMatch = /^gitdir:[ \t]*([^\r\n]+)\r?\n?$/.exec(pointerRead.value);
+    const pointerValue = pointerMatch?.[1];
+    if (!pointerValue) return gitIdentity(checkoutRoot, "unknown");
+    let gitDirCandidate;
+    try {
+      gitDirCandidate = path7.isAbsolute(pointerValue) ? pointerValue : path7.resolve(checkoutRoot, pointerValue);
+    } catch {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const gitDir = await canonicalSafeDirectory(gitDirCandidate);
+    if (!gitDir) return gitIdentity(checkoutRoot, "unknown");
+    const commonRead = await readSmallRegularFile(path7.join(gitDir, "commondir"));
+    if (commonRead.kind === "missing") {
+      const gitDirParent = path7.dirname(gitDir);
+      const looksLikeWorktreeAdmin = path7.basename(gitDirParent) === "worktrees" && path7.basename(path7.dirname(gitDirParent)) === ".git";
+      if (looksLikeWorktreeAdmin) return gitIdentity(checkoutRoot, "unknown");
+      return gitIdentity(checkoutRoot, "main");
+    }
+    if (commonRead.kind !== "ok" || commonRead.value.includes("\0")) {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const commonMatch = /^([^\r\n]+)\r?\n?$/.exec(commonRead.value);
+    const commonValue = commonMatch?.[1];
+    if (!commonValue) return gitIdentity(checkoutRoot, "unknown");
+    let commonCandidate;
+    try {
+      commonCandidate = path7.isAbsolute(commonValue) ? commonValue : path7.resolve(gitDir, commonValue);
+    } catch {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const commonDir = await canonicalSafeDirectory(commonCandidate);
+    if (!commonDir) return gitIdentity(checkoutRoot, "unknown");
+    const worktreesDir = path7.join(commonDir, "worktrees");
+    if (path7.basename(commonDir) !== ".git" || gitDir === worktreesDir || !containedBy(worktreesDir, gitDir)) {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const repositoryRoot = path7.dirname(commonDir);
+    const repositoryGitDir = await canonicalSafeDirectory(path7.join(repositoryRoot, ".git"));
+    if (!repositoryGitDir || repositoryGitDir !== commonDir) {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const reverseRead = await readSmallRegularFile(path7.join(gitDir, "gitdir"));
+    if (reverseRead.kind !== "ok" || reverseRead.value.includes("\0")) {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    const reverseMatch = /^([^\r\n]+)\r?\n?$/.exec(reverseRead.value);
+    const reverseValue = reverseMatch?.[1];
+    if (!reverseValue) return gitIdentity(checkoutRoot, "unknown");
+    try {
+      const reverseCandidate = path7.isAbsolute(reverseValue) ? reverseValue : path7.resolve(gitDir, reverseValue);
+      const [reverseTarget, checkoutGitFile] = await Promise.all([
+        fs6.realpath(reverseCandidate),
+        fs6.realpath(gitEntry)
+      ]);
+      if (reverseTarget !== checkoutGitFile) return gitIdentity(checkoutRoot, "unknown");
+    } catch {
+      return gitIdentity(checkoutRoot, "unknown");
+    }
+    return gitIdentity(checkoutRoot, "worktree", repositoryRoot);
+  }
+  return gitIdentity(canonicalStart, "unknown");
+}
+async function findWorkspaceBinding(startDir) {
+  const direct = await walkForWorkspaceBinding(startDir);
+  const gitIdentity2 = await resolveGitWorkspaceIdentity(startDir);
+  if (gitIdentity2.state !== "worktree") return direct;
+  if (direct) {
+    const bindingRoot = await fs6.realpath(direct.workspaceRoot).catch(() => path7.resolve(direct.workspaceRoot));
+    if (containedBy(gitIdentity2.checkout_root, bindingRoot)) return direct;
+  }
+  return walkForWorkspaceBinding(gitIdentity2.repository_root);
 }
 async function writeWorkspaceBinding(workspaceRoot, binding) {
   if (typeof binding.account_id !== "string" || binding.account_id.length === 0) {
@@ -10202,12 +10365,13 @@ async function clearWorkspaceBinding(workspaceRoot) {
 function isFileNotFound(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
-var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE;
+var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE, GIT_POINTER_MAX_BYTES;
 var init_workspace_binding = __esm({
   "packages/plugin-core/src/workspace-binding.ts"() {
     "use strict";
     WORKSPACE_DIR_NAME = ".memlin";
     WORKSPACE_BINDING_FILE = "config.json";
+    GIT_POINTER_MAX_BYTES = 8 * 1024;
   }
 });
 
@@ -80208,13 +80372,13 @@ ${lanes.join("\n")}
             const declaration = symbol.valueDeclaration;
             if (declaration && container2.declarations) {
               for (const d of container2.declarations) {
-                if (containedBy(declaration, d)) {
+                if (containedBy2(declaration, d)) {
                   return true;
                 }
               }
             }
             return false;
-            function containedBy(a, b) {
+            function containedBy2(a, b) {
               return b.pos <= a.pos && b.end >= a.end;
             }
           }
@@ -235944,7 +236108,7 @@ var require_scan = __commonJS({
 var require_parse2 = __commonJS({
   "node_modules/.pnpm/picomatch@4.0.4/node_modules/picomatch/lib/parse.js"(exports2, module2) {
     "use strict";
-    var constants = require_constants();
+    var constants2 = require_constants();
     var utils = require_utils2();
     var {
       MAX_LENGTH,
@@ -235952,7 +236116,7 @@ var require_parse2 = __commonJS({
       REGEX_NON_SPECIAL_CHARS,
       REGEX_SPECIAL_CHARS_BACKREF,
       REPLACEMENTS
-    } = constants;
+    } = constants2;
     var expandRange = (args2, options2) => {
       if (typeof options2.expandRange === "function") {
         return options2.expandRange(...args2, options2);
@@ -236158,7 +236322,7 @@ var require_parse2 = __commonJS({
       if (options2.maxExtglobRecursion === false) {
         return { risky: false };
       }
-      const max = typeof options2.maxExtglobRecursion === "number" ? options2.maxExtglobRecursion : constants.DEFAULT_MAX_EXTGLOB_RECURSION;
+      const max = typeof options2.maxExtglobRecursion === "number" ? options2.maxExtglobRecursion : constants2.DEFAULT_MAX_EXTGLOB_RECURSION;
       const branches = splitTopLevel(body2).map((branch) => branch.trim());
       if (branches.length > 1) {
         if (branches.some((branch) => branch === "") || branches.some((branch) => /^[*?]+$/.test(branch)) || hasRepeatedCharPrefixOverlap(branches)) {
@@ -236190,8 +236354,8 @@ var require_parse2 = __commonJS({
       const bos = { type: "bos", value: "", output: opts.prepend || "" };
       const tokens = [bos];
       const capture = opts.capture ? "" : "?:";
-      const PLATFORM_CHARS = constants.globChars(opts.windows);
-      const EXTGLOB_CHARS = constants.extglobChars(PLATFORM_CHARS);
+      const PLATFORM_CHARS = constants2.globChars(opts.windows);
+      const EXTGLOB_CHARS = constants2.extglobChars(PLATFORM_CHARS);
       const {
         DOT_LITERAL,
         PLUS_LITERAL,
@@ -236886,7 +237050,7 @@ var require_parse2 = __commonJS({
         NO_DOTS_SLASH,
         STAR,
         START_ANCHOR
-      } = constants.globChars(opts.windows);
+      } = constants2.globChars(opts.windows);
       const nodot = opts.dot ? NO_DOTS : NO_DOT;
       const slashDot = opts.dot ? NO_DOTS_SLASH : NO_DOT;
       const capture = opts.capture ? "" : "?:";
@@ -236944,7 +237108,7 @@ var require_picomatch = __commonJS({
     var scan = require_scan();
     var parse2 = require_parse2();
     var utils = require_utils2();
-    var constants = require_constants();
+    var constants2 = require_constants();
     var isObject = (val) => val && typeof val === "object" && !Array.isArray(val);
     var picomatch = (glob, options2, returnState = false) => {
       if (Array.isArray(glob)) {
@@ -237072,7 +237236,7 @@ var require_picomatch = __commonJS({
         return /$^/;
       }
     };
-    picomatch.constants = constants;
+    picomatch.constants = constants2;
     module2.exports = picomatch;
   }
 });
