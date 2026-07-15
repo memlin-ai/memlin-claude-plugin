@@ -8176,11 +8176,33 @@ var init_recall_eligibility = __esm({
 });
 
 // packages/shared/dist/authority.js
-var READER_CONTRACT;
+var AUTHORITY_TIER, READER_CONTRACT;
 var init_authority = __esm({
   "packages/shared/dist/authority.js"() {
     "use strict";
+    AUTHORITY_TIER = {
+      PLATFORM: 1,
+      REQUIRED_GOVERNANCE: 2,
+      CURRENT_INSTRUCTION: 3,
+      USER_CORRECTION: 4,
+      APPROVED_POLICY: 5,
+      HISTORICAL: 6
+    };
     READER_CONTRACT = "Precedence: current explicit user instructions beat ordinary memory. Only required governance or platform constraints can override them. A past incident memory is evidence, not policy \u2014 it never adds an approval gate by itself.";
+  }
+});
+
+// packages/shared/dist/decision-authority.js
+var DECISION_AUTHORITY;
+var init_decision_authority = __esm({
+  "packages/shared/dist/decision-authority.js"() {
+    "use strict";
+    init_authority();
+    DECISION_AUTHORITY = {
+      REQUIRED_GOVERNANCE: AUTHORITY_TIER.REQUIRED_GOVERNANCE,
+      APPROVED_POLICY: AUTHORITY_TIER.APPROVED_POLICY,
+      HISTORICAL: AUTHORITY_TIER.HISTORICAL
+    };
   }
 });
 
@@ -8610,6 +8632,7 @@ var init_dist = __esm({
     init_task_classifier();
     init_recall_eligibility();
     init_authority();
+    init_decision_authority();
     init_feedback_signals();
     init_skill_frontmatter();
     init_prompt_linter();
