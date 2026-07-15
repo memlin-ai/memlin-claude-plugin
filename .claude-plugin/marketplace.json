@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "memlin-ai",
-  "description": "Memlin — unified memory, skills, goals, schemas, and decisions across Claude Code, Claude.ai, Codex, and Cursor.",
+  "description": "Memlin — unified memory, skills, goals, schemas, and decisions across Claude Code, Codex, and Cursor, plus Claude.ai via hosted MCP.",
   "owner": { "name": "Memlin", "email": "support@memlin.ai" },
   "plugins": [
     {
