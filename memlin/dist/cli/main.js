@@ -9191,7 +9191,7 @@ function formatRelativeSigned(signedMs) {
   if (signedMs >= 0) return `${formatDurationCompact(signedMs)} ago`;
   return `in ${formatDurationCompact(signedMs)}`;
 }
-var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
+var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_PLATFORM_HEADER, AGENT_ARCHITECTURE_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
 var init_runtime_shared = __esm({
   "packages/plugin-core/src/runtime-shared.ts"() {
     "use strict";
@@ -9199,6 +9199,8 @@ var init_runtime_shared = __esm({
     AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
     AGENT_VERSION_HEADER = "Memlin-Agent-Version";
     AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
+    AGENT_PLATFORM_HEADER = "Memlin-Agent-Platform";
+    AGENT_ARCHITECTURE_HEADER = "Memlin-Agent-Architecture";
     AGENT_EXPECTED_CAPABILITIES = {
       "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
       cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
@@ -9272,7 +9274,9 @@ var init_memlin_api_client = __esm({
           [AGENT_KIND_HEADER]: resolveHost().kind,
           [AGENT_DEVICE_HEADER]: agentDevice(),
           [AGENT_VERSION_HEADER]: agentVersion(),
-          [AGENT_CAPABILITIES_HEADER]: agentCapabilities().join(",")
+          [AGENT_CAPABILITIES_HEADER]: agentCapabilities().join(","),
+          [AGENT_PLATFORM_HEADER]: process.env.MEMLIN_AGENT_PLATFORM || os4.platform(),
+          [AGENT_ARCHITECTURE_HEADER]: process.env.MEMLIN_AGENT_ARCH || os4.arch()
         };
         if (includeAccount && this.cfg.accountId) {
           h["Memlin-Account-Id"] = this.cfg.accountId;
