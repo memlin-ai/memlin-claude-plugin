@@ -246538,6 +246538,12 @@ var MemlinApiClient = class {
   async createProject(input, opts = {}) {
     return this.request("POST", "/projects", input, { accountId: opts.accountId });
   }
+  /** Atomically create/select a project and register one or more logical
+   * local sources. Device paths are intentionally absent from this wire
+   * contract. */
+  async linkLocalSources(input, opts = {}) {
+    return this.request("POST", "/projects/local-link", input, { accountId: opts.accountId });
+  }
   /**
    * PATCH /projects/{id} — attach/detach local paths, set/clear the git
    * remote, or rename. Owner/admin only; 409 when a path or remote is
@@ -248945,6 +248951,13 @@ function stripExcerpts(result) {
     ...result,
     manifest: {
       ...result.manifest,
+      // Component `purpose` can be copied from README prose or a package
+      // description. Preserve only a deterministic structural label across
+      // the strict runner/local trust boundary.
+      components: result.manifest.components.map((component) => ({
+        ...component,
+        purpose: component.name
+      })),
       // Keep `summary` if it's been set (by enrichManifestSummaries). Drop
       // the excerpt unconditionally — the summary IS the surviving description.
       functions: result.manifest.functions.map((f) => ({ ...f, excerpt: "" })),
@@ -248974,10 +248987,14 @@ function parseArgs(argv) {
     if (a === "--help" || a === "-h") out2.help = true;
     else if (a === "--repo" && argv[i + 1]) {
       out2.repo = argv[++i];
+    } else if (a === "--source" && argv[i + 1]) {
+      out2.source = argv[++i];
     } else if (a === "--endpoint" && argv[i + 1]) {
       out2.endpoint = argv[++i];
     } else if (a?.startsWith("--repo=")) {
       out2.repo = a.slice("--repo=".length);
+    } else if (a?.startsWith("--source=")) {
+      out2.source = a.slice("--source=".length);
     } else if (a?.startsWith("--endpoint=")) {
       out2.endpoint = a.slice("--endpoint=".length);
     }
@@ -248990,9 +249007,11 @@ function printHelp() {
 working tree and post it to Memlin. Your source never leaves this machine.
 
 Usage:
-  memlin scan [--repo owner/name] [--endpoint URL]
+  memlin scan [--source id-or-name | --repo owner/name] [--endpoint URL]
 
 Options:
+  --source id-or-name Scan a Companion local source. When exactly one
+                      local source is attached, it is selected automatically.
   --repo owner/name   Which attached repo this scan targets. Defaults to
                       the one derived from your git remote.
   --endpoint URL      Webhook URL override (default https://memlin.ai/api/scanner/graph/local).
@@ -249022,6 +249041,21 @@ function ownerRepoFromRemote(remote) {
   if (m && m[1]) return m[1];
   return null;
 }
+function remoteIdentity(remote) {
+  if (!remote) return null;
+  const trimmed = remote.trim();
+  const scp = trimmed.includes("://") ? null : /^(?:[^@\s]+@)?([^:\s]+):(.+)$/.exec(trimmed);
+  if (scp?.[1] && scp[2]) {
+    return `${scp[1].toLowerCase()}/${scp[2].replace(/^\/+|\.git$/g, "")}`.toLowerCase();
+  }
+  try {
+    const url = new URL(trimmed);
+    const cleanPath = url.pathname.replace(/^\/+|\/+$|\.git$/g, "");
+    return cleanPath ? `${url.hostname.toLowerCase()}/${cleanPath}`.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
 function configureBundledWasmDir() {
   if (process.env.MEMLIN_WASM_DIR) return;
   try {
@@ -249039,6 +249073,10 @@ async function main() {
     printHelp();
     return;
   }
+  if (args2.source && args2.repo) {
+    console.error("memlin: pass either --source or --repo, not both.");
+    process.exit(1);
+  }
   configureBundledWasmDir();
   const cwd = runtimeCwd();
   const ctx = await getApi();
@@ -249055,21 +249093,41 @@ async function main() {
     process.exit(1);
   }
   const git = gitState(cwd);
-  const repoFullName = args2.repo ?? ownerRepoFromRemote(git.remote);
-  if (!repoFullName) {
+  const projects = await api.listProjects({ accountId: config.account_id });
+  const project = projects.find((candidate) => candidate.id === resolved.project_id);
+  const localSources = (project?.sources ?? []).filter((source) => source.type === "local");
+  const identity = remoteIdentity(git.remote);
+  const requestedSources = args2.source ? localSources.filter(
+    (source) => source.id === args2.source || source.display_name.toLowerCase() === args2.source?.toLowerCase()
+  ) : [];
+  if (args2.source && requestedSources.length > 1) {
     console.error(
-      `memlin: could not determine the GitHub repo for this workspace. Pass --repo owner/name, or run from a directory whose git remote points at GitHub.`
+      `memlin: local source name "${args2.source}" is ambiguous; pass its source ID instead.`
+    );
+    process.exit(1);
+  }
+  let localSource = args2.source ? requestedSources[0] : localSources.find((source) => source.remote_identity === identity);
+  if (!localSource && !args2.source && localSources.length === 1) localSource = localSources[0];
+  const repoFullName = args2.repo ?? (!localSource ? ownerRepoFromRemote(git.remote) : null);
+  if (args2.source && !localSource) {
+    console.error(`memlin: local source "${args2.source}" is not attached to this project.`);
+    process.exit(1);
+  }
+  if (!localSource && !repoFullName) {
+    console.error(
+      `memlin: could not determine a registered local source or attached repository. Register the folder in Companion, pass --source id-or-name, or pass --repo owner/name.`
     );
     process.exit(1);
   }
   console.log(
-    `memlin scan \u2014 account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id.slice(0, 8)}\u2026 repo ${repoFullName}`
+    `memlin scan \u2014 account ${config.account_id.slice(0, 8)}\u2026 project ${resolved.project_id.slice(0, 8)}\u2026 ${localSource ? `source ${localSource.display_name}` : `repo ${repoFullName}`}`
   );
   console.log(`Analyzing ${cwd} (no network calls)\u2026`);
   const t0 = Date.now();
   let raw;
   try {
-    raw = await runScan(cwd, { repoName: repoFullName.split("/").pop() ?? repoFullName });
+    const scanName = localSource?.display_name ?? repoFullName;
+    raw = await runScan(cwd, { repoName: scanName.split("/").pop() ?? scanName });
   } catch (err2) {
     console.error(`memlin: analyzer failed: ${err2 instanceof Error ? err2.message : String(err2)}`);
     process.exit(2);
@@ -249079,7 +249137,9 @@ async function main() {
     console.log("Enriching summaries via Anthropic (your key)\u2026");
     try {
       const res2 = await enrichManifestSummaries(raw.manifest.functions, { apiKey: anthropicKey });
-      console.log(`  ${res2.enriched}/${res2.considered} summaries written, ${res2.errors} batch errors.`);
+      console.log(
+        `  ${res2.enriched}/${res2.considered} summaries written, ${res2.errors} batch errors.`
+      );
     } catch (err2) {
       console.warn(
         `memlin: summary enrichment failed; continuing with structural map: ${err2 instanceof Error ? err2.message : String(err2)}`
@@ -249096,7 +249156,7 @@ async function main() {
   const token = await getIdentityBoundAccessToken(config);
   const jsonBody = JSON.stringify({
     projectId: resolved.project_id,
-    repoFullName,
+    ...localSource ? { source_id: localSource.id } : { repoFullName },
     manifest: scan.manifest,
     componentFacts: scan.componentFacts,
     sqlSchema: scan.sqlSchema,
