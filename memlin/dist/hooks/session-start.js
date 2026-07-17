@@ -337,8 +337,8 @@ __export(plan_sync_exports, {
   setLastPlanPullCursor: () => setLastPlanPullCursor,
   stampPlanFile: () => stampPlanFile
 });
-import { promises as fs7 } from "node:fs";
-import path10 from "node:path";
+import { promises as fs8 } from "node:fs";
+import path11 from "node:path";
 function homeBase(host) {
   return (host ?? resolveHost()).homeDir();
 }
@@ -350,7 +350,7 @@ async function pullPlans(api, opts = {}) {
   if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
   if (opts.since) fetchOpts.updated_after = opts.since;
   const list = await api.listPlans(fetchOpts);
-  await fs7.mkdir(plansDir(opts.host), { recursive: true });
+  await fs8.mkdir(plansDir(opts.host), { recursive: true });
   const state = await readState();
   const newEntries = {};
   const pulled = [];
@@ -361,8 +361,8 @@ async function pullPlans(api, opts = {}) {
   for (const p of list) {
     const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
     const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path10.join("plans", filename);
-    const full = path10.join(plansDir(opts.host), filename);
+    const localPath = path11.join("plans", filename);
+    const full = path11.join(plansDir(opts.host), filename);
     seenPaths.add(localPath);
     let body;
     try {
@@ -381,7 +381,7 @@ async function pullPlans(api, opts = {}) {
       unchanged.push(localPath);
       continue;
     }
-    await fs7.writeFile(full, fileContent, "utf8");
+    await fs8.writeFile(full, fileContent, "utf8");
     pulled.push(localPath);
     newEntries[localPath] = {
       document_id: p.document_id,
@@ -409,12 +409,12 @@ function resolveTargetDocId(stateEntry, binding) {
   return stateEntry?.document_id || binding?.documentId || void 0;
 }
 async function pushPlanFile(api, file, opts = {}) {
-  const raw = await fs7.readFile(file, "utf8");
+  const raw = await fs8.readFile(file, "utf8");
   const { title, body, binding: existingBinding } = parsePlanFile(raw);
   if (!body.trim()) {
     throw new Error("plan body is empty");
   }
-  const relPath = path10.relative(homeBase(opts.host), file);
+  const relPath = path11.relative(homeBase(opts.host), file);
   const state = await readState();
   const existing = state.documents[relPath];
   const targetDocId = resolveTargetDocId(existing, existingBinding);
@@ -428,7 +428,7 @@ async function pushPlanFile(api, file, opts = {}) {
       documentId: result2.document_id,
       projectId: existingBinding?.projectId ?? null
     });
-    const stampedUpdate = await fs7.readFile(file, "utf8").catch(() => raw);
+    const stampedUpdate = await fs8.readFile(file, "utf8").catch(() => raw);
     await updateState((s) => {
       s.documents[relPath] = {
         document_id: result2.document_id,
@@ -467,7 +467,7 @@ async function pushPlanFile(api, file, opts = {}) {
     documentId: result.document_id,
     projectId: result.project_id
   });
-  const stamped = await fs7.readFile(file, "utf8").catch(() => raw);
+  const stamped = await fs8.readFile(file, "utf8").catch(() => raw);
   await updateState((s) => {
     const entry = s.documents[relPath];
     if (entry) entry.content_hash = hash(stamped);
@@ -484,23 +484,23 @@ async function reconcileKnownPlans(api, opts = {}) {
   const failed = [];
   let entries;
   try {
-    entries = await fs7.readdir(plansDir(opts.host));
+    entries = await fs8.readdir(plansDir(opts.host));
   } catch {
     return { pushed, skipped, failed };
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path10.join(plansDir(opts.host), f);
+    const abs = path11.join(plansDir(opts.host), f);
     let raw;
     try {
-      const st = await fs7.stat(abs);
+      const st = await fs8.stat(abs);
       if (!st.isFile() || st.size === 0) continue;
-      raw = await fs7.readFile(abs, "utf8");
+      raw = await fs8.readFile(abs, "utf8");
     } catch {
       continue;
     }
-    const relPath = path10.relative(homeBase(opts.host), abs);
+    const relPath = path11.relative(homeBase(opts.host), abs);
     const tracked = state.documents[relPath]?.document_id;
     const { binding } = parsePlanFile(raw);
     const isKnown = Boolean(tracked) || Boolean(binding?.documentId);
@@ -525,25 +525,25 @@ async function listUnboundPlans(host) {
   const out = [];
   let entries;
   try {
-    entries = await fs7.readdir(plansDir(host));
+    entries = await fs8.readdir(plansDir(host));
   } catch {
     return out;
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path10.join(plansDir(host), f);
+    const abs = path11.join(plansDir(host), f);
     let raw;
     let size = 0;
     try {
-      const st = await fs7.stat(abs);
+      const st = await fs8.stat(abs);
       if (!st.isFile() || st.size === 0) continue;
       size = st.size;
-      raw = await fs7.readFile(abs, "utf8");
+      raw = await fs8.readFile(abs, "utf8");
     } catch {
       continue;
     }
-    const relPath = path10.relative(homeBase(host), abs);
+    const relPath = path11.relative(homeBase(host), abs);
     const { title, binding } = parsePlanFile(raw);
     if (state.documents[relPath]?.document_id || binding?.documentId) continue;
     out.push({ file: f, title, size });
@@ -553,7 +553,7 @@ async function listUnboundPlans(host) {
 async function stampPlanFile(file, binding) {
   let raw;
   try {
-    raw = await fs7.readFile(file, "utf8");
+    raw = await fs8.readFile(file, "utf8");
   } catch {
     return;
   }
@@ -569,7 +569,7 @@ async function stampPlanFile(file, binding) {
     bodyNoStamp.trim(),
     ""
   ].filter((l) => l !== null).join("\n");
-  await fs7.writeFile(file, composed, "utf8");
+  await fs8.writeFile(file, composed, "utf8");
 }
 function formatPlanFile(title, body, status, binding) {
   const trimmedBody = body.replace(/^\s*#\s+.+\n+/, "").trimEnd();
@@ -2065,22 +2065,58 @@ function renderHandoffContext(handoff) {
   ].join("\n");
 }
 
-// packages/plugin-core/dist/auto-bind.js
+// packages/plugin-core/dist/heartbeat.js
+import crypto2 from "node:crypto";
 import { promises as fs6 } from "node:fs";
+import os8 from "node:os";
 import path9 from "node:path";
+init_host();
+var DEFAULT_THROTTLE_MS = 6e4;
+function statePath(cwd, host) {
+  const key = crypto2.createHash("sha256").update(cwd).digest("hex").slice(0, 16);
+  return path9.join(os8.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
+}
+async function recentlySent(file, throttleMs) {
+  try {
+    const raw = await fs6.readFile(file, "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed.sent_at === "number" && Date.now() - parsed.sent_at < throttleMs;
+  } catch {
+    return false;
+  }
+}
+async function recordInstallHeartbeat(cwd, reason, opts = {}) {
+  const host = opts.host ?? resolveHost().kind;
+  const throttleMs = opts.throttleMs ?? DEFAULT_THROTTLE_MS;
+  const file = statePath(cwd, host);
+  if (await recentlySent(file, throttleMs)) return;
+  try {
+    const ctx = await getApi({ cwd });
+    if (!ctx) return;
+    await ctx.api.getAccount();
+    await fs6.writeFile(file, JSON.stringify({ sent_at: Date.now(), reason, host }), "utf8");
+    log(`${host} activity recorded: ${reason}`);
+  } catch (err) {
+    log(`${host} activity failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// packages/plugin-core/dist/auto-bind.js
+import { promises as fs7 } from "node:fs";
+import path10 from "node:path";
 async function findWorkspaceRoot(cwd) {
-  let dir = path9.resolve(cwd);
+  let dir = path10.resolve(cwd);
   for (let i = 0; i < 64; i++) {
     try {
-      const stat = await fs6.stat(path9.join(dir, ".git"));
+      const stat = await fs7.stat(path10.join(dir, ".git"));
       if (stat.isDirectory() || stat.isFile()) return dir;
     } catch {
     }
-    const parent = path9.dirname(dir);
+    const parent = path10.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return path9.resolve(cwd);
+  return path10.resolve(cwd);
 }
 async function autoBindWorkspaceIfMatched(args) {
   if (args.workspaceAlreadyBound) {
@@ -2153,6 +2189,8 @@ async function readStdinJson() {
 }
 async function main() {
   const payload = await readStdinJson();
+  const cwd = process.cwd();
+  void recordInstallHeartbeat(cwd, "session-start", { throttleMs: 0, host: "claude-code" });
   const ctx = await getApi();
   if (!ctx) {
     log("not configured \u2014 skipping pull");
