@@ -4190,7 +4190,14 @@ var init_constants = __esm({
     DOCUMENT_SCOPES = ["personal", "project", "team"];
     DOCUMENT_STATUSES = ["draft", "in_review", "approved", "archived"];
     SEARCHABLE_KINDS = ["skill", "memory", "goal", "schema", "decision"];
-    MEMORY_TYPES = ["correction", "preference", "fact", "reference", "episodic"];
+    MEMORY_TYPES = [
+      "correction",
+      "preference",
+      "fact",
+      "reference",
+      "episodic",
+      "working"
+    ];
     AGENT_KINDS = [
       "claude-code",
       "claude-ai",
@@ -9384,7 +9391,7 @@ var init_memlin_api_client = __esm({
         return this.request("POST", "/usage/event", input, { accountId: opts.accountId });
       }
       /** GET /documents — list, filtered. */
-      async listDocuments(opts = {}) {
+      async listDocuments(opts = {}, callOpts = {}) {
         const qs = new URLSearchParams();
         if (opts.kinds) for (const k of opts.kinds) qs.append("kind", k);
         if (opts.scopes) for (const s of opts.scopes) qs.append("scope", s);
@@ -9393,15 +9400,17 @@ var init_memlin_api_client = __esm({
           qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
         }
         const suffix = qs.toString() ? `?${qs.toString()}` : "";
-        const res = await this.request("GET", `/documents${suffix}`);
+        const res = await this.request("GET", `/documents${suffix}`, void 0, { accountId: callOpts.accountId });
         return res.documents.map((d) => {
           const { status, ...rest } = d;
           return status == null ? rest : { ...rest, status };
         });
       }
       /** POST /documents — create or update a document. */
-      async writeDocument(input) {
-        return this.request("POST", "/documents", input);
+      async writeDocument(input, callOpts = {}) {
+        return this.request("POST", "/documents", input, {
+          accountId: callOpts.accountId
+        });
       }
       /** Atomically compare-and-sync the server-owned project CONTRACT.md. */
       async syncWorkspaceContract(input) {
@@ -12867,7 +12876,7 @@ var init_pending_bundle = __esm({
 // packages/plugin-core/src/continuity.ts
 function bundleHasContinuityContent(bundle) {
   const claims = bundle.claim_guardrails;
-  return Boolean(bundle.primary_skill) || bundle.supporting_skills.length > 0 || bundle.memory.length > 0 || bundle.goals.length > 0 || bundle.schemas.length > 0 || (bundle.decisions?.length ?? 0) > 0 || (bundle.required_core?.length ?? 0) > 0 || (bundle.pinned?.length ?? 0) > 0 || (bundle.open_threads?.length ?? 0) > 0 || (bundle.pack_context?.length ?? 0) > 0 || (claims?.approved.length ?? 0) > 0 || (claims?.blocked.length ?? 0) > 0 || (claims?.competitor_facts.length ?? 0) > 0;
+  return Boolean(bundle.primary_skill) || bundle.supporting_skills.length > 0 || bundle.memory.length > 0 || bundle.goals.length > 0 || bundle.schemas.length > 0 || (bundle.decisions?.length ?? 0) > 0 || (bundle.required_core?.length ?? 0) > 0 || (bundle.pinned?.length ?? 0) > 0 || (bundle.session_working?.length ?? 0) > 0 || (bundle.open_threads?.length ?? 0) > 0 || (bundle.pack_context?.length ?? 0) > 0 || (claims?.approved.length ?? 0) > 0 || (claims?.blocked.length ?? 0) > 0 || (claims?.competitor_facts.length ?? 0) > 0;
 }
 var CONTINUITY_WINDOW_MS;
 var init_continuity = __esm({
@@ -13127,6 +13136,10 @@ function bundleSummary(r) {
   if (pinnedCount > 0) {
     pieces.push(`${pinnedCount} pinned`);
   }
+  const workingCount = b.session_working?.length ?? 0;
+  if (workingCount > 0) {
+    pieces.push(`${workingCount} session-working`);
+  }
   if (b.architecture) {
     pieces.push(`architecture: ${b.architecture.component_name}`);
   }
@@ -13188,6 +13201,14 @@ function compileBundle(result, parsedTask, agent) {
         out2.push(renderItemXml("directive", item, { kind: item.kind }));
       }
       out2.push("  </standing_directives>");
+    }
+    const sessionWorking = b.session_working ?? [];
+    if (sessionWorking.length > 0) {
+      out2.push('  <session_working recall="session_id" force_included="true">');
+      for (const item of sessionWorking) {
+        out2.push(renderItemXml("working_memory", item, { memory_type: "working" }));
+      }
+      out2.push("  </session_working>");
     }
     const openThreads = b.open_threads ?? [];
     if (openThreads.length > 0) {
@@ -13339,6 +13360,20 @@ function compileBundle(result, parsedTask, agent) {
     }
     if (b.pinned && b.pinned.length > 0) {
       out2.push(renderPinned(b.pinned));
+    }
+    const sessionWorking = b.session_working ?? [];
+    if (sessionWorking.length > 0) {
+      out2.push("## SESSION WORKING MEMORY (this session's plan / in-flight state)");
+      out2.push("# Force-included by session_id \u2014 not semantic rank. Update via stop-hook");
+      out2.push("# upsert to sessions/<session_id>/working.md; never promote as durable fact.");
+      out2.push("");
+      for (const item of sessionWorking) {
+        out2.push(`### ${item.title}`);
+        out2.push(`# source: ${formatCitation3(item)} \xB7 memory_type: working`);
+        out2.push("");
+        out2.push(item.body.trimEnd());
+        out2.push("");
+      }
     }
     const openThreads = b.open_threads ?? [];
     if (openThreads.length > 0) {
