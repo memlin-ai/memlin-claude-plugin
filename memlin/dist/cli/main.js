@@ -8220,6 +8220,13 @@ var init_feedback_signals = __esm({
   }
 });
 
+// packages/shared/dist/outcome-fitness.js
+var init_outcome_fitness = __esm({
+  "packages/shared/dist/outcome-fitness.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/skill-frontmatter.js
 function parseSkill(content) {
   if (!content.trim()) return { frontmatter: { ...EMPTY }, body: "" };
@@ -8641,6 +8648,7 @@ var init_dist = __esm({
     init_authority();
     init_decision_authority();
     init_feedback_signals();
+    init_outcome_fitness();
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
