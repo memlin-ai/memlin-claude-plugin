@@ -8623,6 +8623,13 @@ var init_feature_discovery = __esm({
   }
 });
 
+// packages/shared/dist/source-ingest.js
+var init_source_ingest = __esm({
+  "packages/shared/dist/source-ingest.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -8658,6 +8665,7 @@ var init_dist = __esm({
     init_memlin_commands();
     init_memlin_contract();
     init_feature_discovery();
+    init_source_ingest();
   }
 });
 
