@@ -9273,10 +9273,36 @@ function agentVersion() {
 function agentCapabilities() {
   return AGENT_EXPECTED_CAPABILITIES[resolveHost().kind] ?? ["api", "resolve"];
 }
+function isRetriableNetworkError(error) {
+  if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+    return true;
+  }
+  let current = error;
+  for (let depth = 0; current instanceof Error && depth < 5; depth++) {
+    const code = current.code;
+    if (code && RETRIABLE_NETWORK_CODES.has(code)) return true;
+    current = current.cause;
+  }
+  return false;
+}
+function unreachableError(url, cause) {
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+  }
+  return new Error(
+    `Couldn't reach Memlin at ${host}. Check your internet connection and try again.`,
+    { cause }
+  );
+}
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 function resolveApiUrl() {
   return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
 }
-var DEFAULT_API_URL, cachedAgentVersion, MemlinApiClient;
+var DEFAULT_API_URL, cachedAgentVersion, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, RETRIABLE_STATUS, RETRIABLE_NETWORK_CODES, MemlinApiClient;
 var init_memlin_api_client = __esm({
   "packages/plugin-core/src/memlin-api-client.ts"() {
     "use strict";
@@ -9284,6 +9310,24 @@ var init_memlin_api_client = __esm({
     init_host();
     DEFAULT_API_URL = "https://memlin.ai/api/v1";
     cachedAgentVersion = null;
+    DEFAULT_REQUEST_TIMEOUT_MS = 15e3;
+    DEFAULT_MAX_RETRIES = 2;
+    DEFAULT_RETRY_BASE_DELAY_MS = 250;
+    RETRIABLE_STATUS = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504]);
+    RETRIABLE_NETWORK_CODES = /* @__PURE__ */ new Set([
+      "ECONNRESET",
+      "ECONNREFUSED",
+      "ECONNABORTED",
+      "ETIMEDOUT",
+      "EPIPE",
+      "EHOSTUNREACH",
+      "ENETUNREACH",
+      "EAI_AGAIN",
+      "UND_ERR_CONNECT_TIMEOUT",
+      "UND_ERR_HEADERS_TIMEOUT",
+      "UND_ERR_BODY_TIMEOUT",
+      "UND_ERR_SOCKET"
+    ]);
     MemlinApiClient = class {
       constructor(cfg) {
         this.cfg = cfg;
@@ -9317,24 +9361,49 @@ var init_memlin_api_client = __esm({
           Accept: "application/json"
         };
         if (body2 !== void 0) headers["Content-Type"] = "application/json";
-        const res = await fetch(url, {
-          method,
-          headers,
-          ...body2 !== void 0 ? { body: JSON.stringify(body2) } : {}
-        });
-        const text = await res.text();
-        let parsed = null;
-        if (text) {
+        const idempotent = method === "GET";
+        const maxAttempts = idempotent ? (this.cfg.maxRetries ?? DEFAULT_MAX_RETRIES) + 1 : 1;
+        const timeoutMs = this.cfg.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+        for (let attempt = 1; ; attempt++) {
+          let res;
+          let text;
           try {
-            parsed = JSON.parse(text);
-          } catch {
+            res = await fetch(url, {
+              method,
+              headers,
+              // A dead socket must abort rather than hang the caller forever.
+              signal: AbortSignal.timeout(timeoutMs),
+              ...body2 !== void 0 ? { body: JSON.stringify(body2) } : {}
+            });
+            text = await res.text();
+          } catch (error) {
+            if (attempt < maxAttempts && isRetriableNetworkError(error)) {
+              await delay(this.backoffMs(attempt));
+              continue;
+            }
+            throw unreachableError(url, error);
           }
+          if (idempotent && attempt < maxAttempts && RETRIABLE_STATUS.has(res.status)) {
+            await delay(this.backoffMs(attempt));
+            continue;
+          }
+          let parsed = null;
+          if (text) {
+            try {
+              parsed = JSON.parse(text);
+            } catch {
+            }
+          }
+          if (!res.ok) {
+            const errMsg = parsed?.error ?? text ?? `HTTP ${res.status}`;
+            throw new Error(`${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`);
+          }
+          return parsed;
         }
-        if (!res.ok) {
-          const errMsg = parsed?.error ?? text ?? `HTTP ${res.status}`;
-          throw new Error(`${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`);
-        }
-        return parsed;
+      }
+      backoffMs(attempt) {
+        const base = this.cfg.retryBaseDelayMs ?? DEFAULT_RETRY_BASE_DELAY_MS;
+        return base * 2 ** (attempt - 1);
       }
       // ---------- endpoints ----------
       /** GET /me — identity + account list. No account header sent (this is the discovery call). */
@@ -221245,12 +221314,12 @@ ${options2.prefix}` : "\n" : options2.prefix
          * of the new one.  (Note that the amount of time the canceled operation had been
          * waiting does not affect the amount of time that the new operation waits.)
          */
-        schedule(operationId, delay, cb) {
+        schedule(operationId, delay2, cb) {
           const pendingTimeout = this.pendingTimeouts.get(operationId);
           if (pendingTimeout) {
             this.host.clearTimeout(pendingTimeout);
           }
-          this.pendingTimeouts.set(operationId, this.host.setTimeout(_ThrottledOperations.run, delay, operationId, this, cb));
+          this.pendingTimeouts.set(operationId, this.host.setTimeout(_ThrottledOperations.run, delay2, operationId, this, cb));
           if (this.logger) {
             this.logger.info(`Scheduled: ${operationId}${pendingTimeout ? ", Cancelled earlier one" : ""}`);
           }
@@ -221270,9 +221339,9 @@ ${options2.prefix}` : "\n" : options2.prefix
         }
       };
       var GcTimer = class _GcTimer {
-        constructor(host, delay, logger) {
+        constructor(host, delay2, logger) {
           this.host = host;
-          this.delay = delay;
+          this.delay = delay2;
           this.logger = logger;
         }
         scheduleCollect() {
@@ -231621,12 +231690,12 @@ Project '${project.projectName}' (${ProjectKind[project.projectKind]}) ${counter
           const project = this.projectService.tryGetDefaultProjectForFile(fileName);
           return project && { fileName, project };
         }
-        getDiagnostics(next, delay, fileArgs) {
+        getDiagnostics(next, delay2, fileArgs) {
           if (this.suppressDiagnosticEvents) {
             return;
           }
           if (fileArgs.length > 0) {
-            this.updateErrorCheck(next, fileArgs, delay);
+            this.updateErrorCheck(next, fileArgs, delay2);
           }
         }
         change(args2) {
@@ -232026,7 +232095,7 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
           const spans = languageService.getBraceMatchingAtPosition(file, position);
           return !spans ? void 0 : simplifiedResult ? spans.map((span) => toProtocolTextSpan(span, scriptInfo)) : spans;
         }
-        getDiagnosticsForProject(next, delay, fileName) {
+        getDiagnosticsForProject(next, delay2, fileName) {
           if (this.suppressDiagnosticEvents) {
             return;
           }
@@ -232071,7 +232140,7 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
           this.updateErrorCheck(
             next,
             checkList,
-            delay,
+            delay2,
             /*requireOpen*/
             false
           );
