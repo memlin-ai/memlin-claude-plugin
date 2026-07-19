@@ -10296,13 +10296,183 @@ var init_client = __esm({
   }
 });
 
-// packages/plugin-core/src/login-bootstrap.ts
+// packages/plugin-core/src/plugin-install.ts
 import { promises as fs5 } from "node:fs";
+import { existsSync } from "node:fs";
 import path6 from "node:path";
+import os6 from "node:os";
+function defaultUserSettingsPaths() {
+  const claudeDir = path6.join(os6.homedir(), ".claude");
+  return { claudeDir, settingsFile: path6.join(claudeDir, "settings.json") };
+}
+async function readClaudeUserSettings(paths) {
+  const p = paths ?? defaultUserSettingsPaths();
+  if (!existsSync(p.settingsFile)) return null;
+  let raw;
+  try {
+    raw = await fs5.readFile(p.settingsFile, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+async function ensureUserScopePluginEnabled(paths) {
+  const p = paths ?? defaultUserSettingsPaths();
+  try {
+    await fs5.mkdir(p.claudeDir, { recursive: true });
+    let current = {};
+    if (existsSync(p.settingsFile)) {
+      const raw = await fs5.readFile(p.settingsFile, "utf8");
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") current = parsed;
+      } catch (err2) {
+        return {
+          status: "failed",
+          settingsFile: p.settingsFile,
+          detail: `existing settings.json isn't valid JSON: ${err2 instanceof Error ? err2.message : String(err2)}`
+        };
+      }
+    }
+    const alreadyEnabled = current.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
+    const marketplaceKnown = !!current.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
+    if (alreadyEnabled && marketplaceKnown) {
+      return {
+        status: "already-enabled",
+        settingsFile: p.settingsFile,
+        detail: "plugin already enabled at user scope"
+      };
+    }
+    const next = {
+      ...current,
+      enabledPlugins: {
+        ...current.enabledPlugins ?? {},
+        [MEMLIN_PLUGIN_KEY]: true
+      }
+    };
+    let touchedMarketplace = false;
+    if (!marketplaceKnown) {
+      next.extraKnownMarketplaces = {
+        ...current.extraKnownMarketplaces ?? {},
+        [MEMLIN_MARKETPLACE_KEY]: { source: { ...MEMLIN_MARKETPLACE_SOURCE } }
+      };
+      touchedMarketplace = true;
+    }
+    await fs5.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
+    return {
+      status: touchedMarketplace ? "enabled-with-marketplace" : "enabled",
+      settingsFile: p.settingsFile,
+      detail: touchedMarketplace ? "enabled plugin + registered Memlin marketplace" : "enabled plugin (marketplace already registered)"
+    };
+  } catch (err2) {
+    return {
+      status: "failed",
+      settingsFile: p.settingsFile,
+      detail: err2 instanceof Error ? err2.message : String(err2)
+    };
+  }
+}
+function inspectUserScopePlugin(settings) {
+  if (!settings) return { status: "unconfigured", marketplaceRegistered: false };
+  const enabled = settings.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
+  const market = !!settings.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
+  return { status: enabled ? "enabled" : "disabled", marketplaceRegistered: market };
+}
+function normalizeManagedMemoryPolicy(s) {
+  return s === "recommended" || s === "required" ? s : "off";
+}
+async function applyManagedMemoryMode(mode, paths) {
+  const p = paths ?? defaultUserSettingsPaths();
+  try {
+    await fs5.mkdir(p.claudeDir, { recursive: true });
+    let current = {};
+    if (existsSync(p.settingsFile)) {
+      const raw = await fs5.readFile(p.settingsFile, "utf8");
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") current = parsed;
+      } catch (err2) {
+        return {
+          status: "failed",
+          mode,
+          settingsFile: p.settingsFile,
+          changed: [],
+          detail: `existing settings.json isn't valid JSON: ${err2 instanceof Error ? err2.message : String(err2)}`
+        };
+      }
+    }
+    const next = { ...current };
+    const changed = [];
+    if (mode === "disable") {
+      if (current.autoMemoryEnabled !== false) {
+        next.autoMemoryEnabled = false;
+        changed.push("autoMemoryEnabled");
+      }
+    } else {
+      if ("autoMemoryEnabled" in next) {
+        delete next.autoMemoryEnabled;
+        changed.push("autoMemoryEnabled");
+      }
+    }
+    if (changed.length === 0) {
+      return {
+        status: "unchanged",
+        mode,
+        settingsFile: p.settingsFile,
+        changed,
+        detail: mode === "disable" ? "native auto-memory already disabled" : "no Memlin-managed memory setting to revert"
+      };
+    }
+    await fs5.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
+    return {
+      status: "applied",
+      mode,
+      settingsFile: p.settingsFile,
+      changed,
+      detail: mode === "disable" ? "set autoMemoryEnabled: false \u2014 native auto-memory is off" : "removed Memlin-managed autoMemoryEnabled \u2014 reverted to host default"
+    };
+  } catch (err2) {
+    return {
+      status: "failed",
+      mode,
+      settingsFile: p.settingsFile,
+      changed: [],
+      detail: err2 instanceof Error ? err2.message : String(err2)
+    };
+  }
+}
+function inspectManagedMemory(settings) {
+  if (!settings) return { autoMemoryDisabled: false, autoMemoryConfigured: false };
+  return {
+    autoMemoryDisabled: settings.autoMemoryEnabled === false,
+    autoMemoryConfigured: "autoMemoryEnabled" in settings
+  };
+}
+var MEMLIN_PLUGIN_KEY, MEMLIN_MARKETPLACE_KEY, MEMLIN_MARKETPLACE_SOURCE;
+var init_plugin_install = __esm({
+  "packages/plugin-core/src/plugin-install.ts"() {
+    "use strict";
+    MEMLIN_PLUGIN_KEY = "memlin@memlin-ai";
+    MEMLIN_MARKETPLACE_KEY = "memlin-ai";
+    MEMLIN_MARKETPLACE_SOURCE = {
+      source: "github",
+      repo: "memlin-ai/memlin-claude-plugin"
+    };
+  }
+});
+
+// packages/plugin-core/src/login-bootstrap.ts
+import { promises as fs6 } from "node:fs";
+import path7 from "node:path";
 import { randomUUID as randomUUID4 } from "node:crypto";
 async function readSnapshot(file) {
   try {
-    return await fs5.readFile(file);
+    return await fs6.readFile(file);
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -10310,18 +10480,18 @@ async function readSnapshot(file) {
 }
 async function restoreSnapshot(file, snapshot) {
   if (snapshot === null) {
-    await fs5.rm(file, { force: true });
+    await fs6.rm(file, { force: true });
     return;
   }
-  await fs5.mkdir(path6.dirname(file), { recursive: true });
-  const tmp = path6.join(
-    path6.dirname(file),
-    `${path6.basename(file)}.rollback-${process.pid}-${randomUUID4()}`
+  await fs6.mkdir(path7.dirname(file), { recursive: true });
+  const tmp = path7.join(
+    path7.dirname(file),
+    `${path7.basename(file)}.rollback-${process.pid}-${randomUUID4()}`
   );
-  await fs5.writeFile(tmp, snapshot, { mode: 384 });
-  await fs5.chmod(tmp, 384).catch(() => {
+  await fs6.writeFile(tmp, snapshot, { mode: 384 });
+  await fs6.chmod(tmp, 384).catch(() => {
   });
-  await fs5.rename(tmp, file);
+  await fs6.rename(tmp, file);
 }
 async function publishMemlinLoginPair(config, token, dependencies = {}) {
   if (!config.auth0_sub || accessTokenSubject(token.access_token) !== config.auth0_sub) {
@@ -10428,7 +10598,11 @@ async function bootstrapMemlinLogin(token, options2 = {}) {
   await publishMemlinLoginPair(config, token);
   return {
     config,
-    account: { id: account.id, name: account.name },
+    account: {
+      id: account.id,
+      name: account.name,
+      managed_memory_policy: normalizeManagedMemoryPolicy(account.managed_memory_policy)
+    },
     user: {
       id: me.user_id,
       email: me.email,
@@ -10443,6 +10617,7 @@ var init_login_bootstrap = __esm({
     init_auth();
     init_client();
     init_memlin_api_client();
+    init_plugin_install();
     DISCOVERY_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
     LoginBootstrapError = class extends Error {
       constructor(code, message, options2 = {}) {
@@ -10461,14 +10636,14 @@ var init_login_bootstrap = __esm({
 
 // packages/plugin-core/src/resolver-skill.ts
 import { createHash } from "node:crypto";
-import { promises as fs6 } from "node:fs";
-import os6 from "node:os";
-import path7 from "node:path";
+import { promises as fs7 } from "node:fs";
+import os7 from "node:os";
+import path8 from "node:path";
 async function ensureResolverSkill() {
   try {
     let existing = null;
     try {
-      existing = await fs6.readFile(RESOLVER_SKILL_FILE, "utf8");
+      existing = await fs7.readFile(RESOLVER_SKILL_FILE, "utf8");
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
     }
@@ -10480,11 +10655,11 @@ async function ensureResolverSkill() {
       if (!LEGACY_RESOLVER_SKILL_HASHES.includes(hash2)) {
         return { status: "kept", path: RESOLVER_SKILL_FILE };
       }
-      await fs6.writeFile(RESOLVER_SKILL_FILE, RESOLVER_SKILL_MD, "utf8");
+      await fs7.writeFile(RESOLVER_SKILL_FILE, RESOLVER_SKILL_MD, "utf8");
       return { status: "upgraded", path: RESOLVER_SKILL_FILE };
     }
-    await fs6.mkdir(RESOLVER_SKILL_DIR, { recursive: true });
-    await fs6.writeFile(RESOLVER_SKILL_FILE, RESOLVER_SKILL_MD, "utf8");
+    await fs7.mkdir(RESOLVER_SKILL_DIR, { recursive: true });
+    await fs7.writeFile(RESOLVER_SKILL_FILE, RESOLVER_SKILL_MD, "utf8");
     return { status: "installed", path: RESOLVER_SKILL_FILE };
   } catch (e) {
     return {
@@ -10498,8 +10673,8 @@ var RESOLVER_SKILL_DIR, RESOLVER_SKILL_FILE, LEGACY_RESOLVER_SKILL_HASHES, RESOL
 var init_resolver_skill = __esm({
   "packages/plugin-core/src/resolver-skill.ts"() {
     "use strict";
-    RESOLVER_SKILL_DIR = path7.join(os6.homedir(), ".claude", "skills", "memlin");
-    RESOLVER_SKILL_FILE = path7.join(RESOLVER_SKILL_DIR, "SKILL.md");
+    RESOLVER_SKILL_DIR = path8.join(os7.homedir(), ".claude", "skills", "memlin");
+    RESOLVER_SKILL_FILE = path8.join(RESOLVER_SKILL_DIR, "SKILL.md");
     LEGACY_RESOLVER_SKILL_HASHES = [
       // v1: 2026-06-09 → 2026-06-17. Before the "Writing your own memories"
       // section was added.
@@ -10571,361 +10746,6 @@ look for "Memlin: writing memories well" in the resolved bundle when you
 do autonomous memory writes. That's the source of truth; this file stays
 focused on the reader side.
 `;
-  }
-});
-
-// packages/plugin-core/src/plugin-install.ts
-import { promises as fs7 } from "node:fs";
-import { existsSync } from "node:fs";
-import path8 from "node:path";
-import os7 from "node:os";
-function defaultUserSettingsPaths() {
-  const claudeDir = path8.join(os7.homedir(), ".claude");
-  return { claudeDir, settingsFile: path8.join(claudeDir, "settings.json") };
-}
-async function readClaudeUserSettings(paths) {
-  const p = paths ?? defaultUserSettingsPaths();
-  if (!existsSync(p.settingsFile)) return null;
-  let raw;
-  try {
-    raw = await fs7.readFile(p.settingsFile, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-async function ensureUserScopePluginEnabled(paths) {
-  const p = paths ?? defaultUserSettingsPaths();
-  try {
-    await fs7.mkdir(p.claudeDir, { recursive: true });
-    let current = {};
-    if (existsSync(p.settingsFile)) {
-      const raw = await fs7.readFile(p.settingsFile, "utf8");
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") current = parsed;
-      } catch (err2) {
-        return {
-          status: "failed",
-          settingsFile: p.settingsFile,
-          detail: `existing settings.json isn't valid JSON: ${err2 instanceof Error ? err2.message : String(err2)}`
-        };
-      }
-    }
-    const alreadyEnabled = current.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
-    const marketplaceKnown = !!current.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
-    if (alreadyEnabled && marketplaceKnown) {
-      return {
-        status: "already-enabled",
-        settingsFile: p.settingsFile,
-        detail: "plugin already enabled at user scope"
-      };
-    }
-    const next = {
-      ...current,
-      enabledPlugins: {
-        ...current.enabledPlugins ?? {},
-        [MEMLIN_PLUGIN_KEY]: true
-      }
-    };
-    let touchedMarketplace = false;
-    if (!marketplaceKnown) {
-      next.extraKnownMarketplaces = {
-        ...current.extraKnownMarketplaces ?? {},
-        [MEMLIN_MARKETPLACE_KEY]: { source: { ...MEMLIN_MARKETPLACE_SOURCE } }
-      };
-      touchedMarketplace = true;
-    }
-    await fs7.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
-    return {
-      status: touchedMarketplace ? "enabled-with-marketplace" : "enabled",
-      settingsFile: p.settingsFile,
-      detail: touchedMarketplace ? "enabled plugin + registered Memlin marketplace" : "enabled plugin (marketplace already registered)"
-    };
-  } catch (err2) {
-    return {
-      status: "failed",
-      settingsFile: p.settingsFile,
-      detail: err2 instanceof Error ? err2.message : String(err2)
-    };
-  }
-}
-function inspectUserScopePlugin(settings) {
-  if (!settings) return { status: "unconfigured", marketplaceRegistered: false };
-  const enabled = settings.enabledPlugins?.[MEMLIN_PLUGIN_KEY] === true;
-  const market = !!settings.extraKnownMarketplaces?.[MEMLIN_MARKETPLACE_KEY];
-  return { status: enabled ? "enabled" : "disabled", marketplaceRegistered: market };
-}
-async function applyManagedMemoryMode(mode, paths) {
-  const p = paths ?? defaultUserSettingsPaths();
-  try {
-    await fs7.mkdir(p.claudeDir, { recursive: true });
-    let current = {};
-    if (existsSync(p.settingsFile)) {
-      const raw = await fs7.readFile(p.settingsFile, "utf8");
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") current = parsed;
-      } catch (err2) {
-        return {
-          status: "failed",
-          mode,
-          settingsFile: p.settingsFile,
-          changed: [],
-          detail: `existing settings.json isn't valid JSON: ${err2 instanceof Error ? err2.message : String(err2)}`
-        };
-      }
-    }
-    const next = { ...current };
-    const changed = [];
-    if (mode === "disable") {
-      if (current.autoMemoryEnabled !== false) {
-        next.autoMemoryEnabled = false;
-        changed.push("autoMemoryEnabled");
-      }
-    } else {
-      if ("autoMemoryEnabled" in next) {
-        delete next.autoMemoryEnabled;
-        changed.push("autoMemoryEnabled");
-      }
-    }
-    if (changed.length === 0) {
-      return {
-        status: "unchanged",
-        mode,
-        settingsFile: p.settingsFile,
-        changed,
-        detail: mode === "disable" ? "native auto-memory already disabled" : "no Memlin-managed memory setting to revert"
-      };
-    }
-    await fs7.writeFile(p.settingsFile, JSON.stringify(next, null, 2) + "\n", "utf8");
-    return {
-      status: "applied",
-      mode,
-      settingsFile: p.settingsFile,
-      changed,
-      detail: mode === "disable" ? "set autoMemoryEnabled: false \u2014 native auto-memory is off" : "removed Memlin-managed autoMemoryEnabled \u2014 reverted to host default"
-    };
-  } catch (err2) {
-    return {
-      status: "failed",
-      mode,
-      settingsFile: p.settingsFile,
-      changed: [],
-      detail: err2 instanceof Error ? err2.message : String(err2)
-    };
-  }
-}
-function inspectManagedMemory(settings) {
-  if (!settings) return { autoMemoryDisabled: false, autoMemoryConfigured: false };
-  return {
-    autoMemoryDisabled: settings.autoMemoryEnabled === false,
-    autoMemoryConfigured: "autoMemoryEnabled" in settings
-  };
-}
-var MEMLIN_PLUGIN_KEY, MEMLIN_MARKETPLACE_KEY, MEMLIN_MARKETPLACE_SOURCE;
-var init_plugin_install = __esm({
-  "packages/plugin-core/src/plugin-install.ts"() {
-    "use strict";
-    MEMLIN_PLUGIN_KEY = "memlin@memlin-ai";
-    MEMLIN_MARKETPLACE_KEY = "memlin-ai";
-    MEMLIN_MARKETPLACE_SOURCE = {
-      source: "github",
-      repo: "memlin-ai/memlin-claude-plugin"
-    };
-  }
-});
-
-// packages/plugin-core/src/cli/login.ts
-var login_exports = {};
-import { writeSync } from "node:fs";
-function parseLoginArgs(argv) {
-  const out2 = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--account" || a === "-a") {
-      const v = argv[++i];
-      if (!v) return { error: "--account requires a value" };
-      out2.requestedAccount = v;
-    } else if (a === "--help" || a === "-h") {
-      return { error: "help" };
-    } else if (a?.startsWith("--")) {
-      return { error: `unknown flag: ${a}` };
-    }
-  }
-  return out2;
-}
-async function main() {
-  const parsed = parseLoginArgs(process.argv.slice(2));
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      console.log("memlin login [--account <uuid-or-name>]");
-      console.log("");
-      console.log("Authenticate to Memlin and pin the active account.");
-      console.log("  --account <v>   Override server-side default_account_id with this account");
-      console.log("                  (must be one you're a member of)");
-      exitCli(0);
-    }
-    console.error(`memlin login: ${parsed.error}`);
-    exitCli(2);
-  }
-  const { requestedAccount } = parsed;
-  console.log("memlin login");
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  const device = await startDeviceFlow();
-  const urlMsg = `
-  Open this URL in your browser to sign in:
-
-    \x1B[1m${device.verification_uri_complete}\x1B[0m
-
-  Verification code: \x1B[1m${device.user_code}\x1B[0m
-  Expires in ${Math.floor(device.expires_in / 60)} min.
-
-  waiting for approval`;
-  writeSync(2, urlMsg);
-  const token = await pollForToken(device.device_code, device.interval, (elapsed) => {
-    if (elapsed % 5 === 0) writeSync(2, ".");
-  });
-  writeSync(2, "\n\n");
-  let login;
-  try {
-    login = await bootstrapMemlinLogin(token, { requestedAccount });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error(`memlin login: ${detail}`);
-    if (error instanceof LoginBootstrapError && error.code === "account-setup-required") {
-      console.error("Open https://memlin.ai/app/onboarding to finish setup.");
-    }
-    exitCli(1);
-  }
-  const displayName = login.user.displayName ?? login.user.email ?? login.user.id.slice(0, 8) + "\u2026";
-  console.log(`  \u2713 signed in as ${displayName}`);
-  console.log(`  \u2713 workspace "${login.account.name}"`);
-  const installed = await ensureResolverSkill();
-  if (installed.status === "installed") {
-    console.log(`  \u2713 installed Memlin resolver skill (${installed.path})`);
-  } else if (installed.status === "upgraded") {
-    console.log(`  \u2713 upgraded Memlin resolver skill (${installed.path})`);
-  } else if (installed.status === "kept") {
-    console.log(`  \u2713 Memlin resolver skill already present (${installed.path})`);
-  } else {
-    console.log(
-      `  ! couldn't install Memlin resolver skill at ${installed.path}: ${installed.error ?? "unknown error"}`
-    );
-  }
-  const pluginInstall = await ensureUserScopePluginEnabled();
-  if (pluginInstall.status === "enabled") {
-    console.log(`  \u2713 enabled Memlin plugin user-wide (${pluginInstall.settingsFile})`);
-    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
-  } else if (pluginInstall.status === "enabled-with-marketplace") {
-    console.log(`  \u2713 enabled Memlin plugin + registered marketplace (${pluginInstall.settingsFile})`);
-    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
-  } else if (pluginInstall.status === "already-enabled") {
-    console.log(`  \u2713 Memlin plugin already enabled user-wide (${pluginInstall.settingsFile})`);
-  } else {
-    console.log(`  ! couldn't enable Memlin plugin user-wide: ${pluginInstall.detail}`);
-    console.log(`    Run \`/plugin install memlin@memlin-ai\` in any workspace to enable manually.`);
-  }
-  const companion = await companionStatus().catch(() => null);
-  if (!companion) {
-    console.log("");
-    console.log("  Optional: the Memlin Companion app keeps this machine signed in,");
-    console.log("  links new repos automatically, and syncs plans in the background.");
-    console.log("  Download: https://memlin.ai/download");
-  }
-  console.log("");
-  console.log("  Run `memlin pull` to fetch your memory, skills, and goals.");
-  printCommandGuide({ intro: true });
-}
-var init_login = __esm({
-  "packages/plugin-core/src/cli/login.ts"() {
-    "use strict";
-    init_auth();
-    init_cli_runner();
-    init_login_bootstrap();
-    init_resolver_skill();
-    init_plugin_install();
-    init_command_guide();
-    init_companion_client();
-    runCliMain(main, (err2) => {
-      console.error("memlin login failed:", err2 instanceof Error ? err2.message : err2);
-      return 1;
-    });
-  }
-});
-
-// packages/plugin-core/src/cli/init.ts
-var init_exports = {};
-import readline from "node:readline/promises";
-async function main2() {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  async function ask(prompt, fallback) {
-    const hint = fallback ? ` [${fallback}]` : "";
-    const ans = (await rl.question(`${prompt}${hint}: `)).trim();
-    return ans || fallback || "";
-  }
-  console.log("memlin init  (paste-a-token fallback \u2014 prefer `memlin login`)");
-  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
-  console.log("");
-  const apiUrl = await ask("Memlin API URL", process.env.MEMLIN_API_URL ?? DEFAULT_API_URL);
-  const access_token = await ask("Access token (Auth0 JWT)");
-  let account_id = "";
-  let user_id = "";
-  let auth0_sub = "";
-  let expires_at = Date.now() + 24 * 36e5;
-  try {
-    const parts = access_token.split(".");
-    if (parts.length < 2 || !parts[1]) throw new Error("not a JWT");
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
-    const ids = payload.memlin_account_ids;
-    account_id = payload.memlin_default_account_id ?? ids?.[0] ?? "";
-    auth0_sub = payload.sub ?? "";
-    user_id = payload.memlin_user_id ?? auth0_sub;
-    if (typeof payload.exp === "number" && Number.isFinite(payload.exp)) {
-      expires_at = payload.exp * 1e3;
-    }
-  } catch {
-    console.error("couldn't decode access token JWT \u2014 paste it raw, no surrounding quotes.");
-    rl.close();
-    process.exit(1);
-  }
-  if (!account_id || !user_id || !auth0_sub) {
-    console.error(
-      "token is missing memlin_account_ids / sub. Make sure the Auth0 Action is deployed."
-    );
-    rl.close();
-    process.exit(1);
-  }
-  rl.close();
-  const config = {
-    api_url: apiUrl,
-    account_id,
-    user_id,
-    auth0_sub,
-    project_id: null
-  };
-  await publishMemlinLoginPair(config, { access_token, expires_at });
-  console.log("");
-  console.log(`\u2713 wrote ${globalConfigFilePath()}`);
-  console.log(`\u2713 account ${account_id.slice(0, 8)}\u2026  user ${user_id.slice(0, 12)}\u2026`);
-  console.log("");
-  console.log("Try: `node ~/.claude/plugins/memlin/dist/cli/status.js`");
-}
-var init_init = __esm({
-  "packages/plugin-core/src/cli/init.ts"() {
-    "use strict";
-    init_client();
-    init_login_bootstrap();
-    init_memlin_api_client();
-    main2().catch((err2) => {
-      console.error("memlin init failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
-    });
   }
 });
 
@@ -11086,36 +10906,491 @@ var init_project_resolver = __esm({
   }
 });
 
-// packages/plugin-core/src/state.ts
+// packages/plugin-core/src/native-memory.ts
 import { promises as fs8 } from "node:fs";
-import path10 from "node:path";
+import { existsSync as existsSync3, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import os8 from "node:os";
+import path10 from "node:path";
+function gitMainRoot(cwd) {
+  try {
+    const common = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    ).trim();
+    return common ? path10.dirname(common) : null;
+  } catch {
+    return null;
+  }
+}
+function encodings(p) {
+  return [
+    p.replace(/[:\\/.]/g, "-"),
+    p.replace(/[/.]/g, "-"),
+    p.replace(/\//g, "-")
+  ];
+}
+function nativeMemoryDirCandidates(cwd) {
+  const projects = path10.join(os8.homedir(), ".claude", "projects");
+  const roots = [gitMainRoot(cwd), cwd].filter((x) => !!x);
+  const seen = /* @__PURE__ */ new Set();
+  const out2 = [];
+  for (const r of roots) {
+    for (const enc of encodings(r)) {
+      const dir = path10.join(projects, enc, "memory");
+      if (!seen.has(dir)) {
+        seen.add(dir);
+        out2.push(dir);
+      }
+    }
+  }
+  return out2;
+}
+function isMemoryDir(dir, forRestore) {
+  if (existsSync3(path10.join(dir, "MEMORY.md"))) return true;
+  if (!forRestore) return false;
+  const archived = path10.join(dir, ".archived");
+  try {
+    return statSync(archived).isDirectory();
+  } catch {
+    return false;
+  }
+}
+function findNativeMemoryDir(cwd, opts = {}) {
+  const candidates = opts.explicitDir ? [path10.resolve(cwd, opts.explicitDir)] : nativeMemoryDirCandidates(cwd);
+  return candidates.find((d) => isMemoryDir(d, opts.forRestore ?? false)) ?? null;
+}
+async function countOtherNativeMemoryDirs(excludeDir) {
+  const projects = path10.join(os8.homedir(), ".claude", "projects");
+  let entries;
+  try {
+    entries = await fs8.readdir(projects);
+  } catch {
+    return 0;
+  }
+  const excluded = excludeDir ? path10.resolve(excludeDir) : null;
+  let count = 0;
+  for (const entry of entries) {
+    const dir = path10.join(projects, entry, "memory");
+    if (excluded && path10.resolve(dir) === excluded) continue;
+    if (existsSync3(path10.join(dir, "MEMORY.md"))) count += 1;
+  }
+  return count;
+}
+async function readNativeMemory(memoryDir) {
+  const indexRaw = await fs8.readFile(path10.join(memoryDir, "MEMORY.md"), "utf8");
+  const satelliteNames = (await fs8.readdir(memoryDir)).filter(
+    (f) => f.endsWith(".md") && f !== "MEMORY.md"
+  );
+  const satellites = [];
+  for (const name of satelliteNames.slice(0, 1e3)) {
+    try {
+      const content = await fs8.readFile(path10.join(memoryDir, name), "utf8");
+      if (content.length <= 1e5) satellites.push({ name, content });
+    } catch {
+    }
+  }
+  return { memoryDir, indexRaw, satellites };
+}
+function archiveSortKey(name) {
+  const m = ARCHIVE_NAME_RE.exec(name);
+  return m ? [m[1], m[2] ? Number(m[2]) : 1] : [name, 0];
+}
+async function listArchiveDirs(memoryDir) {
+  const root = path10.join(memoryDir, ARCHIVE_ROOT);
+  let entries;
+  try {
+    entries = await fs8.readdir(root);
+  } catch {
+    return [];
+  }
+  return entries.filter((e) => {
+    try {
+      return statSync(path10.join(root, e)).isDirectory();
+    } catch {
+      return false;
+    }
+  }).sort((a, b) => {
+    const [da, na] = archiveSortKey(a);
+    const [db, nb] = archiveSortKey(b);
+    return da === db ? na - nb : da < db ? -1 : 1;
+  }).map((e) => path10.join(root, e));
+}
+async function latestArchiveDir(memoryDir) {
+  const dirs = await listArchiveDirs(memoryDir);
+  return dirs.length ? dirs[dirs.length - 1] : null;
+}
+async function archiveNativeMemory(memoryDir, basenames) {
+  const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  const root = path10.join(memoryDir, ARCHIVE_ROOT);
+  let archiveDir = path10.join(root, date);
+  for (let n = 2; existsSync3(archiveDir); n += 1) {
+    archiveDir = path10.join(root, `${date}-${n}`);
+  }
+  await fs8.mkdir(archiveDir, { recursive: true });
+  const moved = [];
+  for (const name of basenames) {
+    const from = path10.join(memoryDir, name);
+    if (!existsSync3(from)) continue;
+    await fs8.rename(from, path10.join(archiveDir, name));
+    moved.push(name);
+  }
+  const skippedLive = (await fs8.readdir(memoryDir)).filter((f) => f.endsWith(".md")).sort();
+  return { archiveDir, moved, skippedLive };
+}
+async function restoreNativeMemory(memoryDir) {
+  const archiveDirs = (await listArchiveDirs(memoryDir)).reverse();
+  const restored = [];
+  const kept = [];
+  const handled = /* @__PURE__ */ new Set();
+  for (const dir of archiveDirs) {
+    const files = (await fs8.readdir(dir)).filter((f) => f.endsWith(".md"));
+    for (const name of files) {
+      if (handled.has(name)) continue;
+      const live = path10.join(memoryDir, name);
+      if (existsSync3(live)) {
+        handled.add(name);
+        kept.push({ name, at: dir });
+        continue;
+      }
+      await fs8.rename(path10.join(dir, name), live);
+      handled.add(name);
+      restored.push({ name, from: dir });
+    }
+  }
+  return { restored, kept, archiveDirs };
+}
+async function summarizeNativeMemory(cwd, opts = {}) {
+  const memoryDir = findNativeMemoryDir(cwd, { explicitDir: opts.explicitDir });
+  if (!memoryDir) return null;
+  let indexBytes = 0;
+  let totalBytes = 0;
+  let fileCount = 0;
+  for (const name of await fs8.readdir(memoryDir)) {
+    if (!name.endsWith(".md") || name.startsWith(".")) continue;
+    let bytes;
+    try {
+      const st = await fs8.stat(path10.join(memoryDir, name));
+      if (!st.isFile()) continue;
+      bytes = st.size;
+    } catch {
+      continue;
+    }
+    fileCount += 1;
+    totalBytes += bytes;
+    if (name === "MEMORY.md") indexBytes = bytes;
+  }
+  return {
+    memoryDir,
+    fileCount,
+    approxSessionTokens: Math.ceil(
+      Math.min(indexBytes, NATIVE_MEMORY_SESSION_READ_CAP_BYTES) / 4
+    ),
+    approxCorpusTokens: Math.ceil(totalBytes / 4)
+  };
+}
+function formatTokens(n) {
+  if (n < 1e3) return String(n);
+  return `${(n / 1e3).toFixed(1).replace(/\.0$/, "")}k`;
+}
+function nativeMemoryNudgeLines(summary, policy) {
+  const first = `Native auto-memory found: ${summary.fileCount} file(s) \u2014 \u2248${formatTokens(summary.approxSessionTokens)} tokens loaded into every Claude Code session (\u2248${formatTokens(summary.approxCorpusTokens)} tokens of memory on this machine).`;
+  const action = policy === "required" ? "  \u26A0 Your org REQUIRES Memlin-managed memory \u2014 run: memlin manage-memory --archive" : policy === "recommended" ? "  Your workspace recommends letting Memlin manage memory: memlin manage-memory --archive" : "  Move it into Memlin (reversible \u2014 nothing is deleted): memlin manage-memory --archive";
+  return [first, action];
+}
+function isTrivial(snap) {
+  for (const sat of snap.satellites) {
+    if (sat.content.trim().length >= 8) return false;
+  }
+  for (const line of snap.indexRaw.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#")) continue;
+    if (t.length >= 8) return false;
+  }
+  return true;
+}
+async function runTakeover(opts) {
+  if (!opts.memoryDir) {
+    const d2 = await opts.disable();
+    return { status: "no-native-memory", disabled: d2.ok };
+  }
+  const snap = await readNativeMemory(opts.memoryDir);
+  let summary;
+  if (isTrivial(snap)) {
+    summary = "nothing above the ingest threshold (all content under 8 chars) \u2014 nothing to lose";
+  } else {
+    let outcome;
+    try {
+      outcome = await opts.ingest(snap);
+    } catch (err2) {
+      outcome = { ok: false, reason: err2 instanceof Error ? err2.message : String(err2) };
+    }
+    if (!outcome.ok) {
+      return { status: "ingest-refused", reason: outcome.reason };
+    }
+    summary = outcome.summary;
+  }
+  const basenames = ["MEMORY.md", ...snap.satellites.map((s) => s.name)];
+  const archiveFn = opts.archive ?? archiveNativeMemory;
+  let receipt;
+  try {
+    receipt = await archiveFn(opts.memoryDir, basenames);
+  } catch (err2) {
+    const d2 = await opts.disable();
+    return {
+      status: "archive-failed",
+      ingestSummary: summary,
+      error: err2 instanceof Error ? err2.message : String(err2),
+      disabled: d2.ok
+    };
+  }
+  const d = await opts.disable();
+  return { status: "done", ingestSummary: summary, receipt, disabled: d.ok };
+}
+var ARCHIVE_ROOT, ARCHIVE_NAME_RE, NATIVE_MEMORY_SESSION_READ_CAP_BYTES;
+var init_native_memory = __esm({
+  "packages/plugin-core/src/native-memory.ts"() {
+    "use strict";
+    ARCHIVE_ROOT = ".archived";
+    ARCHIVE_NAME_RE = /^(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
+    NATIVE_MEMORY_SESSION_READ_CAP_BYTES = 25e3;
+  }
+});
+
+// packages/plugin-core/src/cli/login.ts
+var login_exports = {};
+import { writeSync } from "node:fs";
+function parseLoginArgs(argv) {
+  const out2 = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--account" || a === "-a") {
+      const v = argv[++i];
+      if (!v) return { error: "--account requires a value" };
+      out2.requestedAccount = v;
+    } else if (a === "--help" || a === "-h") {
+      return { error: "help" };
+    } else if (a?.startsWith("--")) {
+      return { error: `unknown flag: ${a}` };
+    }
+  }
+  return out2;
+}
+async function main() {
+  const parsed = parseLoginArgs(process.argv.slice(2));
+  if ("error" in parsed) {
+    if (parsed.error === "help") {
+      console.log("memlin login [--account <uuid-or-name>]");
+      console.log("");
+      console.log("Authenticate to Memlin and pin the active account.");
+      console.log("  --account <v>   Override server-side default_account_id with this account");
+      console.log("                  (must be one you're a member of)");
+      exitCli(0);
+    }
+    console.error(`memlin login: ${parsed.error}`);
+    exitCli(2);
+  }
+  const { requestedAccount } = parsed;
+  console.log("memlin login");
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  const device = await startDeviceFlow();
+  const urlMsg = `
+  Open this URL in your browser to sign in:
+
+    \x1B[1m${device.verification_uri_complete}\x1B[0m
+
+  Verification code: \x1B[1m${device.user_code}\x1B[0m
+  Expires in ${Math.floor(device.expires_in / 60)} min.
+
+  waiting for approval`;
+  writeSync(2, urlMsg);
+  const token = await pollForToken(device.device_code, device.interval, (elapsed) => {
+    if (elapsed % 5 === 0) writeSync(2, ".");
+  });
+  writeSync(2, "\n\n");
+  let login;
+  try {
+    login = await bootstrapMemlinLogin(token, { requestedAccount });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`memlin login: ${detail}`);
+    if (error instanceof LoginBootstrapError && error.code === "account-setup-required") {
+      console.error("Open https://memlin.ai/app/onboarding to finish setup.");
+    }
+    exitCli(1);
+  }
+  const displayName = login.user.displayName ?? login.user.email ?? login.user.id.slice(0, 8) + "\u2026";
+  console.log(`  \u2713 signed in as ${displayName}`);
+  console.log(`  \u2713 workspace "${login.account.name}"`);
+  const installed = await ensureResolverSkill();
+  if (installed.status === "installed") {
+    console.log(`  \u2713 installed Memlin resolver skill (${installed.path})`);
+  } else if (installed.status === "upgraded") {
+    console.log(`  \u2713 upgraded Memlin resolver skill (${installed.path})`);
+  } else if (installed.status === "kept") {
+    console.log(`  \u2713 Memlin resolver skill already present (${installed.path})`);
+  } else {
+    console.log(
+      `  ! couldn't install Memlin resolver skill at ${installed.path}: ${installed.error ?? "unknown error"}`
+    );
+  }
+  const pluginInstall = await ensureUserScopePluginEnabled();
+  if (pluginInstall.status === "enabled") {
+    console.log(`  \u2713 enabled Memlin plugin user-wide (${pluginInstall.settingsFile})`);
+    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
+  } else if (pluginInstall.status === "enabled-with-marketplace") {
+    console.log(`  \u2713 enabled Memlin plugin + registered marketplace (${pluginInstall.settingsFile})`);
+    console.log(`    every Claude Code workspace now loads Memlin hooks + slash commands.`);
+  } else if (pluginInstall.status === "already-enabled") {
+    console.log(`  \u2713 Memlin plugin already enabled user-wide (${pluginInstall.settingsFile})`);
+  } else {
+    console.log(`  ! couldn't enable Memlin plugin user-wide: ${pluginInstall.detail}`);
+    console.log(`    Run \`/plugin install memlin@memlin-ai\` in any workspace to enable manually.`);
+  }
+  const companion = await companionStatus().catch(() => null);
+  if (!companion) {
+    console.log("");
+    console.log("  Optional: the Memlin Companion app keeps this machine signed in,");
+    console.log("  links new repos automatically, and syncs plans in the background.");
+    console.log("  Download: https://memlin.ai/download");
+  }
+  try {
+    const settings = await readClaudeUserSettings(defaultUserSettingsPaths());
+    if (!inspectManagedMemory(settings).autoMemoryDisabled) {
+      const summary = await summarizeNativeMemory(runtimeCwd());
+      if (summary) {
+        console.log("");
+        for (const line of nativeMemoryNudgeLines(summary, login.account.managed_memory_policy)) {
+          console.log(`  ${line}`);
+        }
+      }
+    }
+  } catch {
+  }
+  console.log("");
+  console.log("  Run `memlin pull` to fetch your memory, skills, and goals.");
+  printCommandGuide({ intro: true });
+}
+var init_login = __esm({
+  "packages/plugin-core/src/cli/login.ts"() {
+    "use strict";
+    init_auth();
+    init_cli_runner();
+    init_login_bootstrap();
+    init_resolver_skill();
+    init_plugin_install();
+    init_project_resolver();
+    init_native_memory();
+    init_command_guide();
+    init_companion_client();
+    runCliMain(main, (err2) => {
+      console.error("memlin login failed:", err2 instanceof Error ? err2.message : err2);
+      return 1;
+    });
+  }
+});
+
+// packages/plugin-core/src/cli/init.ts
+var init_exports = {};
+import readline from "node:readline/promises";
+async function main2() {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  async function ask(prompt, fallback) {
+    const hint = fallback ? ` [${fallback}]` : "";
+    const ans = (await rl.question(`${prompt}${hint}: `)).trim();
+    return ans || fallback || "";
+  }
+  console.log("memlin init  (paste-a-token fallback \u2014 prefer `memlin login`)");
+  console.log("\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500");
+  console.log("");
+  const apiUrl = await ask("Memlin API URL", process.env.MEMLIN_API_URL ?? DEFAULT_API_URL);
+  const access_token = await ask("Access token (Auth0 JWT)");
+  let account_id = "";
+  let user_id = "";
+  let auth0_sub = "";
+  let expires_at = Date.now() + 24 * 36e5;
+  try {
+    const parts = access_token.split(".");
+    if (parts.length < 2 || !parts[1]) throw new Error("not a JWT");
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    const ids = payload.memlin_account_ids;
+    account_id = payload.memlin_default_account_id ?? ids?.[0] ?? "";
+    auth0_sub = payload.sub ?? "";
+    user_id = payload.memlin_user_id ?? auth0_sub;
+    if (typeof payload.exp === "number" && Number.isFinite(payload.exp)) {
+      expires_at = payload.exp * 1e3;
+    }
+  } catch {
+    console.error("couldn't decode access token JWT \u2014 paste it raw, no surrounding quotes.");
+    rl.close();
+    process.exit(1);
+  }
+  if (!account_id || !user_id || !auth0_sub) {
+    console.error(
+      "token is missing memlin_account_ids / sub. Make sure the Auth0 Action is deployed."
+    );
+    rl.close();
+    process.exit(1);
+  }
+  rl.close();
+  const config = {
+    api_url: apiUrl,
+    account_id,
+    user_id,
+    auth0_sub,
+    project_id: null
+  };
+  await publishMemlinLoginPair(config, { access_token, expires_at });
+  console.log("");
+  console.log(`\u2713 wrote ${globalConfigFilePath()}`);
+  console.log(`\u2713 account ${account_id.slice(0, 8)}\u2026  user ${user_id.slice(0, 12)}\u2026`);
+  console.log("");
+  console.log("Try: `node ~/.claude/plugins/memlin/dist/cli/status.js`");
+}
+var init_init = __esm({
+  "packages/plugin-core/src/cli/init.ts"() {
+    "use strict";
+    init_client();
+    init_login_bootstrap();
+    init_memlin_api_client();
+    main2().catch((err2) => {
+      console.error("memlin init failed:", err2 instanceof Error ? err2.message : err2);
+      process.exit(1);
+    });
+  }
+});
+
+// packages/plugin-core/src/state.ts
+import { promises as fs9 } from "node:fs";
+import path11 from "node:path";
+import os9 from "node:os";
 import crypto from "node:crypto";
 async function readState() {
   try {
-    const raw = await fs8.readFile(STATE_FILE, "utf8");
+    const raw = await fs9.readFile(STATE_FILE, "utf8");
     return JSON.parse(raw);
   } catch {
     return { ...EMPTY2 };
   }
 }
 async function writeState(state) {
-  await fs8.mkdir(path10.dirname(STATE_FILE), { recursive: true });
+  await fs9.mkdir(path11.dirname(STATE_FILE), { recursive: true });
   const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs8.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await fs8.rename(tmp, STATE_FILE);
+  await fs9.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
+  await fs9.rename(tmp, STATE_FILE);
 }
 async function acquireStateLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (; ; ) {
     try {
-      await fs8.mkdir(LOCK_DIR);
+      await fs9.mkdir(LOCK_DIR);
       return true;
     } catch {
       try {
-        const stat = await fs8.stat(LOCK_DIR);
+        const stat = await fs9.stat(LOCK_DIR);
         if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-          await fs8.rmdir(LOCK_DIR).catch(() => {
+          await fs9.rmdir(LOCK_DIR).catch(() => {
           });
           continue;
         }
@@ -11128,7 +11403,7 @@ async function acquireStateLock() {
   }
 }
 async function releaseStateLock() {
-  await fs8.rmdir(LOCK_DIR).catch(() => {
+  await fs9.rmdir(LOCK_DIR).catch(() => {
   });
 }
 async function updateState(mutate) {
@@ -11184,7 +11459,7 @@ var STATE_FILE, MAX_LAST_RESOLVE_SESSIONS, EMPTY2, LOCK_DIR, LOCK_STALE_MS, LOCK
 var init_state = __esm({
   "packages/plugin-core/src/state.ts"() {
     "use strict";
-    STATE_FILE = path10.join(os8.homedir(), ".config", "memlin", "state.json");
+    STATE_FILE = path11.join(os9.homedir(), ".config", "memlin", "state.json");
     MAX_LAST_RESOLVE_SESSIONS = 32;
     EMPTY2 = { documents: {} };
     LOCK_DIR = `${STATE_FILE}.lock`;
@@ -11195,18 +11470,18 @@ var init_state = __esm({
 });
 
 // packages/plugin-core/src/local-scan.ts
-import { promises as fs9 } from "node:fs";
-import { existsSync as existsSync3 } from "node:fs";
-import path11 from "node:path";
+import { promises as fs10 } from "node:fs";
+import { existsSync as existsSync4 } from "node:fs";
+import path12 from "node:path";
 async function scanLocal(opts = {}) {
   const out2 = [];
   const root = opts.rootOverride ?? resolveHost().homeDir();
-  const memDir = path11.join(root, "memory");
-  if (existsSync3(memDir)) {
-    for (const file of await fs9.readdir(memDir)) {
+  const memDir = path12.join(root, "memory");
+  if (existsSync4(memDir)) {
+    for (const file of await fs10.readdir(memDir)) {
       if (!file.endsWith(".md") || file === "MEMORY.md") continue;
-      const abs = path11.join(memDir, file);
-      const content = await fs9.readFile(abs, "utf8");
+      const abs = path12.join(memDir, file);
+      const content = await fs10.readFile(abs, "utf8");
       out2.push({
         path: `memory/${file}`,
         abs_path: abs,
@@ -11216,14 +11491,14 @@ async function scanLocal(opts = {}) {
       });
     }
   }
-  const skillsDir = path11.join(root, "skills");
-  if (existsSync3(skillsDir)) {
-    const entries = await fs9.readdir(skillsDir, { withFileTypes: true });
+  const skillsDir = path12.join(root, "skills");
+  if (existsSync4(skillsDir)) {
+    const entries = await fs10.readdir(skillsDir, { withFileTypes: true });
     for (const e of entries) {
       if (!e.isDirectory()) continue;
-      const skillMd = path11.join(skillsDir, e.name, "SKILL.md");
-      if (!existsSync3(skillMd)) continue;
-      const content = await fs9.readFile(skillMd, "utf8");
+      const skillMd = path12.join(skillsDir, e.name, "SKILL.md");
+      if (!existsSync4(skillMd)) continue;
+      const content = await fs10.readFile(skillMd, "utf8");
       out2.push({
         path: `skills/${e.name}/SKILL.md`,
         abs_path: skillMd,
@@ -11233,12 +11508,12 @@ async function scanLocal(opts = {}) {
       });
     }
   }
-  const goalsDir = path11.join(root, "goals");
-  if (existsSync3(goalsDir)) {
-    for (const file of await fs9.readdir(goalsDir)) {
+  const goalsDir = path12.join(root, "goals");
+  if (existsSync4(goalsDir)) {
+    for (const file of await fs10.readdir(goalsDir)) {
       if (!file.endsWith(".md")) continue;
-      const abs = path11.join(goalsDir, file);
-      const content = await fs9.readFile(abs, "utf8");
+      const abs = path12.join(goalsDir, file);
+      const content = await fs10.readFile(abs, "utf8");
       out2.push({
         path: `goals/${file}`,
         abs_path: abs,
@@ -11248,12 +11523,12 @@ async function scanLocal(opts = {}) {
       });
     }
   }
-  const schemasDir = path11.join(root, "schemas");
-  if (existsSync3(schemasDir)) {
-    for (const file of await fs9.readdir(schemasDir)) {
+  const schemasDir = path12.join(root, "schemas");
+  if (existsSync4(schemasDir)) {
+    for (const file of await fs10.readdir(schemasDir)) {
       if (!file.endsWith(".json")) continue;
-      const abs = path11.join(schemasDir, file);
-      const content = await fs9.readFile(abs, "utf8");
+      const abs = path12.join(schemasDir, file);
+      const content = await fs10.readFile(abs, "utf8");
       out2.push({
         path: `schemas/${file}`,
         abs_path: abs,
@@ -11265,11 +11540,11 @@ async function scanLocal(opts = {}) {
   }
   if (opts.includePlans) {
     const plansDir2 = resolveHost().plansDir();
-    if (existsSync3(plansDir2)) {
-      for (const file of await fs9.readdir(plansDir2)) {
+    if (existsSync4(plansDir2)) {
+      for (const file of await fs10.readdir(plansDir2)) {
         if (!file.endsWith(".md")) continue;
-        const abs = path11.join(plansDir2, file);
-        const content = await fs9.readFile(abs, "utf8");
+        const abs = path12.join(plansDir2, file);
+        const content = await fs10.readFile(abs, "utf8");
         out2.push({
           path: `plans/${file}`,
           abs_path: abs,
@@ -11285,9 +11560,9 @@ async function scanLocal(opts = {}) {
     for (const [relPath, meta] of Object.entries(opts.trackedDocs)) {
       if (seen.has(relPath)) continue;
       if (relPath.startsWith("plans/")) continue;
-      const abs = path11.join(root, relPath);
-      if (!existsSync3(abs)) continue;
-      const content = await fs9.readFile(abs, "utf8");
+      const abs = path12.join(root, relPath);
+      if (!existsSync4(abs)) continue;
+      const content = await fs10.readFile(abs, "utf8");
       out2.push({
         path: relPath,
         abs_path: abs,
@@ -11301,7 +11576,7 @@ async function scanLocal(opts = {}) {
 }
 function filterAbsentOnDisk(paths, rootOverride) {
   const root = rootOverride ?? resolveHost().homeDir();
-  return paths.filter((p) => !existsSync3(path11.join(root, p)));
+  return paths.filter((p) => !existsSync4(path12.join(root, p)));
 }
 var init_local_scan = __esm({
   "packages/plugin-core/src/local-scan.ts"() {
@@ -11312,8 +11587,8 @@ var init_local_scan = __esm({
 });
 
 // packages/plugin-core/src/plan-sync.ts
-import { promises as fs10 } from "node:fs";
-import path12 from "node:path";
+import { promises as fs11 } from "node:fs";
+import path13 from "node:path";
 function homeBase(host) {
   return (host ?? resolveHost()).homeDir();
 }
@@ -11325,7 +11600,7 @@ async function pullPlans(api, opts = {}) {
   if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
   if (opts.since) fetchOpts.updated_after = opts.since;
   const list = await api.listPlans(fetchOpts);
-  await fs10.mkdir(plansDir(opts.host), { recursive: true });
+  await fs11.mkdir(plansDir(opts.host), { recursive: true });
   const state = await readState();
   const newEntries = {};
   const pulled = [];
@@ -11336,8 +11611,8 @@ async function pullPlans(api, opts = {}) {
   for (const p of list) {
     const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
     const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path12.join("plans", filename);
-    const full = path12.join(plansDir(opts.host), filename);
+    const localPath = path13.join("plans", filename);
+    const full = path13.join(plansDir(opts.host), filename);
     seenPaths.add(localPath);
     let body2;
     try {
@@ -11356,7 +11631,7 @@ async function pullPlans(api, opts = {}) {
       unchanged.push(localPath);
       continue;
     }
-    await fs10.writeFile(full, fileContent, "utf8");
+    await fs11.writeFile(full, fileContent, "utf8");
     pulled.push(localPath);
     newEntries[localPath] = {
       document_id: p.document_id,
@@ -11384,12 +11659,12 @@ function resolveTargetDocId(stateEntry, binding) {
   return stateEntry?.document_id || binding?.documentId || void 0;
 }
 async function pushPlanFile(api, file, opts = {}) {
-  const raw = await fs10.readFile(file, "utf8");
+  const raw = await fs11.readFile(file, "utf8");
   const { title, body: body2, binding: existingBinding } = parsePlanFile(raw);
   if (!body2.trim()) {
     throw new Error("plan body is empty");
   }
-  const relPath = path12.relative(homeBase(opts.host), file);
+  const relPath = path13.relative(homeBase(opts.host), file);
   const state = await readState();
   const existing = state.documents[relPath];
   const targetDocId = resolveTargetDocId(existing, existingBinding);
@@ -11403,7 +11678,7 @@ async function pushPlanFile(api, file, opts = {}) {
       documentId: result2.document_id,
       projectId: existingBinding?.projectId ?? null
     });
-    const stampedUpdate = await fs10.readFile(file, "utf8").catch(() => raw);
+    const stampedUpdate = await fs11.readFile(file, "utf8").catch(() => raw);
     await updateState((s) => {
       s.documents[relPath] = {
         document_id: result2.document_id,
@@ -11442,7 +11717,7 @@ async function pushPlanFile(api, file, opts = {}) {
     documentId: result.document_id,
     projectId: result.project_id
   });
-  const stamped = await fs10.readFile(file, "utf8").catch(() => raw);
+  const stamped = await fs11.readFile(file, "utf8").catch(() => raw);
   await updateState((s) => {
     const entry = s.documents[relPath];
     if (entry) entry.content_hash = hash(stamped);
@@ -11457,25 +11732,25 @@ async function listUnboundPlans(host) {
   const out2 = [];
   let entries;
   try {
-    entries = await fs10.readdir(plansDir(host));
+    entries = await fs11.readdir(plansDir(host));
   } catch {
     return out2;
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path12.join(plansDir(host), f);
+    const abs = path13.join(plansDir(host), f);
     let raw;
     let size = 0;
     try {
-      const st = await fs10.stat(abs);
+      const st = await fs11.stat(abs);
       if (!st.isFile() || st.size === 0) continue;
       size = st.size;
-      raw = await fs10.readFile(abs, "utf8");
+      raw = await fs11.readFile(abs, "utf8");
     } catch {
       continue;
     }
-    const relPath = path12.relative(homeBase(host), abs);
+    const relPath = path13.relative(homeBase(host), abs);
     const { title, binding } = parsePlanFile(raw);
     if (state.documents[relPath]?.document_id || binding?.documentId) continue;
     out2.push({ file: f, title, size });
@@ -11485,7 +11760,7 @@ async function listUnboundPlans(host) {
 async function stampPlanFile(file, binding) {
   let raw;
   try {
-    raw = await fs10.readFile(file, "utf8");
+    raw = await fs11.readFile(file, "utf8");
   } catch {
     return;
   }
@@ -11501,7 +11776,7 @@ async function stampPlanFile(file, binding) {
     bodyNoStamp.trim(),
     ""
   ].filter((l) => l !== null).join("\n");
-  await fs10.writeFile(file, composed, "utf8");
+  await fs11.writeFile(file, composed, "utf8");
 }
 function formatPlanFile(title, body2, status, binding) {
   const trimmedBody = body2.replace(/^\s*#\s+.+\n+/, "").trimEnd();
@@ -11895,9 +12170,9 @@ var init_check_evaluators = __esm({
 
 // packages/plugin-core/src/cli/doctor.ts
 var doctor_exports = {};
-import { promises as fs11 } from "node:fs";
-import path13 from "node:path";
-import os9 from "node:os";
+import { promises as fs12 } from "node:fs";
+import path14 from "node:path";
+import os10 from "node:os";
 async function probeUrl(url) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), NET_TIMEOUT_MS);
@@ -11939,10 +12214,10 @@ async function probeMcp(url) {
 }
 async function probeWritable(dir) {
   try {
-    await fs11.mkdir(dir, { recursive: true });
-    const probe = path13.join(dir, `.memlin-doctor-${Date.now()}.tmp`);
-    await fs11.writeFile(probe, "ok", "utf8");
-    await fs11.unlink(probe);
+    await fs12.mkdir(dir, { recursive: true });
+    const probe = path14.join(dir, `.memlin-doctor-${Date.now()}.tmp`);
+    await fs12.writeFile(probe, "ok", "utf8");
+    await fs12.unlink(probe);
     return { ok: true };
   } catch (err2) {
     return {
@@ -12089,9 +12364,9 @@ var init_doctor = __esm({
     init_companion_client();
     init_plugin_install();
     NET_TIMEOUT_MS = 5e3;
-    CONFIG_DIR2 = path13.join(os9.homedir(), ".config", "memlin");
-    CONFIG_FILE = path13.join(CONFIG_DIR2, "config.json");
-    CLAUDE_DIR = path13.join(os9.homedir(), ".claude");
+    CONFIG_DIR2 = path14.join(os10.homedir(), ".config", "memlin");
+    CONFIG_FILE = path14.join(CONFIG_DIR2, "config.json");
+    CLAUDE_DIR = path14.join(os10.homedir(), ".claude");
     runCliMain(main4, (err2) => {
       console.error("memlin doctor failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
@@ -12134,21 +12409,21 @@ var init_paths = __esm({
 });
 
 // packages/plugin-core/src/apply.ts
-import { promises as fs12 } from "node:fs";
-import { existsSync as existsSync4 } from "node:fs";
-import os10 from "node:os";
-import path14 from "node:path";
+import { promises as fs13 } from "node:fs";
+import { existsSync as existsSync5 } from "node:fs";
+import os11 from "node:os";
+import path15 from "node:path";
 function archiveRoot() {
-  return path14.join(os10.homedir(), ".config", "memlin", "archive");
+  return path15.join(os11.homedir(), ".config", "memlin", "archive");
 }
 async function archiveDestination(trackedRelPath) {
-  const base = path14.join(archiveRoot(), trackedRelPath);
-  if (!existsSync4(base)) return base;
-  const ext = path14.extname(base);
+  const base = path15.join(archiveRoot(), trackedRelPath);
+  if (!existsSync5(base)) return base;
+  const ext = path15.extname(base);
   const stem = base.slice(0, base.length - ext.length);
   for (let i = 1; i < 1e3; i++) {
     const candidate = `${stem}.${i}${ext}`;
-    if (!existsSync4(candidate)) return candidate;
+    if (!existsSync5(candidate)) return candidate;
   }
   return `${stem}.${Date.now()}${ext}`;
 }
@@ -12168,17 +12443,17 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     if (d.kind === "feedback") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
     currentPaths.add(localPath);
-    const full = path14.join(root, localPath);
+    const full = path15.join(root, localPath);
     const contentHash = hash(d.content);
     let needsWrite = true;
     try {
-      const local = await fs12.readFile(full, "utf8");
+      const local = await fs13.readFile(full, "utf8");
       if (hash(local) === contentHash) needsWrite = false;
     } catch {
     }
     if (needsWrite) {
-      await fs12.mkdir(path14.dirname(full), { recursive: true });
-      await fs12.writeFile(full, d.content, "utf8");
+      await fs13.mkdir(path15.dirname(full), { recursive: true });
+      await fs13.writeFile(full, d.content, "utf8");
       out2.written.push(localPath);
     } else {
       out2.unchanged.push(localPath);
@@ -12193,11 +12468,11 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
   }
   for (const tracked of Object.keys(state.documents)) {
     if (currentPaths.has(tracked)) continue;
-    const full = path14.join(root, tracked);
-    if (existsSync4(full)) {
+    const full = path15.join(root, tracked);
+    if (existsSync5(full)) {
       let userEdited = false;
       try {
-        const local = await fs12.readFile(full, "utf8");
+        const local = await fs13.readFile(full, "utf8");
         const prior = state.documents[tracked]?.content_hash;
         userEdited = !prior || hash(local) !== prior;
       } catch {
@@ -12209,8 +12484,8 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
       } else {
         const dest = await archiveDestination(tracked);
         try {
-          await fs12.mkdir(path14.dirname(dest), { recursive: true });
-          await fs12.rename(full, dest);
+          await fs13.mkdir(path15.dirname(dest), { recursive: true });
+          await fs13.rename(full, dest);
           out2.archived.push(tracked);
           out2.removed.push(`${tracked} (archived)`);
         } catch {
@@ -12245,7 +12520,7 @@ var init_apply = __esm({
 
 // packages/plugin-core/src/cli/sync.ts
 var sync_exports = {};
-import path15 from "node:path";
+import path16 from "node:path";
 async function main5() {
   const ctx = await getApi();
   if (!ctx) {
@@ -12372,7 +12647,7 @@ function inferTitle(relPath, content) {
     const name = m[1].split("\n").find((l) => l.startsWith("name:"));
     if (name) return name.replace(/^name:\s*/, "").trim();
   }
-  return path15.basename(relPath, path15.extname(relPath));
+  return path16.basename(relPath, path16.extname(relPath));
 }
 var init_sync = __esm({
   "packages/plugin-core/src/cli/sync.ts"() {
@@ -12393,7 +12668,7 @@ var init_sync = __esm({
 
 // packages/plugin-core/src/cli/pull.ts
 var pull_exports = {};
-import path16 from "node:path";
+import path17 from "node:path";
 async function main6() {
   const ctx = await getApi();
   if (!ctx) {
@@ -12426,7 +12701,7 @@ async function main6() {
     docs,
     state,
     (/* @__PURE__ */ new Date()).toISOString(),
-    targetDir ? path16.resolve(runtimeCwd(), targetDir) : void 0
+    targetDir ? path17.resolve(runtimeCwd(), targetDir) : void 0
   );
   if (targetDir) {
     console.log(`  (export mode \u2014 wrote under ${targetDir}; sync state untouched)`);
@@ -12475,7 +12750,7 @@ var init_pull = __esm({
 
 // packages/plugin-core/src/cli/push.ts
 var push_exports = {};
-import path17 from "node:path";
+import path18 from "node:path";
 async function main7() {
   const ctx = await getApi();
   if (!ctx) {
@@ -12495,7 +12770,7 @@ async function main7() {
   }
   const state = targetDir ? { documents: {} } : await readState();
   const local = await scanLocal(
-    targetDir ? { rootOverride: path17.resolve(runtimeCwd(), targetDir) } : { trackedDocs: state.documents }
+    targetDir ? { rootOverride: path18.resolve(runtimeCwd(), targetDir) } : { trackedDocs: state.documents }
   );
   const now = (/* @__PURE__ */ new Date()).toISOString();
   const serverByPath = /* @__PURE__ */ new Map();
@@ -12531,7 +12806,7 @@ async function main7() {
         title,
         path: doc.path,
         content: doc.content,
-        commit_message: `push from cli (${path17.basename(doc.abs_path)})`,
+        commit_message: `push from cli (${path18.basename(doc.abs_path)})`,
         project_id: resolved.project_id
       });
       state.documents[doc.path] = {
@@ -12562,7 +12837,7 @@ function inferTitle2(relPath, content) {
     const name = m[1].split("\n").find((l) => l.startsWith("name:"));
     if (name) return name.replace(/^name:\s*/, "").trim();
   }
-  return path17.basename(relPath, path17.extname(relPath));
+  return path18.basename(relPath, path18.extname(relPath));
 }
 var init_push = __esm({
   "packages/plugin-core/src/cli/push.ts"() {
@@ -12634,8 +12909,8 @@ var init_pull_plans = __esm({
 // packages/plugin-core/src/cli/push-plan.ts
 var push_plan_exports = {};
 import { execSync as execSync2 } from "node:child_process";
-import { promises as fs13 } from "node:fs";
-import path18 from "node:path";
+import { promises as fs14 } from "node:fs";
+import path19 from "node:path";
 function parseArgs2(argv) {
   let file;
   let project;
@@ -12718,10 +12993,10 @@ async function main9() {
     exitCli(1);
   }
   const { api } = ctx;
-  const filePath = path18.resolve(parsed.file);
+  const filePath = path19.resolve(parsed.file);
   let raw;
   try {
-    raw = await fs13.readFile(filePath, "utf8");
+    raw = await fs14.readFile(filePath, "utf8");
   } catch (e) {
     console.error(
       `memlin push-plan: can't read ${filePath}: ${e instanceof Error ? e.message : e}`
@@ -12774,8 +13049,8 @@ var init_push_plan = __esm({
 
 // packages/plugin-core/src/cli/bind-plans.ts
 var bind_plans_exports = {};
-import path19 from "node:path";
-import os11 from "node:os";
+import path20 from "node:path";
+import os12 from "node:os";
 import { execSync as execSync3 } from "node:child_process";
 function readGitRemote3(cwd) {
   try {
@@ -12840,7 +13115,7 @@ cd into the repo whose project these plans belong to, then re-run.
     );
     exitCli(1);
   }
-  const targets = all ? unbound.map((p) => p.file) : [fileArg].map((f) => path19.basename(f));
+  const targets = all ? unbound.map((p) => p.file) : [fileArg].map((f) => path20.basename(f));
   if (targets.length === 0) {
     process.stdout.write("Nothing to bind.\n");
     exitCli(0);
@@ -12852,7 +13127,7 @@ cd into the repo whose project these plans belong to, then re-run.
   let bound = 0;
   let failed = 0;
   for (const file of targets) {
-    const abs = path19.join(PLANS_DIR, file);
+    const abs = path20.join(PLANS_DIR, file);
     try {
       const result = await pushPlanFile(ctx.api, abs, { cwd, gitRemote });
       process.stdout.write(`  \u2713 ${file} \u2192 ${result.document_id.slice(0, 8)}
@@ -12877,7 +13152,7 @@ var init_bind_plans = __esm({
     init_cli_runner();
     init_project_resolver();
     init_plan_sync();
-    PLANS_DIR = path19.join(os11.homedir(), ".claude", "plans");
+    PLANS_DIR = path20.join(os12.homedir(), ".claude", "plans");
     runCliMain(main10, (err2) => {
       console.error("memlin bind-plans failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
@@ -12886,8 +13161,8 @@ var init_bind_plans = __esm({
 });
 
 // packages/plugin-core/src/plan-archive.ts
-import { promises as fs14 } from "node:fs";
-import path20 from "node:path";
+import { promises as fs15 } from "node:fs";
+import path21 from "node:path";
 function parsePlanFilename(file) {
   const m = FILENAME_RE.exec(file);
   if (!m || !m.groups) return null;
@@ -12912,7 +13187,7 @@ function findDuplicateGroups(files) {
 async function listPlanFiles(plansDir2) {
   let entries;
   try {
-    entries = await fs14.readdir(plansDir2, { withFileTypes: true });
+    entries = await fs15.readdir(plansDir2, { withFileTypes: true });
   } catch (e) {
     if (e.code === "ENOENT") return [];
     throw e;
@@ -12923,7 +13198,7 @@ async function listPlanFiles(plansDir2) {
     if (ent.name.startsWith(".")) continue;
     const parsed = parsePlanFilename(ent.name);
     if (!parsed) continue;
-    const stat = await fs14.stat(path20.join(plansDir2, ent.name));
+    const stat = await fs15.stat(path21.join(plansDir2, ent.name));
     out2.push({ file: ent.name, slug: parsed.slug, mtimeMs: stat.mtimeMs });
   }
   return out2;
@@ -12932,16 +13207,16 @@ function archiveDirFor(plansDir2, now) {
   const y = now.getUTCFullYear().toString().padStart(4, "0");
   const m = (now.getUTCMonth() + 1).toString().padStart(2, "0");
   const d = now.getUTCDate().toString().padStart(2, "0");
-  return path20.join(plansDir2, ".archived", `${y}-${m}-${d}`);
+  return path21.join(plansDir2, ".archived", `${y}-${m}-${d}`);
 }
 async function archiveFiles(plansDir2, files, now) {
   const archiveDir = archiveDirFor(plansDir2, now);
-  await fs14.mkdir(archiveDir, { recursive: true });
+  await fs15.mkdir(archiveDir, { recursive: true });
   let archived = 0;
   for (const f of files) {
-    const src = path20.join(plansDir2, f.file);
-    const dst = path20.join(archiveDir, f.file);
-    await fs14.rename(src, dst);
+    const src = path21.join(plansDir2, f.file);
+    const dst = path21.join(archiveDir, f.file);
+    await fs15.rename(src, dst);
     archived++;
   }
   return { archived, archiveDir };
@@ -13019,18 +13294,18 @@ var init_archive_plans = __esm({
 
 // packages/plugin-core/src/pending-bundle.ts
 import { spawn } from "node:child_process";
-import { promises as fs15 } from "node:fs";
-import path21 from "node:path";
-import os12 from "node:os";
+import { promises as fs16 } from "node:fs";
+import path22 from "node:path";
+import os13 from "node:os";
 function pendingBundlePath() {
-  return process.env.MEMLIN_RESOLVE_OUT ?? path21.join(os12.homedir(), ".config", "memlin", "pending-bundle.json");
+  return process.env.MEMLIN_RESOLVE_OUT ?? path22.join(os13.homedir(), ".config", "memlin", "pending-bundle.json");
 }
 async function writePendingBundle(bundle) {
   const file = pendingBundlePath();
-  await fs15.mkdir(path21.dirname(file), { recursive: true });
+  await fs16.mkdir(path22.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  await fs15.writeFile(tmp, JSON.stringify(bundle), "utf8");
-  await fs15.rename(tmp, file);
+  await fs16.writeFile(tmp, JSON.stringify(bundle), "utf8");
+  await fs16.rename(tmp, file);
 }
 var PENDING_BUNDLE_MAX_AGE_MS;
 var init_pending_bundle = __esm({
@@ -14302,7 +14577,7 @@ __export(diff_exports, {
   extractContract: () => extractContract,
   parseDiffArgs: () => parseDiffArgs
 });
-import { promises as fs16 } from "node:fs";
+import { promises as fs17 } from "node:fs";
 import { pathToFileURL } from "node:url";
 function parseDiffArgs(argv) {
   const out2 = {
@@ -14422,7 +14697,7 @@ async function main15() {
   const localFile = parsed.localFile;
   let localRaw;
   try {
-    localRaw = await fs16.readFile(localFile, "utf8");
+    localRaw = await fs17.readFile(localFile, "utf8");
   } catch (e) {
     console.error(`memlin diff: cannot read ${localFile}: ${e instanceof Error ? e.message : e}`);
     exitCli(2);
@@ -14583,22 +14858,22 @@ var init_transcript = __esm({
 
 // packages/plugin-core/src/cli/scribe.ts
 var scribe_exports = {};
-import { promises as fs17 } from "node:fs";
-import path22 from "node:path";
-import os13 from "node:os";
+import { promises as fs18 } from "node:fs";
+import path23 from "node:path";
+import os14 from "node:os";
 import { createHash as createHash2 } from "node:crypto";
 async function findLatestTranscript(cwd) {
-  const projectsDir = path22.join(os13.homedir(), ".claude", "projects");
+  const projectsDir = path23.join(os14.homedir(), ".claude", "projects");
   const encoded = cwd.replace(/\//g, "-");
-  const direct = path22.join(projectsDir, encoded);
+  const direct = path23.join(projectsDir, encoded);
   let scanDirs = [];
   try {
-    const st = await fs17.stat(direct);
+    const st = await fs18.stat(direct);
     if (st.isDirectory()) scanDirs.push(direct);
   } catch {
     try {
-      const dirs = await fs17.readdir(projectsDir);
-      scanDirs = dirs.map((d) => path22.join(projectsDir, d));
+      const dirs = await fs18.readdir(projectsDir);
+      scanDirs = dirs.map((d) => path23.join(projectsDir, d));
     } catch {
       return null;
     }
@@ -14607,15 +14882,15 @@ async function findLatestTranscript(cwd) {
   for (const dir of scanDirs) {
     let files;
     try {
-      files = await fs17.readdir(dir);
+      files = await fs18.readdir(dir);
     } catch {
       continue;
     }
     for (const f of files) {
       if (!f.endsWith(".jsonl")) continue;
-      const abs = path22.join(dir, f);
+      const abs = path23.join(dir, f);
       try {
-        const st = await fs17.stat(abs);
+        const st = await fs18.stat(abs);
         const mtime = st.mtimeMs;
         if (!best || mtime > best.mtime) {
           best = { path: abs, sessionId: f.replace(/\.jsonl$/, ""), mtime };
@@ -14627,7 +14902,7 @@ async function findLatestTranscript(cwd) {
   return best ? { path: best.path, sessionId: best.sessionId } : null;
 }
 async function loadTranscript(transcriptPath) {
-  const raw = await fs17.readFile(transcriptPath, "utf8");
+  const raw = await fs18.readFile(transcriptPath, "utf8");
   const lines = raw.split("\n").filter((l) => l.trim());
   const turns = [];
   for (const line of lines) {
@@ -14661,7 +14936,7 @@ async function main16() {
   const cwd = runtimeCwd();
   let found;
   if (explicitFile) {
-    const abs = path22.resolve(cwd, explicitFile);
+    const abs = path23.resolve(cwd, explicitFile);
     const h = createHash2("sha256").update(abs).digest("hex");
     found = {
       path: abs,
@@ -14680,7 +14955,7 @@ async function main16() {
   try {
     transcript = await loadTranscript(found.path);
     if (explicitFile && transcript.length === 0) {
-      const raw = await fs17.readFile(found.path, "utf8");
+      const raw = await fs18.readFile(found.path, "utf8");
       transcript = `### user
 ${raw}`;
     }
@@ -15418,7 +15693,7 @@ var init_features = __esm({
 
 // packages/plugin-core/src/cli/link.ts
 var link_exports = {};
-import path23 from "node:path";
+import path24 from "node:path";
 function parseArgs4(argv) {
   const out2 = {};
   for (let i = 0; i < argv.length; i++) {
@@ -15487,7 +15762,7 @@ async function main21() {
     console.error("memlin link: not configured. Run `memlin login` first.");
     exitCli(1);
   }
-  const root = path23.resolve(parsed.root ?? runtimeCwd());
+  const root = path24.resolve(parsed.root ?? runtimeCwd());
   if (parsed.clear) {
     const removed = await clearWorkspaceBinding(root);
     if (removed) {
@@ -15695,9 +15970,9 @@ var init_pin = __esm({
 });
 
 // packages/plugin-core/src/sibling-detect.ts
-import { readdirSync as readdirSync2, existsSync as existsSync5 } from "node:fs";
+import { readdirSync as readdirSync2, existsSync as existsSync6 } from "node:fs";
 import { execSync as execSync6 } from "node:child_process";
-import path24 from "node:path";
+import path25 from "node:path";
 function childGitRemotes(cwd, deps = {}) {
   const listDirs = deps.listDirs ?? ((p) => {
     try {
@@ -15708,7 +15983,7 @@ function childGitRemotes(cwd, deps = {}) {
   });
   const readRemote = deps.readRemote ?? ((repoPath) => {
     try {
-      if (!existsSync5(path24.join(repoPath, ".git"))) return null;
+      if (!existsSync6(path25.join(repoPath, ".git"))) return null;
       const url = execSync6("git remote get-url origin", {
         cwd: repoPath,
         stdio: ["ignore", "pipe", "ignore"],
@@ -15722,7 +15997,7 @@ function childGitRemotes(cwd, deps = {}) {
   const out2 = [];
   const seen = /* @__PURE__ */ new Set();
   for (const dir of listDirs(cwd).slice(0, MAX_CHILD_DIRS)) {
-    const remote = readRemote(path24.join(cwd, dir));
+    const remote = readRemote(path25.join(cwd, dir));
     if (!remote || seen.has(remote)) continue;
     seen.add(remote);
     out2.push({ dir, remote });
@@ -15766,7 +16041,7 @@ var init_sibling_detect = __esm({
 // packages/plugin-core/src/cli/add-project.ts
 var add_project_exports = {};
 import { execSync as execSync7 } from "node:child_process";
-import path25 from "node:path";
+import path26 from "node:path";
 import readline3 from "node:readline";
 function parseArgs5(argv) {
   const out2 = { kind: "code" };
@@ -16015,7 +16290,7 @@ Attach this folder to it instead of creating a new project? [Y/n] `,
       `Creating a new project under "${target.name}" (your default). If it belongs to a different org, cancel and pass --org <name>, or run \`memlin login\` to refresh your account list first.`
     );
   }
-  const projectName = parsed.name?.trim() || path25.basename(cwd).trim() || "untitled";
+  const projectName = parsed.name?.trim() || path26.basename(cwd).trim() || "untitled";
   let project;
   try {
     project = await api.createProject(
@@ -16072,219 +16347,6 @@ var init_add_project = __esm({
   }
 });
 
-// packages/plugin-core/src/native-memory.ts
-import { promises as fs18 } from "node:fs";
-import { existsSync as existsSync6, statSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import os14 from "node:os";
-import path26 from "node:path";
-function gitMainRoot(cwd) {
-  try {
-    const common = execFileSync(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
-    ).trim();
-    return common ? path26.dirname(common) : null;
-  } catch {
-    return null;
-  }
-}
-function encodings(p) {
-  return [
-    p.replace(/[:\\/.]/g, "-"),
-    p.replace(/[/.]/g, "-"),
-    p.replace(/\//g, "-")
-  ];
-}
-function nativeMemoryDirCandidates(cwd) {
-  const projects = path26.join(os14.homedir(), ".claude", "projects");
-  const roots = [gitMainRoot(cwd), cwd].filter((x) => !!x);
-  const seen = /* @__PURE__ */ new Set();
-  const out2 = [];
-  for (const r of roots) {
-    for (const enc of encodings(r)) {
-      const dir = path26.join(projects, enc, "memory");
-      if (!seen.has(dir)) {
-        seen.add(dir);
-        out2.push(dir);
-      }
-    }
-  }
-  return out2;
-}
-function isMemoryDir(dir, forRestore) {
-  if (existsSync6(path26.join(dir, "MEMORY.md"))) return true;
-  if (!forRestore) return false;
-  const archived = path26.join(dir, ".archived");
-  try {
-    return statSync(archived).isDirectory();
-  } catch {
-    return false;
-  }
-}
-function findNativeMemoryDir(cwd, opts = {}) {
-  const candidates = opts.explicitDir ? [path26.resolve(cwd, opts.explicitDir)] : nativeMemoryDirCandidates(cwd);
-  return candidates.find((d) => isMemoryDir(d, opts.forRestore ?? false)) ?? null;
-}
-async function countOtherNativeMemoryDirs(excludeDir) {
-  const projects = path26.join(os14.homedir(), ".claude", "projects");
-  let entries;
-  try {
-    entries = await fs18.readdir(projects);
-  } catch {
-    return 0;
-  }
-  const excluded = excludeDir ? path26.resolve(excludeDir) : null;
-  let count = 0;
-  for (const entry of entries) {
-    const dir = path26.join(projects, entry, "memory");
-    if (excluded && path26.resolve(dir) === excluded) continue;
-    if (existsSync6(path26.join(dir, "MEMORY.md"))) count += 1;
-  }
-  return count;
-}
-async function readNativeMemory(memoryDir) {
-  const indexRaw = await fs18.readFile(path26.join(memoryDir, "MEMORY.md"), "utf8");
-  const satelliteNames = (await fs18.readdir(memoryDir)).filter(
-    (f) => f.endsWith(".md") && f !== "MEMORY.md"
-  );
-  const satellites = [];
-  for (const name of satelliteNames.slice(0, 1e3)) {
-    try {
-      const content = await fs18.readFile(path26.join(memoryDir, name), "utf8");
-      if (content.length <= 1e5) satellites.push({ name, content });
-    } catch {
-    }
-  }
-  return { memoryDir, indexRaw, satellites };
-}
-function archiveSortKey(name) {
-  const m = ARCHIVE_NAME_RE.exec(name);
-  return m ? [m[1], m[2] ? Number(m[2]) : 1] : [name, 0];
-}
-async function listArchiveDirs(memoryDir) {
-  const root = path26.join(memoryDir, ARCHIVE_ROOT);
-  let entries;
-  try {
-    entries = await fs18.readdir(root);
-  } catch {
-    return [];
-  }
-  return entries.filter((e) => {
-    try {
-      return statSync(path26.join(root, e)).isDirectory();
-    } catch {
-      return false;
-    }
-  }).sort((a, b) => {
-    const [da, na] = archiveSortKey(a);
-    const [db, nb] = archiveSortKey(b);
-    return da === db ? na - nb : da < db ? -1 : 1;
-  }).map((e) => path26.join(root, e));
-}
-async function latestArchiveDir(memoryDir) {
-  const dirs = await listArchiveDirs(memoryDir);
-  return dirs.length ? dirs[dirs.length - 1] : null;
-}
-async function archiveNativeMemory(memoryDir, basenames) {
-  const date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-  const root = path26.join(memoryDir, ARCHIVE_ROOT);
-  let archiveDir = path26.join(root, date);
-  for (let n = 2; existsSync6(archiveDir); n += 1) {
-    archiveDir = path26.join(root, `${date}-${n}`);
-  }
-  await fs18.mkdir(archiveDir, { recursive: true });
-  const moved = [];
-  for (const name of basenames) {
-    const from = path26.join(memoryDir, name);
-    if (!existsSync6(from)) continue;
-    await fs18.rename(from, path26.join(archiveDir, name));
-    moved.push(name);
-  }
-  const skippedLive = (await fs18.readdir(memoryDir)).filter((f) => f.endsWith(".md")).sort();
-  return { archiveDir, moved, skippedLive };
-}
-async function restoreNativeMemory(memoryDir) {
-  const archiveDirs = (await listArchiveDirs(memoryDir)).reverse();
-  const restored = [];
-  const kept = [];
-  const handled = /* @__PURE__ */ new Set();
-  for (const dir of archiveDirs) {
-    const files = (await fs18.readdir(dir)).filter((f) => f.endsWith(".md"));
-    for (const name of files) {
-      if (handled.has(name)) continue;
-      const live = path26.join(memoryDir, name);
-      if (existsSync6(live)) {
-        handled.add(name);
-        kept.push({ name, at: dir });
-        continue;
-      }
-      await fs18.rename(path26.join(dir, name), live);
-      handled.add(name);
-      restored.push({ name, from: dir });
-    }
-  }
-  return { restored, kept, archiveDirs };
-}
-function isTrivial(snap) {
-  for (const sat of snap.satellites) {
-    if (sat.content.trim().length >= 8) return false;
-  }
-  for (const line of snap.indexRaw.split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    if (t.length >= 8) return false;
-  }
-  return true;
-}
-async function runTakeover(opts) {
-  if (!opts.memoryDir) {
-    const d2 = await opts.disable();
-    return { status: "no-native-memory", disabled: d2.ok };
-  }
-  const snap = await readNativeMemory(opts.memoryDir);
-  let summary;
-  if (isTrivial(snap)) {
-    summary = "nothing above the ingest threshold (all content under 8 chars) \u2014 nothing to lose";
-  } else {
-    let outcome;
-    try {
-      outcome = await opts.ingest(snap);
-    } catch (err2) {
-      outcome = { ok: false, reason: err2 instanceof Error ? err2.message : String(err2) };
-    }
-    if (!outcome.ok) {
-      return { status: "ingest-refused", reason: outcome.reason };
-    }
-    summary = outcome.summary;
-  }
-  const basenames = ["MEMORY.md", ...snap.satellites.map((s) => s.name)];
-  const archiveFn = opts.archive ?? archiveNativeMemory;
-  let receipt;
-  try {
-    receipt = await archiveFn(opts.memoryDir, basenames);
-  } catch (err2) {
-    const d2 = await opts.disable();
-    return {
-      status: "archive-failed",
-      ingestSummary: summary,
-      error: err2 instanceof Error ? err2.message : String(err2),
-      disabled: d2.ok
-    };
-  }
-  const d = await opts.disable();
-  return { status: "done", ingestSummary: summary, receipt, disabled: d.ok };
-}
-var ARCHIVE_ROOT, ARCHIVE_NAME_RE;
-var init_native_memory = __esm({
-  "packages/plugin-core/src/native-memory.ts"() {
-    "use strict";
-    ARCHIVE_ROOT = ".archived";
-    ARCHIVE_NAME_RE = /^(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
-  }
-});
-
 // packages/plugin-core/src/cli/manage-memory.ts
 var manage_memory_exports = {};
 __export(manage_memory_exports, {
@@ -16297,8 +16359,7 @@ async function fetchOrgPolicy() {
     if (!ctx) return "off";
     const me = await ctx.api.me();
     const acct = me.accounts.find((a) => a.id === ctx.config.account_id) ?? me.accounts[0];
-    const p = acct?.managed_memory_policy;
-    return p === "recommended" || p === "required" ? p : "off";
+    return normalizeManagedMemoryPolicy(acct?.managed_memory_policy);
   } catch {
     return "off";
   }
