@@ -8630,6 +8630,13 @@ var init_source_ingest = __esm({
   }
 });
 
+// packages/shared/dist/host-memory-registry.js
+var init_host_memory_registry = __esm({
+  "packages/shared/dist/host-memory-registry.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -8666,6 +8673,7 @@ var init_dist = __esm({
     init_memlin_contract();
     init_feature_discovery();
     init_source_ingest();
+    init_host_memory_registry();
   }
 });
 
@@ -11126,6 +11134,7 @@ async function summarizeNativeMemory(cwd, opts = {}) {
   };
 }
 function formatTokens(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1).replace(/\.0$/, "")}M`;
   if (n < 1e3) return String(n);
   return `${(n / 1e3).toFixed(1).replace(/\.0$/, "")}k`;
 }
@@ -11133,6 +11142,29 @@ function nativeMemoryNudgeLines(summary, policy) {
   const first = `Native auto-memory found: ${summary.fileCount} file(s) \u2014 \u2248${formatTokens(summary.approxSessionTokens)} tokens loaded into every Claude Code session (\u2248${formatTokens(summary.approxCorpusTokens)} tokens of memory on this machine).`;
   const action = policy === "required" ? "  \u26A0 Your org REQUIRES Memlin-managed memory \u2014 run: memlin manage-memory --archive" : policy === "recommended" ? "  Your workspace recommends letting Memlin manage memory: memlin manage-memory --archive" : "  Move it into Memlin (reversible \u2014 nothing is deleted): memlin manage-memory --archive";
   return [first, action];
+}
+function buildNativeMemoryIngest(opts) {
+  return async (snap) => {
+    try {
+      const projectId = await opts.resolveProjectId();
+      const result = await opts.api.ingestNativeMemory(
+        {
+          memory_index_md: snap.indexRaw,
+          satellites: snap.satellites,
+          project_id: projectId,
+          cwd: opts.cwd
+        },
+        { accountId: opts.accountId }
+      );
+      if (result.skipped) return { ok: false, reason: result.reason ?? "skipped" };
+      return {
+        ok: true,
+        summary: `Ingested: ${result.proposals_persisted} new, ${result.proposals_corroborated ?? 0} corroborated existing, ${result.proposals_auto_activated ?? 0} auto-activated (from ${result.entries_parsed} index entries, ${result.proposals_built} candidates).`
+      };
+    } catch (err2) {
+      return { ok: false, reason: err2 instanceof Error ? err2.message : String(err2) };
+    }
+  };
 }
 function isTrivial(snap) {
   for (const sat of snap.satellites) {
@@ -11187,6 +11219,7 @@ var ARCHIVE_ROOT, ARCHIVE_NAME_RE, NATIVE_MEMORY_SESSION_READ_CAP_BYTES;
 var init_native_memory = __esm({
   "packages/plugin-core/src/native-memory.ts"() {
     "use strict";
+    init_dist();
     ARCHIVE_ROOT = ".archived";
     ARCHIVE_NAME_RE = /^(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
     NATIVE_MEMORY_SESSION_READ_CAP_BYTES = 25e3;
@@ -16521,27 +16554,12 @@ async function runArchiveTakeover(paths) {
   const { api, config } = ctx;
   const cwd = runtimeCwd();
   const memoryDir = findNativeMemoryDir(cwd);
-  const ingest = async (snap) => {
-    try {
-      const resolved = await resolveProject(api, cwd, config.project_id);
-      const result2 = await api.ingestNativeMemory(
-        {
-          memory_index_md: snap.indexRaw,
-          satellites: snap.satellites,
-          project_id: resolved.project_id,
-          cwd
-        },
-        { accountId: config.account_id }
-      );
-      if (result2.skipped) return { ok: false, reason: result2.reason ?? "skipped" };
-      return {
-        ok: true,
-        summary: `Ingested: ${result2.proposals_persisted} new, ${result2.proposals_corroborated ?? 0} corroborated existing, ${result2.proposals_auto_activated ?? 0} auto-activated (from ${result2.entries_parsed} index entries, ${result2.proposals_built} candidates).`
-      };
-    } catch (err2) {
-      return { ok: false, reason: err2 instanceof Error ? err2.message : String(err2) };
-    }
-  };
+  const ingest = buildNativeMemoryIngest({
+    api,
+    accountId: config.account_id,
+    cwd,
+    resolveProjectId: async () => (await resolveProject(api, cwd, config.project_id)).project_id
+  });
   const disable = async () => {
     const r = await applyManagedMemoryMode("disable", paths);
     return r.status === "failed" ? { ok: false, detail: r.detail } : { ok: true };
