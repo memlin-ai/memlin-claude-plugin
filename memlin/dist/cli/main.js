@@ -8772,6 +8772,155 @@ var init_command_guide = __esm({
   }
 });
 
+// packages/plugin-core/src/runtime-shared.ts
+function normalizeGitRemote(raw) {
+  if (!raw) return null;
+  let s = raw.trim();
+  if (!s) return null;
+  s = s.replace(/^git@([^:]+):/, "https://$1/");
+  s = s.replace(/^ssh:\/\//, "");
+  s = s.replace(/^https?:\/\//, "");
+  s = s.replace(/^git@/, "");
+  s = s.replace(/\.git$/, "");
+  s = s.replace(/\/$/, "");
+  const slash = s.indexOf("/");
+  if (slash > 0) {
+    const host = s.slice(0, slash);
+    const rest = s.slice(slash);
+    for (const provider of PROVIDER_HOSTS) {
+      if (host === provider) break;
+      if (host.startsWith(provider + "-")) {
+        s = provider + rest;
+        break;
+      }
+    }
+  }
+  return s || null;
+}
+function formatDurationCompact(absoluteMs) {
+  const abs = Math.abs(absoluteMs);
+  if (abs < 6e4) return `${Math.max(1, Math.round(abs / 1e3))} s`;
+  if (abs < 36e5) return `${Math.round(abs / 6e4)} min`;
+  if (abs < 864e5) return `${Math.round(abs / 36e5)} h`;
+  return `${Math.round(abs / 864e5)} d`;
+}
+function formatRelativeSigned(signedMs) {
+  if (signedMs >= 0) return `${formatDurationCompact(signedMs)} ago`;
+  return `in ${formatDurationCompact(signedMs)}`;
+}
+async function closeHttpSockets() {
+  try {
+    const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
+    if (dispatcher && typeof dispatcher.close === "function") {
+      let timer;
+      await Promise.race([
+        dispatcher.close(),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 250);
+          timer.unref?.();
+        })
+      ]).finally(() => {
+        if (timer !== void 0) clearTimeout(timer);
+      });
+    }
+  } catch {
+  }
+}
+var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_PLATFORM_HEADER, AGENT_ARCHITECTURE_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
+var init_runtime_shared = __esm({
+  "packages/plugin-core/src/runtime-shared.ts"() {
+    "use strict";
+    AGENT_KIND_HEADER = "Memlin-Agent-Kind";
+    AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
+    AGENT_VERSION_HEADER = "Memlin-Agent-Version";
+    AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
+    AGENT_PLATFORM_HEADER = "Memlin-Agent-Platform";
+    AGENT_ARCHITECTURE_HEADER = "Memlin-Agent-Architecture";
+    AGENT_EXPECTED_CAPABILITIES = {
+      "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
+      cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
+      codex: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
+      windsurf: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
+      // VS Code (apps/vscode-extension): MCP + CLI + copilot-instructions; plain
+      // VS Code has no lifecycle-hook or slash-command surface.
+      vscode: ["mcp", "cli", "rules", "resolve"],
+      gemini: ["mcp", "rules", "resolve"],
+      grok: ["mcp", "rules", "resolve"],
+      hermes: ["mcp", "resolve"],
+      openclaw: ["mcp", "rules", "resolve"],
+      antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
+      mcp: ["mcp", "resolve"],
+      "claude-ai": ["mcp", "resolve"],
+      // Companion daemon (apps/companion): background token keeper + realtime
+      // plan sync + local IPC socket other agents delegate to. No hooks/commands
+      // of its own.
+      companion: ["cli", "sync", "realtime", "resolve"]
+    };
+    PROVIDER_HOSTS = [
+      "github.com",
+      "gitlab.com",
+      "bitbucket.org",
+      "dev.azure.com",
+      "ssh.dev.azure.com",
+      "codeberg.org",
+      "sr.ht",
+      "git.sr.ht"
+    ];
+  }
+});
+
+// packages/plugin-core/src/cli/cli-runner.ts
+function rethrowCliExit(err2) {
+  if (err2 instanceof CliExit) throw err2;
+}
+function exitCli(code) {
+  throw new CliExit(code);
+}
+function scheduleProcessExit(code) {
+  process.exitCode = code;
+  void closeHttpSockets();
+  setTimeout(() => process.exit(), WATCHDOG_MS).unref();
+}
+function runCliMain(main36, onError) {
+  main36().then(
+    (code) => scheduleProcessExit(typeof code === "number" ? code : 0),
+    (err2) => {
+      if (err2 instanceof CliExit) {
+        scheduleProcessExit(err2.code);
+        return;
+      }
+      let code;
+      try {
+        code = onError(err2);
+      } catch (handlerErr) {
+        if (handlerErr instanceof CliExit) {
+          scheduleProcessExit(handlerErr.code);
+          return;
+        }
+        console.error("cli error handler failed:", handlerErr);
+        code = 1;
+      }
+      scheduleProcessExit(code);
+    }
+  );
+}
+var WATCHDOG_MS, CliExit;
+var init_cli_runner = __esm({
+  "packages/plugin-core/src/cli/cli-runner.ts"() {
+    "use strict";
+    init_runtime_shared();
+    WATCHDOG_MS = 2e3;
+    CliExit = class extends Error {
+      constructor(code) {
+        super(`CliExit(${code})`);
+        this.code = code;
+        this.name = "CliExit";
+      }
+      code;
+    };
+  }
+});
+
 // packages/plugin-core/src/companion-client.ts
 var companion_client_exports = {};
 __export(companion_client_exports, {
@@ -9175,103 +9324,6 @@ var init_auth = __esm({
     AUTH_FILE_LOCK_RETRY_MS = 50;
     refreshInFlight = null;
     DEFAULT_FRESHNESS_MARGIN_MS = 6e4;
-  }
-});
-
-// packages/plugin-core/src/runtime-shared.ts
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash);
-    const rest = s.slice(slash);
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
-}
-function formatDurationCompact(absoluteMs) {
-  const abs = Math.abs(absoluteMs);
-  if (abs < 6e4) return `${Math.max(1, Math.round(abs / 1e3))} s`;
-  if (abs < 36e5) return `${Math.round(abs / 6e4)} min`;
-  if (abs < 864e5) return `${Math.round(abs / 36e5)} h`;
-  return `${Math.round(abs / 864e5)} d`;
-}
-function formatRelativeSigned(signedMs) {
-  if (signedMs >= 0) return `${formatDurationCompact(signedMs)} ago`;
-  return `in ${formatDurationCompact(signedMs)}`;
-}
-async function closeHttpSockets() {
-  try {
-    const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
-    if (dispatcher && typeof dispatcher.close === "function") {
-      let timer;
-      await Promise.race([
-        dispatcher.close(),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, 250);
-          timer.unref?.();
-        })
-      ]).finally(() => {
-        if (timer !== void 0) clearTimeout(timer);
-      });
-    }
-  } catch {
-  }
-}
-var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_PLATFORM_HEADER, AGENT_ARCHITECTURE_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
-var init_runtime_shared = __esm({
-  "packages/plugin-core/src/runtime-shared.ts"() {
-    "use strict";
-    AGENT_KIND_HEADER = "Memlin-Agent-Kind";
-    AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
-    AGENT_VERSION_HEADER = "Memlin-Agent-Version";
-    AGENT_CAPABILITIES_HEADER = "Memlin-Agent-Capabilities";
-    AGENT_PLATFORM_HEADER = "Memlin-Agent-Platform";
-    AGENT_ARCHITECTURE_HEADER = "Memlin-Agent-Architecture";
-    AGENT_EXPECTED_CAPABILITIES = {
-      "claude-code": ["cli", "commands", "hooks", "sync", "scribe", "resolve"],
-      cursor: ["mcp", "commands", "hooks", "rules", "scribe", "resolve"],
-      codex: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
-      windsurf: ["mcp", "cli", "hooks", "rules", "scribe", "resolve"],
-      // VS Code (apps/vscode-extension): MCP + CLI + copilot-instructions; plain
-      // VS Code has no lifecycle-hook or slash-command surface.
-      vscode: ["mcp", "cli", "rules", "resolve"],
-      gemini: ["mcp", "rules", "resolve"],
-      grok: ["mcp", "rules", "resolve"],
-      hermes: ["mcp", "resolve"],
-      openclaw: ["mcp", "rules", "resolve"],
-      antigravity: ["mcp", "cli", "hooks", "commands", "rules", "sync", "scribe", "resolve"],
-      mcp: ["mcp", "resolve"],
-      "claude-ai": ["mcp", "resolve"],
-      // Companion daemon (apps/companion): background token keeper + realtime
-      // plan sync + local IPC socket other agents delegate to. No hooks/commands
-      // of its own.
-      companion: ["cli", "sync", "realtime", "resolve"]
-    };
-    PROVIDER_HOSTS = [
-      "github.com",
-      "gitlab.com",
-      "bitbucket.org",
-      "dev.azure.com",
-      "ssh.dev.azure.com",
-      "codeberg.org",
-      "sr.ht",
-      "git.sr.ht"
-    ];
   }
 });
 
@@ -10717,10 +10769,10 @@ async function main() {
       console.log("Authenticate to Memlin and pin the active account.");
       console.log("  --account <v>   Override server-side default_account_id with this account");
       console.log("                  (must be one you're a member of)");
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin login: ${parsed.error}`);
-    process.exit(2);
+    exitCli(2);
   }
   const { requestedAccount } = parsed;
   console.log("memlin login");
@@ -10749,8 +10801,7 @@ async function main() {
     if (error instanceof LoginBootstrapError && error.code === "account-setup-required") {
       console.error("Open https://memlin.ai/app/onboarding to finish setup.");
     }
-    process.exit(1);
-    return;
+    exitCli(1);
   }
   const displayName = login.user.displayName ?? login.user.email ?? login.user.id.slice(0, 8) + "\u2026";
   console.log(`  \u2713 signed in as ${displayName}`);
@@ -10795,14 +10846,15 @@ var init_login = __esm({
   "packages/plugin-core/src/cli/login.ts"() {
     "use strict";
     init_auth();
+    init_cli_runner();
     init_login_bootstrap();
     init_resolver_skill();
     init_plugin_install();
     init_command_guide();
     init_companion_client();
-    main().catch((err2) => {
+    runCliMain(main, (err2) => {
       console.error("memlin login failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -12030,6 +12082,7 @@ var init_doctor = __esm({
   "packages/plugin-core/src/cli/doctor.ts"() {
     "use strict";
     init_project_resolver();
+    init_cli_runner();
     init_client();
     init_auth();
     init_check_evaluators();
@@ -12039,13 +12092,9 @@ var init_doctor = __esm({
     CONFIG_DIR2 = path13.join(os9.homedir(), ".config", "memlin");
     CONFIG_FILE = path13.join(CONFIG_DIR2, "config.json");
     CLAUDE_DIR = path13.join(os9.homedir(), ".claude");
-    main4().catch((err2) => {
+    runCliMain(main4, (err2) => {
       console.error("memlin doctor failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
-    }).then((code) => {
-      process.exitCode = code;
-      void closeHttpSockets();
-      setTimeout(() => process.exit(code), 2e3).unref();
     });
   }
 });
@@ -12657,16 +12706,16 @@ async function main9() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin push-plan: ${parsed.error}`);
     printHelp();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api } = ctx;
   const filePath = path18.resolve(parsed.file);
@@ -12677,12 +12726,12 @@ async function main9() {
     console.error(
       `memlin push-plan: can't read ${filePath}: ${e instanceof Error ? e.message : e}`
     );
-    process.exit(1);
+    exitCli(1);
   }
   const { title, body: body2 } = splitTitleAndBody(raw);
   if (!body2) {
     console.error(`memlin push-plan: ${filePath} has no body content after the title line`);
-    process.exit(1);
+    exitCli(1);
   }
   const cwd = runtimeCwd();
   const gitRemote = readGitRemote2(cwd);
@@ -12698,7 +12747,7 @@ async function main9() {
     });
   } catch (e) {
     console.error(`memlin push-plan failed: ${e instanceof Error ? e.message : e}`);
-    process.exit(1);
+    exitCli(1);
   }
   const apiBase = (process.env.MEMLIN_API_URL ?? "https://memlin.ai/api/v1").replace(
     /\/api\/v1\/?$/,
@@ -12714,10 +12763,11 @@ var init_push_plan = __esm({
   "packages/plugin-core/src/cli/push-plan.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_project_resolver();
-    main9().catch((err2) => {
+    runCliMain(main9, (err2) => {
       console.error("memlin push-plan failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -12743,7 +12793,7 @@ async function main10() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
-    process.exit(1);
+    exitCli(1);
   }
   const argv = process.argv.slice(2);
   const all = argv.includes("--all");
@@ -12754,7 +12804,7 @@ async function main10() {
       process.stdout.write(
         "No unbound plans \u2014 everything in ~/.claude/plans/ is synced or stamped.\n"
       );
-      process.exit(0);
+      exitCli(0);
     }
     process.stdout.write(`${unbound.length} unbound plan(s) in ~/.claude/plans/:
 
@@ -12768,7 +12818,7 @@ async function main10() {
     process.stdout.write(
       "\nThese have no known project. To bind:\n  \u2022 cd into the relevant repo, then: memlin bind-plans <file.md>\n  \u2022 or bind everything to the current repo: memlin bind-plans --all\n\nNothing is sent to Memlin until you bind it.\n"
     );
-    process.exit(0);
+    exitCli(0);
   }
   const cwd = runtimeCwd();
   const gitRemote = readGitRemote3(cwd);
@@ -12780,7 +12830,7 @@ async function main10() {
       `could not resolve a project from ${cwd}: ${err2 instanceof Error ? err2.message : String(err2)}
 `
     );
-    process.exit(1);
+    exitCli(1);
   }
   if (!resolved.project_id) {
     process.stderr.write(
@@ -12788,12 +12838,12 @@ async function main10() {
 cd into the repo whose project these plans belong to, then re-run.
 `
     );
-    process.exit(1);
+    exitCli(1);
   }
   const targets = all ? unbound.map((p) => p.file) : [fileArg].map((f) => path19.basename(f));
   if (targets.length === 0) {
     process.stdout.write("Nothing to bind.\n");
-    process.exit(0);
+    exitCli(0);
   }
   process.stdout.write(
     `Binding ${targets.length} plan(s) to project ${resolved.project_id.slice(0, 8)}\u2026 (${resolved.project_name ?? "unnamed"})
@@ -12817,17 +12867,21 @@ cd into the repo whose project these plans belong to, then re-run.
   process.stdout.write(`
 done \u2014 bound ${bound}, failed ${failed}.
 `);
-  process.exit(failed > 0 ? 1 : 0);
+  return failed > 0 ? 1 : 0;
 }
 var PLANS_DIR;
 var init_bind_plans = __esm({
   "packages/plugin-core/src/cli/bind-plans.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_project_resolver();
     init_plan_sync();
     PLANS_DIR = path19.join(os11.homedir(), ".claude", "plans");
-    void main10();
+    runCliMain(main10, (err2) => {
+      console.error("memlin bind-plans failed:", err2 instanceof Error ? err2.message : err2);
+      return 1;
+    });
   }
 });
 
@@ -13801,16 +13855,16 @@ async function main12() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp2();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin resolve: ${parsed.error}`);
     printHelp2();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api, config, workspaceBound } = ctx;
   const cwd = runtimeCwd();
@@ -13842,7 +13896,7 @@ async function main12() {
         "memlin resolve: this directory isn't a known Memlin workspace. Run `memlin link --account <name>` to enable it, or `memlin link --list` to see your accounts."
       );
     }
-    process.exit(0);
+    exitCli(0);
   }
   void resolvedAccountId;
   let result;
@@ -13874,10 +13928,10 @@ async function main12() {
       console.error(
         `memlin resolve: server-side embeddings unavailable (${msg}). The resolver requires OPENAI_API_KEY on the Memlin server. Contact your admin or use the hosted memlin.ai endpoint.`
       );
-      process.exit(3);
+      exitCli(3);
     }
     console.error(`memlin resolve failed: ${msg}`);
-    process.exit(1);
+    exitCli(1);
   }
   const outString = compileBundle(result, parsed.task, parsed.agent);
   process.stdout.write(outString);
@@ -13947,15 +14001,16 @@ var init_resolve = __esm({
     "use strict";
     init_dist();
     init_client();
+    init_cli_runner();
     init_project_resolver();
     init_state();
     init_pending_bundle();
     init_continuity();
     init_compile_bundle();
     init_resolve_args();
-    main12().catch((err2) => {
+    runCliMain(main12, (err2) => {
       console.error("memlin resolve failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -14032,16 +14087,16 @@ async function main13() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp3();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin ask: ${parsed.error}`);
     printHelp3();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin ask: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api, config } = ctx;
   const cwd = runtimeCwd();
@@ -14054,7 +14109,7 @@ async function main13() {
     if (!match) {
       console.error(`memlin ask: couldn't find org matching "${parsed.org}".`);
       console.error("Run `memlin link --list` to see your orgs.");
-      process.exit(1);
+      exitCli(1);
     }
     accountOverride = match.id;
   } else {
@@ -14079,7 +14134,7 @@ async function main13() {
     );
   } catch (err2) {
     console.error(`memlin ask failed: ${err2 instanceof Error ? err2.message : err2}`);
-    process.exit(1);
+    exitCli(1);
   }
   console.log(result.answer);
   if (result.empty_bundle) {
@@ -14102,10 +14157,11 @@ var init_ask = __esm({
   "packages/plugin-core/src/cli/ask.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_project_resolver();
-    main13().catch((err2) => {
+    runCliMain(main13, (err2) => {
       console.error("memlin ask failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -14247,6 +14303,7 @@ __export(diff_exports, {
   parseDiffArgs: () => parseDiffArgs
 });
 import { promises as fs16 } from "node:fs";
+import { pathToFileURL } from "node:url";
 function parseDiffArgs(argv) {
   const out2 = {
     documentId: null,
@@ -14356,10 +14413,10 @@ async function main15() {
       console.log("");
       console.log("Diff a fenced `memlin-contract` JSON block in a Memlin doc against");
       console.log("a local JSON file. Exit 0 on match, 1 on drift, 2 on error.");
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin diff: ${parsed.error}`);
-    process.exit(2);
+    exitCli(2);
   }
   const documentId = parsed.documentId;
   const localFile = parsed.localFile;
@@ -14368,23 +14425,23 @@ async function main15() {
     localRaw = await fs16.readFile(localFile, "utf8");
   } catch (e) {
     console.error(`memlin diff: cannot read ${localFile}: ${e instanceof Error ? e.message : e}`);
-    process.exit(2);
+    exitCli(2);
   }
   let local;
   try {
     local = JSON.parse(localRaw);
   } catch (e) {
     console.error(`memlin diff: ${localFile} is not valid JSON: ${e instanceof Error ? e.message : e}`);
-    process.exit(2);
+    exitCli(2);
   }
   if (!local || typeof local !== "object" || Array.isArray(local)) {
     console.error(`memlin diff: ${localFile} must be a JSON object at the top level`);
-    process.exit(2);
+    exitCli(2);
   }
   const apiCtx = await getApi();
   if (!apiCtx) {
     console.error(`memlin diff: not signed in (run \`memlin login\`)`);
-    process.exit(2);
+    exitCli(2);
   }
   const { api } = apiCtx;
   let doc;
@@ -14392,7 +14449,7 @@ async function main15() {
     doc = await api.getDocument(documentId);
   } catch (e) {
     console.error(`memlin diff: fetch document ${documentId} failed: ${e instanceof Error ? e.message : e}`);
-    process.exit(2);
+    exitCli(2);
   }
   const docContent = typeof doc.content === "string" ? doc.content : "";
   let contract;
@@ -14400,13 +14457,13 @@ async function main15() {
     contract = extractContract(docContent);
   } catch (e) {
     console.error(`memlin diff: ${e instanceof Error ? e.message : e}`);
-    process.exit(2);
+    exitCli(2);
   }
   if (!contract) {
     console.error(
       `memlin diff: no \`memlin-contract\` fenced block found in document ${documentId}`
     );
-    process.exit(2);
+    exitCli(2);
   }
   const drift = diffContract(contract, local, parsed.mode);
   if (parsed.json) {
@@ -14465,7 +14522,7 @@ async function main15() {
       );
     }
   }
-  process.exit(drift.length === 0 ? 0 : 1);
+  return drift.length === 0 ? 0 : 1;
 }
 var extractContract;
 var init_diff = __esm({
@@ -14473,11 +14530,12 @@ var init_diff = __esm({
     "use strict";
     init_dist();
     init_client();
+    init_cli_runner();
     extractContract = extractMemlinContract;
-    if (import.meta.url === (process.argv[1] ? `file://${process.argv[1]}` : void 0)) {
-      main15().catch((err2) => {
+    if (import.meta.url === (process.argv[1] ? pathToFileURL(process.argv[1]).href : void 0)) {
+      runCliMain(main15, (err2) => {
         console.error(`memlin diff: ${err2 instanceof Error ? err2.message : err2}`);
-        process.exit(2);
+        return 2;
       });
     }
   }
@@ -14592,13 +14650,13 @@ async function main16() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
-    process.exit(1);
+    exitCli(1);
   }
   const fileFlagIndex = process.argv.indexOf("--file");
   const explicitFile = fileFlagIndex >= 0 ? process.argv[fileFlagIndex + 1] : null;
   if (fileFlagIndex >= 0 && !explicitFile) {
     process.stderr.write("usage: memlin scribe [--file <transcript path>]\n");
-    process.exit(2);
+    exitCli(2);
   }
   const cwd = runtimeCwd();
   let found;
@@ -14616,7 +14674,7 @@ async function main16() {
     process.stderr.write(
       "no transcript found. Claude Code writes them to ~/.claude/projects/<cwd>/<session>.jsonl\nOr pass one explicitly: memlin scribe --file <path>\n"
     );
-    process.exit(2);
+    exitCli(2);
   }
   let transcript;
   try {
@@ -14631,11 +14689,11 @@ ${raw}`;
       `failed to read transcript at ${found.path}: ${err2 instanceof Error ? err2.message : String(err2)}
 `
     );
-    process.exit(2);
+    exitCli(2);
   }
   if (transcript.length < 200) {
     process.stderr.write("transcript too short to scribe (< 200 chars)\n");
-    process.exit(0);
+    exitCli(0);
   }
   process.stdout.write(
     `scribing session ${found.sessionId.slice(0, 8)} (${transcript.length.toLocaleString()} chars)\u2026
@@ -14659,18 +14717,24 @@ Review at https://memlin.ai/app/${ctx.config.account_id}/inbox
       );
     }
   } catch (err2) {
+    rethrowCliExit(err2);
     process.stderr.write(`scribe failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
-    process.exit(1);
+    return 1;
   }
 }
 var init_scribe = __esm({
   "packages/plugin-core/src/cli/scribe.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_transcript();
     init_project_resolver();
-    void main16();
+    runCliMain(main16, (err2) => {
+      process.stderr.write(`scribe failed: ${err2 instanceof Error ? err2.message : String(err2)}
+`);
+      return 1;
+    });
   }
 });
 
@@ -14889,7 +14953,7 @@ async function main17() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
-    process.exit(1);
+    exitCli(1);
   }
   const args2 = argvAsSlashArgs();
   const action = args2[0];
@@ -14902,20 +14966,20 @@ async function main17() {
       `unknown action "${action}" \u2014 use: accept <id> | reject <id>, or no args to list
 `
     );
-    process.exit(1);
+    exitCli(1);
   }
   const needle = args2[1];
   if (!needle) {
     process.stderr.write(`missing proposal id \u2014 usage: /memlin-inbox ${action} <id>
 `);
-    process.exit(1);
+    exitCli(1);
   }
   const pending = await loadPending(ctx.api);
   const match = matchProposal(pending, needle);
   if ("error" in match) {
     process.stderr.write(`${match.error}
 `);
-    process.exit(2);
+    exitCli(2);
   }
   if (match.source === "insight") {
     const result2 = await ctx.api.resolveInsight(
@@ -14942,13 +15006,14 @@ var init_inbox = __esm({
   "packages/plugin-core/src/cli/inbox.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_args();
-    main17().catch((err2) => {
+    runCliMain(main17, (err2) => {
       process.stderr.write(
         `memlin inbox failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
       );
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -14967,7 +15032,7 @@ async function main18() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run memlin login first\n");
-    process.exit(1);
+    exitCli(1);
   }
   const args2 = argvAsSlashArgs();
   const action = args2[0];
@@ -15002,13 +15067,13 @@ async function main18() {
       process.stderr.write(
         "memlin handoffs create: no project pinned in config \u2014 run `memlin add-project` first or set MEMLIN_PROJECT_ID for this invocation.\n"
       );
-      process.exit(2);
+      exitCli(2);
     }
     if (!targetKind) {
       process.stderr.write(
         'usage: memlin handoffs create <target_agent_kind> "<task>" [--path P] [--decisions D] [--blockers B] [--memory M]\n'
       );
-      process.exit(1);
+      exitCli(1);
     }
     const taskParts = [];
     let path39 = null;
@@ -15036,14 +15101,14 @@ async function main18() {
       if (a?.startsWith("--")) {
         process.stderr.write(`unknown flag: ${a}
 `);
-        process.exit(1);
+        exitCli(1);
       }
       taskParts.push(a ?? "");
     }
     const task = taskParts.join(" ").trim();
     if (!task) {
       process.stderr.write("memlin handoffs create: <task> is required\n");
-      process.exit(1);
+      exitCli(1);
     }
     try {
       const result2 = await ctx.api.createHandoff({
@@ -15067,20 +15132,20 @@ async function main18() {
         `memlin handoffs create failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
       );
-      process.exit(1);
+      exitCli(1);
     }
   }
   if (action !== "accept" && action !== "complete" && action !== "cancel") {
     process.stderr.write(
       'usage: memlin handoffs [list] | create <target> "<task>" | accept <id> | complete <id> | cancel <id>\n'
     );
-    process.exit(1);
+    exitCli(1);
   }
   const needle = args2[1];
   if (!needle) {
     process.stderr.write(`missing handoff id \u2014 usage: memlin handoffs ${action} <id>
 `);
-    process.exit(1);
+    exitCli(1);
   }
   const { handoffs } = await ctx.api.listHandoffs({
     project_id: ctx.config.project_id ?? null,
@@ -15092,7 +15157,7 @@ async function main18() {
   if ("error" in match) {
     process.stderr.write(`${match.error}
 `);
-    process.exit(2);
+    exitCli(2);
   }
   const result = await ctx.api.updateHandoff(match.id, action);
   process.stdout.write(`\u2713 ${result.status} \u2014 ${match.task}
@@ -15102,14 +15167,15 @@ var init_handoffs = __esm({
   "packages/plugin-core/src/cli/handoffs.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_host();
     init_args();
-    main18().catch((err2) => {
+    runCliMain(main18, (err2) => {
       process.stderr.write(
         `memlin handoffs failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
       );
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -15139,25 +15205,25 @@ async function main19() {
   const sub = argv[0];
   if (sub === "--help" || sub === "-h" || sub === "help") {
     printHelp4();
-    process.exit(0);
+    exitCli(0);
   }
   if (sub !== "assign" && sub !== "tag") {
     console.error(
       sub ? `memlin role: unknown subcommand "${sub}"` : "memlin role: missing subcommand"
     );
     printHelp4();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin role: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api } = ctx;
   if (sub === "assign") {
     if (argv[1] === void 0) {
       console.error('memlin role assign: missing <roles> (comma-separated; "" to clear)');
-      process.exit(2);
+      exitCli(2);
     }
     const roles2 = parseRoles(argv[1]);
     let userId;
@@ -15166,7 +15232,7 @@ async function main19() {
       userId = argv[userIdx + 1];
       if (!userId) {
         console.error("memlin role assign: --user requires a user id");
-        process.exit(2);
+        exitCli(2);
       }
     }
     try {
@@ -15177,18 +15243,18 @@ async function main19() {
       );
     } catch (err2) {
       console.error(`memlin role assign: ${err2 instanceof Error ? err2.message : err2}`);
-      process.exit(1);
+      exitCli(1);
     }
     return;
   }
   const documentId = argv[1];
   if (!documentId) {
     console.error("memlin role tag: missing <document-id>");
-    process.exit(2);
+    exitCli(2);
   }
   if (argv[2] === void 0) {
     console.error('memlin role tag: missing <roles> (comma-separated; "" to clear)');
-    process.exit(2);
+    exitCli(2);
   }
   const roles = parseRoles(argv[2]);
   try {
@@ -15198,16 +15264,17 @@ async function main19() {
     );
   } catch (err2) {
     console.error(`memlin role tag: ${err2 instanceof Error ? err2.message : err2}`);
-    process.exit(1);
+    exitCli(1);
   }
 }
 var init_role = __esm({
   "packages/plugin-core/src/cli/role.ts"() {
     "use strict";
     init_client();
-    main19().catch((err2) => {
+    init_cli_runner();
+    runCliMain(main19, (err2) => {
       console.error("memlin role failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -15226,7 +15293,7 @@ async function main20() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run memlin login first\n");
-    process.exit(1);
+    exitCli(1);
   }
   const args2 = argvAsSlashArgs();
   const action = args2[0];
@@ -15264,7 +15331,7 @@ async function main20() {
       if (a?.startsWith("--")) {
         process.stderr.write(`unknown flag: ${a}
 `);
-        process.exit(1);
+        exitCli(1);
       }
       titleParts.push(a ?? "");
     }
@@ -15272,12 +15339,12 @@ async function main20() {
       process.stderr.write(
         "memlin features create: no project pinned \u2014 run `memlin add-project` first, pass --project <uuid>, or set MEMLIN_PROJECT_ID.\n"
       );
-      process.exit(2);
+      exitCli(2);
     }
     const title = titleParts.join(" ").trim();
     if (!title) {
       process.stderr.write('usage: memlin features create "<title>" [--summary S] [--project P]\n');
-      process.exit(1);
+      exitCli(1);
     }
     try {
       const result = await ctx.api.createFeature({
@@ -15295,7 +15362,7 @@ async function main20() {
         `memlin features create failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
       );
-      process.exit(1);
+      exitCli(1);
     }
   }
   if (action === "add") {
@@ -15304,14 +15371,14 @@ async function main20() {
     const itemId = args2[3];
     if (!needle || !kind || !itemId) {
       process.stderr.write("usage: memlin features add <feature-id> <kind> <entity-id>\n");
-      process.exit(1);
+      exitCli(1);
     }
     const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
     const match = matchFeature(features, needle);
     if ("error" in match) {
       process.stderr.write(`${match.error}
 `);
-      process.exit(2);
+      exitCli(2);
     }
     try {
       await ctx.api.addFeatureMember(match.id, { kind, id: itemId });
@@ -15325,25 +15392,26 @@ async function main20() {
         `memlin features add failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
       );
-      process.exit(1);
+      exitCli(1);
     }
   }
   process.stderr.write(
     'usage: memlin features [list] | create "<title>" [--summary S] [--project P] | add <feature-id> <kind> <id>\n'
   );
-  process.exit(1);
+  return 1;
 }
 var init_features = __esm({
   "packages/plugin-core/src/cli/features.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_args();
-    main20().catch((err2) => {
+    runCliMain(main20, (err2) => {
       process.stderr.write(
         `memlin features failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
       );
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -15408,16 +15476,16 @@ async function main21() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp5();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin link: ${parsed.error}`);
     printHelp5();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin link: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const root = path23.resolve(parsed.root ?? runtimeCwd());
   if (parsed.clear) {
@@ -15454,13 +15522,13 @@ Workspace binding at ${existing.workspaceRoot}/.memlin/config.json`);
   if (!parsed.account) {
     console.error("memlin link: --account <id|name> is required (or --list, --clear)");
     printHelp5();
-    process.exit(2);
+    exitCli(2);
   }
   const match = chooseAccount(accounts, parsed.account);
   if (!match) {
     console.error(`memlin link: no account matched "${parsed.account}".`);
     console.error("Run `memlin link --list` to see available accounts.");
-    process.exit(1);
+    exitCli(1);
   }
   const file = await writeWorkspaceBinding(root, {
     account_id: match.id,
@@ -15476,11 +15544,12 @@ var init_link = __esm({
   "packages/plugin-core/src/cli/link.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_workspace_binding();
     init_project_resolver();
-    main21().catch((err2) => {
+    runCliMain(main21, (err2) => {
       console.error("memlin link failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -15492,12 +15561,12 @@ async function main22() {
   const args2 = process.argv.slice(2);
   if (args2.length === 0) {
     console.error("usage: memlin revert <document-name-or-path> [version-number]");
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api } = ctx;
   const needle = args2[0];
@@ -15505,7 +15574,7 @@ async function main22() {
   const matches = await api.findDocumentsByName(needle, 10);
   if (matches.length === 0) {
     console.error(`no documents match "${needle}"`);
-    process.exit(1);
+    exitCli(1);
   }
   let doc = matches[0];
   if (matches.length > 1) {
@@ -15519,14 +15588,14 @@ async function main22() {
     const idx = parseInt(pick, 10);
     if (Number.isNaN(idx) || idx < 0 || idx >= matches.length) {
       console.error("invalid choice");
-      process.exit(1);
+      exitCli(1);
     }
     doc = matches[idx];
   }
   const versions = await api.listVersions(doc.id);
   if (versions.length === 0) {
     console.error("document has no versions (unexpected)");
-    process.exit(1);
+    exitCli(1);
   }
   let target = versions.find((v) => v.version_number === requestedVNum);
   if (!target) {
@@ -15545,12 +15614,12 @@ async function main22() {
     target = versions.find((v) => v.version_number === n);
     if (!target) {
       console.error(`no such version: ${pick}`);
-      process.exit(1);
+      exitCli(1);
     }
   }
   if (target.version_number === versions[0].version_number) {
     console.error("that is already the current version");
-    process.exit(0);
+    exitCli(0);
   }
   const commitMessage = `revert to v${target.version_number} via cli`;
   const newVersionId = await api.revertDocument(doc.id, target.id, commitMessage);
@@ -15563,9 +15632,10 @@ var init_revert = __esm({
   "packages/plugin-core/src/cli/revert.ts"() {
     "use strict";
     init_client();
-    main22().catch((err2) => {
+    init_cli_runner();
+    runCliMain(main22, (err2) => {
       console.error("memlin revert failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -15592,14 +15662,14 @@ async function main23() {
   const first = argv[0];
   if (!first || first === "--help" || first === "-h" || first === "help") {
     printHelp6();
-    process.exit(first ? 0 : 2);
+    exitCli(first ? 0 : 2);
   }
   const documentId = first;
   const pinned = !argv.includes("--off") && !argv.includes("--unpin");
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin pin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api } = ctx;
   try {
@@ -15609,16 +15679,17 @@ async function main23() {
     );
   } catch (err2) {
     console.error(`memlin pin: ${err2 instanceof Error ? err2.message : err2}`);
-    process.exit(1);
+    exitCli(1);
   }
 }
 var init_pin = __esm({
   "packages/plugin-core/src/cli/pin.ts"() {
     "use strict";
     init_client();
-    main23().catch((err2) => {
+    init_cli_runner();
+    runCliMain(main23, (err2) => {
       console.error("memlin pin failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -15774,16 +15845,16 @@ async function main24() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp7();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin add-project: ${parsed.error}`);
     printHelp7();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin add-project: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api, config } = ctx;
   const cwd = runtimeCwd();
@@ -15817,7 +15888,7 @@ async function main24() {
         const tag = a.kind === "personal" ? " (personal)" : "";
         console.error(`  ${a.id}  ${a.name}${tag}  [${a.role}]`);
       }
-      process.exit(1);
+      exitCli(1);
     }
   }
   let resolved;
@@ -15827,7 +15898,7 @@ async function main24() {
     console.error(
       `memlin add-project: project lookup failed: ${err2 instanceof Error ? err2.message : err2}`
     );
-    process.exit(1);
+    exitCli(1);
   }
   if (resolved.project_id && resolved.account_id) {
     const reTarget = shouldReTarget({
@@ -15887,7 +15958,7 @@ async function main24() {
       console.error(
         "  memlin add-project --create-new                      # really create a new project"
       );
-      process.exit(2);
+      exitCli(2);
     } else if (action.kind === "prompt") {
       const rl = readline3.createInterface({ input: process.stdin, output: process.stdout });
       const answer = await new Promise(
@@ -15923,7 +15994,7 @@ Attach this folder to it instead of creating a new project? [Y/n] `,
       console.error(
         `memlin add-project: attach failed: ${err2 instanceof Error ? err2.message : err2}`
       );
-      process.exit(1);
+      exitCli(1);
     }
   }
   const target = explicitTarget ?? pickAccount(accounts, void 0, config.account_id);
@@ -15934,7 +16005,7 @@ Attach this folder to it instead of creating a new project? [Y/n] `,
       const tag = a.kind === "personal" ? " (personal)" : "";
       console.error(`  ${a.id}  ${a.name}${tag}  [${a.role}]`);
     }
-    process.exit(1);
+    exitCli(1);
   }
   if (!parsed.org && gitRemote && accounts.length > 1) {
     console.log(
@@ -15959,7 +16030,7 @@ Attach this folder to it instead of creating a new project? [Y/n] `,
     );
   } catch (err2) {
     console.error(`memlin add-project: create failed: ${err2 instanceof Error ? err2.message : err2}`);
-    process.exit(1);
+    exitCli(1);
   }
   const pin = await writeWorkspaceBinding(cwd, {
     account_id: target.id,
@@ -15989,13 +16060,14 @@ var init_add_project = __esm({
   "packages/plugin-core/src/cli/add-project.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_project_resolver();
     init_workspace_binding();
     init_sibling_detect();
     init_plugin_install();
-    main24().catch((err2) => {
+    runCliMain(main24, (err2) => {
       console.error("memlin add-project failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16075,7 +16147,7 @@ async function runManageMemory(action) {
   if (result.status === "failed") {
     console.error(`memlin manage-memory: ${result.detail}`);
     console.error(`  (settings file: ${result.settingsFile})`);
-    process.exit(1);
+    exitCli(1);
   }
   if (action === "manage") {
     console.log("\u2713 Memlin now manages your memory.");
@@ -16106,12 +16178,12 @@ async function main25() {
   const parsed = parseAction(process.argv.slice(2));
   if (parsed === "help") {
     printHelp8();
-    process.exit(0);
+    exitCli(0);
   }
   if (typeof parsed === "object") {
     console.error(`memlin manage-memory: ${parsed.error}`);
     printHelp8();
-    process.exit(2);
+    exitCli(2);
   }
   await runManageMemory(parsed);
 }
@@ -16120,9 +16192,10 @@ var init_manage_memory = __esm({
     "use strict";
     init_plugin_install();
     init_client();
-    main25().catch((err2) => {
+    init_cli_runner();
+    runCliMain(main25, (err2) => {
       console.error("memlin manage-memory failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16134,7 +16207,7 @@ async function main26() {
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log("`memlin managed-memory` is now `memlin manage-memory`.");
     console.log("Run: memlin manage-memory --help");
-    process.exit(0);
+    exitCli(0);
   }
   let action = "status";
   if (argv.includes("disable")) action = "manage";
@@ -16144,10 +16217,11 @@ async function main26() {
 var init_managed_memory = __esm({
   "packages/plugin-core/src/cli/managed-memory.ts"() {
     "use strict";
+    init_cli_runner();
     init_manage_memory();
-    main26().catch((err2) => {
+    runCliMain(main26, (err2) => {
       console.error("memlin managed-memory failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16194,14 +16268,14 @@ async function main27() {
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api, config } = ctx;
   const dirFlag = process.argv.indexOf("--dir");
   const explicitDir = dirFlag >= 0 ? process.argv[dirFlag + 1] : null;
   if (dirFlag >= 0 && !explicitDir) {
     console.error("usage: memlin ingest-native-memory [--dir <path>]");
-    process.exit(2);
+    exitCli(2);
   }
   const cwd = runtimeCwd();
   const candidates = explicitDir ? [path26.resolve(cwd, explicitDir)] : nativeMemoryDirCandidates(cwd);
@@ -16257,10 +16331,11 @@ var init_ingest_native_memory = __esm({
   "packages/plugin-core/src/cli/ingest-native-memory.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_project_resolver();
-    main27().catch((err2) => {
+    runCliMain(main27, (err2) => {
       console.error("memlin ingest-native-memory failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16311,16 +16386,16 @@ async function main28() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp9();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin attach-path: ${parsed.error}`);
     printHelp9();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin attach-path: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api, config } = ctx;
   const targetPath = path27.resolve(parsed.targetPath ?? runtimeCwd());
@@ -16331,7 +16406,7 @@ async function main28() {
     const match = me.accounts.find((a) => a.id === parsed.org) ?? me.accounts.find((a) => a.name.toLowerCase().includes(lower));
     if (!match) {
       console.error(`memlin attach-path: no account matching "${parsed.org}".`);
-      process.exit(2);
+      exitCli(2);
     }
     accountId = match.id;
   }
@@ -16347,7 +16422,7 @@ async function main28() {
         byName.length > 1 ? `memlin attach-path: "${parsed.project}" matches ${byName.length} projects \u2014 use the id.` : `memlin attach-path: no project matching "${parsed.project}" in this account.`
       );
       for (const p of projects.slice(0, 20)) console.error(`  ${p.id}  ${p.name}`);
-      process.exit(2);
+      exitCli(2);
     }
     projectId = target.id;
   } else {
@@ -16364,7 +16439,7 @@ async function main28() {
     );
     const projects = await api.listProjects({ accountId });
     for (const p of projects.slice(0, 20)) console.error(`  ${p.id}  ${p.name}`);
-    process.exit(2);
+    exitCli(2);
   }
   try {
     const updated = await api.patchProject(
@@ -16389,19 +16464,20 @@ async function main28() {
     } else {
       console.error(`memlin attach-path: attach failed: ${msg}`);
     }
-    process.exit(1);
+    return 1;
   }
 }
 var init_attach_path = __esm({
   "packages/plugin-core/src/cli/attach-path.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_project_resolver();
     init_workspace_binding();
     init_sibling_detect();
-    main28().catch((err2) => {
+    runCliMain(main28, (err2) => {
       console.error("memlin attach-path failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16552,16 +16628,16 @@ async function main29() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp10();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin audit replay: ${parsed.error}`);
     printHelp10();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   let replay;
   try {
@@ -16569,7 +16645,7 @@ async function main29() {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`memlin audit replay failed: ${msg}`);
-    process.exit(1);
+    exitCli(1);
   }
   const supplementalContext = supplementalItemsForReplay(replay);
   const out2 = [];
@@ -16643,17 +16719,18 @@ async function main29() {
     }
   }
   process.stdout.write(out2.join("\n") + "\n");
-  process.exit(replay.from_snapshot ? 0 : 3);
+  return replay.from_snapshot ? 0 : 3;
 }
 var init_audit_replay = __esm({
   "packages/plugin-core/src/cli/audit-replay.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_args();
     init_audit_replay_renderer();
-    main29().catch((err2) => {
+    runCliMain(main29, (err2) => {
       console.error("memlin audit replay failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16734,16 +16811,16 @@ async function main30() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp11();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin audit explain: ${parsed.error}`);
     printHelp11();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   let explain;
   try {
@@ -16755,10 +16832,10 @@ async function main30() {
         "memlin audit explain: this audit predates the per-item snapshot.",
         "\n  Try `memlin audit replay`, which works on older rows too."
       );
-      process.exit(3);
+      exitCli(3);
     }
     console.error(`memlin audit explain failed: ${msg}`);
-    process.exit(1);
+    exitCli(1);
   }
   const out2 = [];
   out2.push(`# Memlin Audit Explain \u2014 resolved ${explain.resolved_at}`);
@@ -16797,16 +16874,17 @@ async function main30() {
     `# decay: full weight \u2264${c.DECAY_FRESH_DAYS}d, floor ${c.DECAY_FLOOR_MULTIPLIER} at \u2265${c.DECAY_STALE_DAYS}d (memory only)`
   );
   process.stdout.write(out2.join("\n") + "\n");
-  process.exit(0);
+  return 0;
 }
 var init_audit_explain = __esm({
   "packages/plugin-core/src/cli/audit-explain.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_args();
-    main30().catch((err2) => {
+    runCliMain(main30, (err2) => {
       console.error("memlin audit explain failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16878,33 +16956,33 @@ async function main31() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp12();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin actions list: ${parsed.error}`);
     printHelp12();
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   let actions;
   try {
     actions = await ctx.api.listActions(parsed);
   } catch (e) {
     console.error(`memlin actions list failed: ${e instanceof Error ? e.message : e}`);
-    process.exit(1);
+    exitCli(1);
   }
   if (parsed.json) {
     process.stdout.write(JSON.stringify(actions, null, 2) + "\n");
-    process.exit(0);
+    exitCli(0);
   }
   if (actions.length === 0) {
     console.log(
       parsed.filter ? `# no actions matching "${parsed.filter}". Try without --filter, or seed a new one.` : "# no actions in this workspace yet."
     );
-    process.exit(0);
+    exitCli(0);
   }
   console.log(`# ${actions.length} action(s):`);
   console.log("");
@@ -16917,10 +16995,11 @@ var init_actions_list = __esm({
   "packages/plugin-core/src/cli/actions-list.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_args();
-    main31().catch((err2) => {
+    runCliMain(main31, (err2) => {
       console.error("memlin actions list failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -16997,28 +17076,29 @@ async function main32() {
   if ("error" in parsed) {
     if (parsed.error === "help") {
       printHelp13();
-      process.exit(0);
+      exitCli(0);
     }
     console.error(`memlin actions execute: ${parsed.error}`);
     printHelp13();
-    process.exit(2);
+    exitCli(2);
   }
   let input;
   try {
     const v = JSON.parse(parsed.inputJson);
     if (!v || typeof v !== "object" || Array.isArray(v)) {
       console.error("memlin actions execute: --input must be a JSON object");
-      process.exit(2);
+      exitCli(2);
     }
     input = v;
   } catch (e) {
+    rethrowCliExit(e);
     console.error(`memlin actions execute: invalid JSON \u2014 ${e instanceof Error ? e.message : e}`);
-    process.exit(2);
+    exitCli(2);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   let result;
   try {
@@ -17027,14 +17107,14 @@ async function main32() {
     const msg = e instanceof Error ? e.message : String(e);
     if (/invalid_input|input failed validation/i.test(msg)) {
       console.error(`memlin actions execute: ${msg}`);
-      process.exit(3);
+      exitCli(3);
     }
     console.error(`memlin actions execute failed: ${msg}`);
-    process.exit(1);
+    exitCli(1);
   }
   if (parsed.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
-    process.exit(0);
+    exitCli(0);
   }
   const m = result.meta;
   const metaLine = [
@@ -17053,10 +17133,11 @@ var init_actions_execute = __esm({
   "packages/plugin-core/src/cli/actions-execute.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_args();
-    main32().catch((err2) => {
+    runCliMain(main32, (err2) => {
       console.error("memlin actions execute failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -17083,12 +17164,12 @@ async function main33() {
   const argv = argvAsSlashArgs();
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp14();
-    process.exit(0);
+    exitCli(0);
   }
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
-    process.exit(1);
+    exitCli(1);
   }
   const { api } = ctx;
   const targetPath = argv[0] ? path28.relative(process.cwd(), path28.resolve(argv[0])) : null;
@@ -17101,18 +17182,18 @@ async function main33() {
     );
     if (!doc) {
       console.error(`memlin prompt-ci: could not find local file "${targetPath}"`);
-      process.exit(2);
+      exitCli(2);
     }
     if (doc.kind !== "skill") {
       console.error(`memlin prompt-ci: "${targetPath}" is not a skill document.`);
-      process.exit(2);
+      exitCli(2);
     }
     const prev = state.documents[doc.path];
     if (!prev?.document_id) {
       console.error(
         `memlin prompt-ci: "${targetPath}" has not been synchronized yet. Run \`memlin sync\` first.`
       );
-      process.exit(2);
+      exitCli(2);
     }
     skillsToTest.push({
       relPath: doc.path,
@@ -17135,7 +17216,7 @@ async function main33() {
   }
   if (skillsToTest.length === 0) {
     console.log("No synchronized local skills found to run CI against.");
-    process.exit(0);
+    exitCli(0);
   }
   console.log(`Running Prompt CI regression suite for ${skillsToTest.length} skill(s)...`);
   let hasRegressions = false;
@@ -17187,22 +17268,23 @@ async function main33() {
     console.log(
       `\x1B[31mCI Result: REGRESSIONS DETECTED. Please review the failures above.\x1B[0m`
     );
-    process.exit(1);
+    return 1;
   } else {
     console.log(`\x1B[32mCI Result: SUCCESS. All prompt changes passed regression checks.\x1B[0m`);
-    process.exit(0);
+    return 0;
   }
 }
 var init_prompt_ci = __esm({
   "packages/plugin-core/src/cli/prompt-ci.ts"() {
     "use strict";
     init_client();
+    init_cli_runner();
     init_local_scan();
     init_state();
     init_args();
-    main33().catch((err2) => {
+    runCliMain(main33, (err2) => {
       console.error("memlin prompt-ci failed:", err2 instanceof Error ? err2.message : err2);
-      process.exit(1);
+      return 1;
     });
   }
 });
@@ -265132,6 +265214,7 @@ var init_scan = __esm({
 
 // packages/plugin-core/src/cli/main.ts
 init_command_guide();
+init_cli_runner();
 var RUN = {
   login: () => Promise.resolve().then(() => (init_login(), login_exports)),
   init: () => Promise.resolve().then(() => (init_init(), init_exports)),
@@ -265180,13 +265263,15 @@ async function main35() {
   }
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") {
     printCommandGuide({ write: (line) => process.stdout.write(line + "\n") });
-    process.exit(sub ? 0 : 1);
+    scheduleProcessExit(sub ? 0 : 1);
+    return;
   }
   const run2 = RUN[sub];
   if (!run2) {
     process.stderr.write(`memlin: unknown command '${sub}'. Run 'memlin --help' for the list.
 `);
-    process.exit(1);
+    scheduleProcessExit(1);
+    return;
   }
   process.argv.splice(2, 1);
   await run2();
@@ -265194,7 +265279,7 @@ async function main35() {
 main35().catch((err2) => {
   process.stderr.write(`memlin: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
-  process.exit(1);
+  scheduleProcessExit(1);
 });
 /*! Bundled license information:
 
