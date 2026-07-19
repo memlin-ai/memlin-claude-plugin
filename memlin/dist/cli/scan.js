@@ -247000,6 +247000,7 @@ async function resolveProject(api, cwd, configProjectId) {
 function readGitRemote(cwd) {
   try {
     const url = execSync("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -249105,7 +249106,7 @@ Options:
 function gitState(cwd) {
   const try1 = (cmd) => {
     try {
-      return execSync2(cmd, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 200);
+      return execSync2(cmd, { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 200);
     } catch {
       return null;
     }

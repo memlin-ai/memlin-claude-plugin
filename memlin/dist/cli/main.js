@@ -10856,6 +10856,7 @@ async function resolveProject(api, cwd, configProjectId) {
 function readGitRemote(cwd) {
   try {
     const url = execSync("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -10939,7 +10940,7 @@ function gitMainRoot(cwd) {
     const common = execFileSync(
       "git",
       ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+      { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
     ).trim();
     return common ? path10.dirname(common) : null;
   } catch {
@@ -13034,6 +13035,7 @@ function splitTitleAndBody(raw) {
 function readGitRemote2(cwd) {
   try {
     const url = execSync2("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -13123,6 +13125,7 @@ import { execSync as execSync3 } from "node:child_process";
 function readGitRemote3(cwd) {
   try {
     const url = execSync3("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -14166,6 +14169,7 @@ function printHelp2() {
 function readGitRemote4(cwd) {
   try {
     const url = execSync4("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -14178,6 +14182,7 @@ function readGitRemote4(cwd) {
 function readGitBranch(cwd) {
   try {
     const branch = execSync4("git rev-parse --abbrev-ref HEAD", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8",
@@ -14415,6 +14420,7 @@ function printHelp3() {
 function readGitRemote5(cwd) {
   try {
     const url = execSync5("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -16053,6 +16059,7 @@ function childGitRemotes(cwd, deps = {}) {
     try {
       if (!existsSync6(path25.join(repoPath, ".git"))) return null;
       const url = execSync6("git remote get-url origin", {
+        windowsHide: true,
         cwd: repoPath,
         stdio: ["ignore", "pipe", "ignore"],
         encoding: "utf8"
@@ -16162,6 +16169,7 @@ function printHelp7() {
 function readGitRemote6(cwd) {
   try {
     const url = execSync7("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -265422,7 +265430,7 @@ Options:
 function gitState(cwd) {
   const try1 = (cmd) => {
     try {
-      return execSync8(cmd, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 200);
+      return execSync8(cmd, { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 200);
     } catch {
       return null;
     }
