@@ -12,6 +12,47 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
+// packages/plugin-core/dist/atomic-rename.js
+import { promises as fs } from "node:fs";
+import path from "node:path";
+async function renameWithRetry(from, to, rename) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      const code = error.code;
+      if (attempt >= MAX_ATTEMPTS || !code || !RETRYABLE_CODES.has(code)) throw error;
+      const cap = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
+      const delay2 = cap / 2 + Math.random() * (cap / 2);
+      await new Promise((resolve) => setTimeout(resolve, delay2));
+    }
+  }
+}
+async function atomicRename(from, to, dependencies = {}) {
+  const rename = dependencies.rename ?? fs.rename;
+  const queueKey = path.resolve(to);
+  const previous = renameQueues.get(queueKey) ?? Promise.resolve();
+  const run = previous.catch(() => void 0).then(() => renameWithRetry(from, to, rename));
+  renameQueues.set(queueKey, run);
+  try {
+    await run;
+  } finally {
+    if (renameQueues.get(queueKey) === run) renameQueues.delete(queueKey);
+  }
+}
+var RETRYABLE_CODES, MAX_ATTEMPTS, BASE_DELAY_MS, MAX_DELAY_MS, renameQueues;
+var init_atomic_rename = __esm({
+  "packages/plugin-core/dist/atomic-rename.js"() {
+    "use strict";
+    RETRYABLE_CODES = /* @__PURE__ */ new Set(["EPERM", "EACCES", "EBUSY"]);
+    MAX_ATTEMPTS = 10;
+    BASE_DELAY_MS = 10;
+    MAX_DELAY_MS = 100;
+    renameQueues = /* @__PURE__ */ new Map();
+  }
+});
+
 // packages/plugin-core/dist/companion-client.js
 var companion_client_exports = {};
 __export(companion_client_exports, {
@@ -37,17 +78,17 @@ __export(companion_client_exports, {
 });
 import http from "node:http";
 import os from "node:os";
-import path from "node:path";
+import path2 from "node:path";
 function companionSocketPath(env = process.env) {
   const override = env[COMPANION_SOCKET_ENV];
   if (override) return override;
   if (process.platform === "win32") {
     return `\\\\.\\pipe\\memlin-companion-${os.userInfo().username}`;
   }
-  return path.join(os.homedir(), ".config", "memlin", "run", "companion.sock");
+  return path2.join(os.homedir(), ".config", "memlin", "run", "companion.sock");
 }
 function companionRunDir() {
-  return path.join(os.homedir(), ".config", "memlin", "run");
+  return path2.join(os.homedir(), ".config", "memlin", "run");
 }
 function companionDisabled(env = process.env) {
   const off = env[NO_COMPANION_ENV];
@@ -182,7 +223,7 @@ var init_companion_client = __esm({
 
 // packages/plugin-core/dist/host.js
 import os3 from "node:os";
-import path3 from "node:path";
+import path4 from "node:path";
 function resolveHost() {
   const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
   const make = HOSTS[envHost];
@@ -203,42 +244,42 @@ var init_host = __esm({
         return this.home;
       }
       plansDir() {
-        return path3.join(this.home, "plans");
+        return path4.join(this.home, "plans");
       }
     };
     ClaudeCodeHost = class extends BaseHost {
       constructor() {
-        super("claude-code", path3.join(os3.homedir(), ".claude"));
+        super("claude-code", path4.join(os3.homedir(), ".claude"));
       }
     };
     CursorHost = class extends BaseHost {
       constructor() {
-        super("cursor", path3.join(os3.homedir(), ".config", "memlin"));
+        super("cursor", path4.join(os3.homedir(), ".config", "memlin"));
       }
     };
     CodexHost = class extends BaseHost {
       constructor() {
-        super("codex", path3.join(os3.homedir(), ".config", "memlin"));
+        super("codex", path4.join(os3.homedir(), ".config", "memlin"));
       }
     };
     WindsurfHost = class extends BaseHost {
       constructor() {
-        super("windsurf", path3.join(os3.homedir(), ".config", "memlin"));
+        super("windsurf", path4.join(os3.homedir(), ".config", "memlin"));
       }
     };
     AntigravityHost = class extends BaseHost {
       constructor() {
-        super("antigravity", path3.join(os3.homedir(), ".config", "memlin"));
+        super("antigravity", path4.join(os3.homedir(), ".config", "memlin"));
       }
     };
     VSCodeHost = class extends BaseHost {
       constructor() {
-        super("vscode", path3.join(os3.homedir(), ".config", "memlin"));
+        super("vscode", path4.join(os3.homedir(), ".config", "memlin"));
       }
     };
     CompanionHost = class extends BaseHost {
       constructor() {
-        super("companion", path3.join(os3.homedir(), ".config", "memlin"));
+        super("companion", path4.join(os3.homedir(), ".config", "memlin"));
       }
     };
     HOSTS = {
@@ -254,35 +295,35 @@ var init_host = __esm({
 });
 
 // packages/plugin-core/dist/state.js
-import { promises as fs4 } from "node:fs";
-import path6 from "node:path";
+import { promises as fs5 } from "node:fs";
+import path7 from "node:path";
 import os6 from "node:os";
 import crypto from "node:crypto";
 async function readState() {
   try {
-    const raw = await fs4.readFile(STATE_FILE, "utf8");
+    const raw = await fs5.readFile(STATE_FILE, "utf8");
     return JSON.parse(raw);
   } catch {
     return { ...EMPTY };
   }
 }
 async function writeState(state) {
-  await fs4.mkdir(path6.dirname(STATE_FILE), { recursive: true });
+  await fs5.mkdir(path7.dirname(STATE_FILE), { recursive: true });
   const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs4.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await fs4.rename(tmp, STATE_FILE);
+  await fs5.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
+  await atomicRename(tmp, STATE_FILE);
 }
 async function acquireStateLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (; ; ) {
     try {
-      await fs4.mkdir(LOCK_DIR);
+      await fs5.mkdir(LOCK_DIR);
       return true;
     } catch {
       try {
-        const stat = await fs4.stat(LOCK_DIR);
+        const stat = await fs5.stat(LOCK_DIR);
         if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-          await fs4.rmdir(LOCK_DIR).catch(() => {
+          await fs5.rmdir(LOCK_DIR).catch(() => {
           });
           continue;
         }
@@ -295,7 +336,7 @@ async function acquireStateLock() {
   }
 }
 async function releaseStateLock() {
-  await fs4.rmdir(LOCK_DIR).catch(() => {
+  await fs5.rmdir(LOCK_DIR).catch(() => {
   });
 }
 async function updateState(mutate) {
@@ -316,7 +357,8 @@ var STATE_FILE, EMPTY, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
 var init_state = __esm({
   "packages/plugin-core/dist/state.js"() {
     "use strict";
-    STATE_FILE = path6.join(os6.homedir(), ".config", "memlin", "state.json");
+    init_atomic_rename();
+    STATE_FILE = path7.join(os6.homedir(), ".config", "memlin", "state.json");
     EMPTY = { documents: {} };
     LOCK_DIR = `${STATE_FILE}.lock`;
     LOCK_STALE_MS = 2e3;
@@ -337,8 +379,8 @@ __export(plan_sync_exports, {
   setLastPlanPullCursor: () => setLastPlanPullCursor,
   stampPlanFile: () => stampPlanFile
 });
-import { promises as fs8 } from "node:fs";
-import path11 from "node:path";
+import { promises as fs9 } from "node:fs";
+import path12 from "node:path";
 function homeBase(host) {
   return (host ?? resolveHost()).homeDir();
 }
@@ -350,7 +392,7 @@ async function pullPlans(api, opts = {}) {
   if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
   if (opts.since) fetchOpts.updated_after = opts.since;
   const list = await api.listPlans(fetchOpts);
-  await fs8.mkdir(plansDir(opts.host), { recursive: true });
+  await fs9.mkdir(plansDir(opts.host), { recursive: true });
   const state = await readState();
   const newEntries = {};
   const pulled = [];
@@ -361,8 +403,8 @@ async function pullPlans(api, opts = {}) {
   for (const p of list) {
     const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
     const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path11.join("plans", filename);
-    const full = path11.join(plansDir(opts.host), filename);
+    const localPath = path12.join("plans", filename);
+    const full = path12.join(plansDir(opts.host), filename);
     seenPaths.add(localPath);
     let body;
     try {
@@ -381,7 +423,7 @@ async function pullPlans(api, opts = {}) {
       unchanged.push(localPath);
       continue;
     }
-    await fs8.writeFile(full, fileContent, "utf8");
+    await fs9.writeFile(full, fileContent, "utf8");
     pulled.push(localPath);
     newEntries[localPath] = {
       document_id: p.document_id,
@@ -409,12 +451,12 @@ function resolveTargetDocId(stateEntry, binding) {
   return stateEntry?.document_id || binding?.documentId || void 0;
 }
 async function pushPlanFile(api, file, opts = {}) {
-  const raw = await fs8.readFile(file, "utf8");
+  const raw = await fs9.readFile(file, "utf8");
   const { title, body, binding: existingBinding } = parsePlanFile(raw);
   if (!body.trim()) {
     throw new Error("plan body is empty");
   }
-  const relPath = path11.relative(homeBase(opts.host), file);
+  const relPath = path12.relative(homeBase(opts.host), file);
   const state = await readState();
   const existing = state.documents[relPath];
   const targetDocId = resolveTargetDocId(existing, existingBinding);
@@ -428,7 +470,7 @@ async function pushPlanFile(api, file, opts = {}) {
       documentId: result2.document_id,
       projectId: existingBinding?.projectId ?? null
     });
-    const stampedUpdate = await fs8.readFile(file, "utf8").catch(() => raw);
+    const stampedUpdate = await fs9.readFile(file, "utf8").catch(() => raw);
     await updateState((s) => {
       s.documents[relPath] = {
         document_id: result2.document_id,
@@ -467,7 +509,7 @@ async function pushPlanFile(api, file, opts = {}) {
     documentId: result.document_id,
     projectId: result.project_id
   });
-  const stamped = await fs8.readFile(file, "utf8").catch(() => raw);
+  const stamped = await fs9.readFile(file, "utf8").catch(() => raw);
   await updateState((s) => {
     const entry = s.documents[relPath];
     if (entry) entry.content_hash = hash(stamped);
@@ -484,23 +526,23 @@ async function reconcileKnownPlans(api, opts = {}) {
   const failed = [];
   let entries;
   try {
-    entries = await fs8.readdir(plansDir(opts.host));
+    entries = await fs9.readdir(plansDir(opts.host));
   } catch {
     return { pushed, skipped, failed };
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path11.join(plansDir(opts.host), f);
+    const abs = path12.join(plansDir(opts.host), f);
     let raw;
     try {
-      const st = await fs8.stat(abs);
+      const st = await fs9.stat(abs);
       if (!st.isFile() || st.size === 0) continue;
-      raw = await fs8.readFile(abs, "utf8");
+      raw = await fs9.readFile(abs, "utf8");
     } catch {
       continue;
     }
-    const relPath = path11.relative(homeBase(opts.host), abs);
+    const relPath = path12.relative(homeBase(opts.host), abs);
     const tracked = state.documents[relPath]?.document_id;
     const { binding } = parsePlanFile(raw);
     const isKnown = Boolean(tracked) || Boolean(binding?.documentId);
@@ -525,25 +567,25 @@ async function listUnboundPlans(host) {
   const out = [];
   let entries;
   try {
-    entries = await fs8.readdir(plansDir(host));
+    entries = await fs9.readdir(plansDir(host));
   } catch {
     return out;
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
-    const abs = path11.join(plansDir(host), f);
+    const abs = path12.join(plansDir(host), f);
     let raw;
     let size = 0;
     try {
-      const st = await fs8.stat(abs);
+      const st = await fs9.stat(abs);
       if (!st.isFile() || st.size === 0) continue;
       size = st.size;
-      raw = await fs8.readFile(abs, "utf8");
+      raw = await fs9.readFile(abs, "utf8");
     } catch {
       continue;
     }
-    const relPath = path11.relative(homeBase(host), abs);
+    const relPath = path12.relative(homeBase(host), abs);
     const { title, binding } = parsePlanFile(raw);
     if (state.documents[relPath]?.document_id || binding?.documentId) continue;
     out.push({ file: f, title, size });
@@ -553,7 +595,7 @@ async function listUnboundPlans(host) {
 async function stampPlanFile(file, binding) {
   let raw;
   try {
-    raw = await fs8.readFile(file, "utf8");
+    raw = await fs9.readFile(file, "utf8");
   } catch {
     return;
   }
@@ -569,7 +611,7 @@ async function stampPlanFile(file, binding) {
     bodyNoStamp.trim(),
     ""
   ].filter((l) => l !== null).join("\n");
-  await fs8.writeFile(file, composed, "utf8");
+  await fs9.writeFile(file, composed, "utf8");
 }
 function formatPlanFile(title, body, status, binding) {
   const trimmedBody = body.replace(/^\s*#\s+.+\n+/, "").trimEnd();
@@ -612,14 +654,15 @@ var init_plan_sync = __esm({
 });
 
 // packages/plugin-core/dist/client.js
-import { promises as fs3 } from "node:fs";
-import path5 from "node:path";
+import { promises as fs4 } from "node:fs";
+import path6 from "node:path";
 import os5 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // packages/plugin-core/dist/auth.js
-import { promises as fs } from "node:fs";
-import path2 from "node:path";
+init_atomic_rename();
+import { promises as fs2 } from "node:fs";
+import path3 from "node:path";
 import os2 from "node:os";
 import { randomUUID } from "node:crypto";
 var MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
@@ -628,7 +671,7 @@ var AUTH0_DOMAIN = process.env.MEMLIN_AUTH0_DOMAIN || MEMLIN_PROD_AUTH0_DOMAIN;
 var AUTH0_CLIENT_ID = process.env.MEMLIN_AUTH0_CLIENT_ID || MEMLIN_PROD_AUTH0_CLIENT_ID;
 var AUTH0_AUDIENCE = process.env.MEMLIN_AUTH0_AUDIENCE ?? "https://api.memlin.ai";
 function persistedTokenFilePath() {
-  return process.env.MEMLIN_TOKEN_FILE || path2.join(os2.homedir(), ".config", "memlin", "token.json");
+  return process.env.MEMLIN_TOKEN_FILE || path3.join(os2.homedir(), ".config", "memlin", "token.json");
 }
 var AUTH_FILE_LOCK_TIMEOUT_MS = 15e3;
 var AUTH_FILE_LOCK_STALE_MS = 2 * 6e4;
@@ -639,18 +682,18 @@ function authFileLockPath() {
 async function acquireAuthFileLock() {
   const file = authFileLockPath();
   const owner = `${process.pid}:${randomUUID()}`;
-  await fs.mkdir(path2.dirname(file), { recursive: true });
+  await fs2.mkdir(path3.dirname(file), { recursive: true });
   const deadline = Date.now() + AUTH_FILE_LOCK_TIMEOUT_MS;
   while (true) {
     try {
-      const handle = await fs.open(file, "wx", 384);
+      const handle = await fs2.open(file, "wx", 384);
       try {
         await handle.writeFile(owner, "utf8");
         await handle.sync();
       } catch (error) {
         await handle.close().catch(() => {
         });
-        await fs.rm(file, { force: true }).catch(() => {
+        await fs2.rm(file, { force: true }).catch(() => {
         });
         throw error;
       }
@@ -660,16 +703,16 @@ async function acquireAuthFileLock() {
         released = true;
         await handle.close().catch(() => {
         });
-        const currentOwner = await fs.readFile(file, "utf8").catch(() => null);
-        if (currentOwner === owner) await fs.rm(file, { force: true }).catch(() => {
+        const currentOwner = await fs2.readFile(file, "utf8").catch(() => null);
+        if (currentOwner === owner) await fs2.rm(file, { force: true }).catch(() => {
         });
       };
     } catch (error) {
       if (error.code !== "EEXIST") throw error;
       try {
-        const stat = await fs.stat(file);
+        const stat = await fs2.stat(file);
         if (Date.now() - stat.mtimeMs > AUTH_FILE_LOCK_STALE_MS) {
-          await fs.rm(file, { force: true });
+          await fs2.rm(file, { force: true });
           continue;
         }
       } catch (statError) {
@@ -693,7 +736,7 @@ async function withAuthFileLock(operation) {
 }
 async function readPersistedToken() {
   try {
-    const raw = await fs.readFile(persistedTokenFilePath(), "utf8");
+    const raw = await fs2.readFile(persistedTokenFilePath(), "utf8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -701,15 +744,15 @@ async function readPersistedToken() {
 }
 async function writePersistedToken(t) {
   const file = persistedTokenFilePath();
-  await fs.mkdir(path2.dirname(file), { recursive: true });
-  const tmp = path2.join(
-    path2.dirname(file),
-    `${path2.basename(file)}.tmp-${process.pid}-${randomUUID()}`
+  await fs2.mkdir(path3.dirname(file), { recursive: true });
+  const tmp = path3.join(
+    path3.dirname(file),
+    `${path3.basename(file)}.tmp-${process.pid}-${randomUUID()}`
   );
-  await fs.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
-  await fs.chmod(tmp, 384).catch(() => {
+  await fs2.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  await fs2.chmod(tmp, 384).catch(() => {
   });
-  await fs.rename(tmp, file);
+  await atomicRename(tmp, file);
 }
 async function refreshAccessToken(refreshToken) {
   requireClientId();
@@ -802,6 +845,9 @@ function decodeJwtPayload(jwt) {
   if (parts.length !== 3) throw new Error("not a JWT");
   return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
 }
+
+// packages/plugin-core/dist/client.js
+init_atomic_rename();
 
 // packages/plugin-core/dist/memlin-api-client.js
 import { readFileSync } from "node:fs";
@@ -1474,18 +1520,19 @@ function resolveApiUrl() {
 }
 
 // packages/plugin-core/dist/workspace-binding.js
+init_atomic_rename();
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { constants, promises as fs2 } from "node:fs";
-import path4 from "node:path";
+import { constants, promises as fs3 } from "node:fs";
+import path5 from "node:path";
 var WORKSPACE_DIR_NAME = ".memlin";
 var WORKSPACE_BINDING_FILE = "config.json";
 var GIT_POINTER_MAX_BYTES = 8 * 1024;
 async function walkForWorkspaceBinding(startDir) {
-  let dir = path4.resolve(startDir);
+  let dir = path5.resolve(startDir);
   for (let i = 0; i < 64; i++) {
-    const candidate = path4.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+    const candidate = path5.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
     try {
-      const raw = await fs2.readFile(candidate, "utf8");
+      const raw = await fs3.readFile(candidate, "utf8");
       const parsed = JSON.parse(raw);
       if (typeof parsed.account_id === "string" && parsed.account_id) {
         return {
@@ -1499,7 +1546,7 @@ async function walkForWorkspaceBinding(startDir) {
       }
     } catch {
     }
-    const parent = path4.dirname(dir);
+    const parent = path5.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -1508,7 +1555,7 @@ async function walkForWorkspaceBinding(startDir) {
 async function readSmallRegularFile(file) {
   let before;
   try {
-    before = await fs2.lstat(file);
+    before = await fs3.lstat(file);
   } catch (error) {
     return isFileNotFound(error) ? { kind: "missing" } : { kind: "invalid" };
   }
@@ -1517,14 +1564,14 @@ async function readSmallRegularFile(file) {
       return { kind: "invalid" };
     }
     const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-    const handle = await fs2.open(file, constants.O_RDONLY | noFollow);
+    const handle = await fs3.open(file, constants.O_RDONLY | noFollow);
     try {
       const opened = await handle.stat();
       if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size !== before.size || opened.size > GIT_POINTER_MAX_BYTES) {
         return { kind: "invalid" };
       }
       const bytes = await handle.readFile();
-      const [after, afterPath] = await Promise.all([handle.stat(), fs2.lstat(file)]);
+      const [after, afterPath] = await Promise.all([handle.stat(), fs3.lstat(file)]);
       if (afterPath.isSymbolicLink() || !afterPath.isFile() || after.dev !== opened.dev || after.ino !== opened.ino || after.size !== opened.size || afterPath.dev !== opened.dev || afterPath.ino !== opened.ino || afterPath.size !== opened.size || bytes.byteLength !== opened.size || bytes.includes(0)) {
         return { kind: "invalid" };
       }
@@ -1537,16 +1584,16 @@ async function readSmallRegularFile(file) {
   }
 }
 function containedBy(parent, child) {
-  const relative = path4.relative(parent, child);
-  return relative === "" || relative !== ".." && !relative.startsWith(`..${path4.sep}`) && !path4.isAbsolute(relative);
+  const relative = path5.relative(parent, child);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path5.sep}`) && !path5.isAbsolute(relative);
 }
 async function canonicalSafeDirectory(candidate) {
   try {
-    const before = await fs2.lstat(candidate);
+    const before = await fs3.lstat(candidate);
     if (before.isSymbolicLink() || !before.isDirectory()) return null;
-    await fs2.access(candidate, constants.R_OK | constants.X_OK);
-    const canonical = await fs2.realpath(candidate);
-    const after = await fs2.lstat(candidate);
+    await fs3.access(candidate, constants.R_OK | constants.X_OK);
+    const canonical = await fs3.realpath(candidate);
+    const after = await fs3.lstat(candidate);
     if (after.isSymbolicLink() || !after.isDirectory() || after.dev !== before.dev || after.ino !== before.ino) {
       return null;
     }
@@ -1563,24 +1610,24 @@ function gitIdentity(checkoutRoot, state, repositoryRoot = checkoutRoot) {
   };
 }
 async function resolveGitWorkspaceIdentity(startDir) {
-  const requested = path4.resolve(startDir);
+  const requested = path5.resolve(startDir);
   let canonicalStart;
   try {
-    canonicalStart = await fs2.realpath(requested);
-    const startEntry = await fs2.stat(canonicalStart);
+    canonicalStart = await fs3.realpath(requested);
+    const startEntry = await fs3.stat(canonicalStart);
     if (!startEntry.isDirectory()) return gitIdentity(canonicalStart, "unknown");
   } catch {
     return gitIdentity(requested, "unknown");
   }
   let dir = canonicalStart;
   for (let i = 0; i < 64; i++) {
-    const gitEntry = path4.join(dir, ".git");
+    const gitEntry = path5.join(dir, ".git");
     let entry;
     try {
-      entry = await fs2.lstat(gitEntry);
+      entry = await fs3.lstat(gitEntry);
     } catch (error) {
       if (!isFileNotFound(error)) return gitIdentity(dir, "unknown");
-      const parent = path4.dirname(dir);
+      const parent = path5.dirname(dir);
       if (parent === dir) return gitIdentity(canonicalStart, "none");
       dir = parent;
       continue;
@@ -1601,16 +1648,16 @@ async function resolveGitWorkspaceIdentity(startDir) {
     if (!pointerValue) return gitIdentity(checkoutRoot, "unknown");
     let gitDirCandidate;
     try {
-      gitDirCandidate = path4.isAbsolute(pointerValue) ? pointerValue : path4.resolve(checkoutRoot, pointerValue);
+      gitDirCandidate = path5.isAbsolute(pointerValue) ? pointerValue : path5.resolve(checkoutRoot, pointerValue);
     } catch {
       return gitIdentity(checkoutRoot, "unknown");
     }
     const gitDir = await canonicalSafeDirectory(gitDirCandidate);
     if (!gitDir) return gitIdentity(checkoutRoot, "unknown");
-    const commonRead = await readSmallRegularFile(path4.join(gitDir, "commondir"));
+    const commonRead = await readSmallRegularFile(path5.join(gitDir, "commondir"));
     if (commonRead.kind === "missing") {
-      const gitDirParent = path4.dirname(gitDir);
-      const looksLikeWorktreeAdmin = path4.basename(gitDirParent) === "worktrees" && path4.basename(path4.dirname(gitDirParent)) === ".git";
+      const gitDirParent = path5.dirname(gitDir);
+      const looksLikeWorktreeAdmin = path5.basename(gitDirParent) === "worktrees" && path5.basename(path5.dirname(gitDirParent)) === ".git";
       if (looksLikeWorktreeAdmin) return gitIdentity(checkoutRoot, "unknown");
       return gitIdentity(checkoutRoot, "main");
     }
@@ -1622,22 +1669,22 @@ async function resolveGitWorkspaceIdentity(startDir) {
     if (!commonValue) return gitIdentity(checkoutRoot, "unknown");
     let commonCandidate;
     try {
-      commonCandidate = path4.isAbsolute(commonValue) ? commonValue : path4.resolve(gitDir, commonValue);
+      commonCandidate = path5.isAbsolute(commonValue) ? commonValue : path5.resolve(gitDir, commonValue);
     } catch {
       return gitIdentity(checkoutRoot, "unknown");
     }
     const commonDir = await canonicalSafeDirectory(commonCandidate);
     if (!commonDir) return gitIdentity(checkoutRoot, "unknown");
-    const worktreesDir = path4.join(commonDir, "worktrees");
-    if (path4.basename(commonDir) !== ".git" || gitDir === worktreesDir || !containedBy(worktreesDir, gitDir)) {
+    const worktreesDir = path5.join(commonDir, "worktrees");
+    if (path5.basename(commonDir) !== ".git" || gitDir === worktreesDir || !containedBy(worktreesDir, gitDir)) {
       return gitIdentity(checkoutRoot, "unknown");
     }
-    const repositoryRoot = path4.dirname(commonDir);
-    const repositoryGitDir = await canonicalSafeDirectory(path4.join(repositoryRoot, ".git"));
+    const repositoryRoot = path5.dirname(commonDir);
+    const repositoryGitDir = await canonicalSafeDirectory(path5.join(repositoryRoot, ".git"));
     if (!repositoryGitDir || repositoryGitDir !== commonDir) {
       return gitIdentity(checkoutRoot, "unknown");
     }
-    const reverseRead = await readSmallRegularFile(path4.join(gitDir, "gitdir"));
+    const reverseRead = await readSmallRegularFile(path5.join(gitDir, "gitdir"));
     if (reverseRead.kind !== "ok" || reverseRead.value.includes("\0")) {
       return gitIdentity(checkoutRoot, "unknown");
     }
@@ -1645,10 +1692,10 @@ async function resolveGitWorkspaceIdentity(startDir) {
     const reverseValue = reverseMatch?.[1];
     if (!reverseValue) return gitIdentity(checkoutRoot, "unknown");
     try {
-      const reverseCandidate = path4.isAbsolute(reverseValue) ? reverseValue : path4.resolve(gitDir, reverseValue);
+      const reverseCandidate = path5.isAbsolute(reverseValue) ? reverseValue : path5.resolve(gitDir, reverseValue);
       const [reverseTarget, checkoutGitFile] = await Promise.all([
-        fs2.realpath(reverseCandidate),
-        fs2.realpath(gitEntry)
+        fs3.realpath(reverseCandidate),
+        fs3.realpath(gitEntry)
       ]);
       if (reverseTarget !== checkoutGitFile) return gitIdentity(checkoutRoot, "unknown");
     } catch {
@@ -1663,7 +1710,7 @@ async function findWorkspaceBinding(startDir) {
   const gitIdentity2 = await resolveGitWorkspaceIdentity(startDir);
   if (gitIdentity2.state !== "worktree") return direct;
   if (direct) {
-    const bindingRoot = await fs2.realpath(direct.workspaceRoot).catch(() => path4.resolve(direct.workspaceRoot));
+    const bindingRoot = await fs3.realpath(direct.workspaceRoot).catch(() => path5.resolve(direct.workspaceRoot));
     if (containedBy(gitIdentity2.checkout_root, bindingRoot)) return direct;
   }
   return walkForWorkspaceBinding(gitIdentity2.repository_root);
@@ -1672,26 +1719,26 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
   if (typeof binding.account_id !== "string" || binding.account_id.length === 0) {
     throw new Error("Workspace binding account_id is required.");
   }
-  const root = await fs2.realpath(path4.resolve(workspaceRoot));
-  const rootEntry = await fs2.stat(root);
+  const root = await fs3.realpath(path5.resolve(workspaceRoot));
+  const rootEntry = await fs3.stat(root);
   if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
-  const dir = path4.join(root, WORKSPACE_DIR_NAME);
+  const dir = path5.join(root, WORKSPACE_DIR_NAME);
   try {
-    const entry = await fs2.lstat(dir);
+    const entry = await fs3.lstat(dir);
     if (!entry.isDirectory() || entry.isSymbolicLink()) {
       throw new Error(`Refusing an unsafe Memlin workspace directory at ${dir}`);
     }
   } catch (error) {
     if (!isFileNotFound(error)) throw error;
-    await fs2.mkdir(dir, { mode: 448, recursive: true });
-    const entry = await fs2.lstat(dir);
+    await fs3.mkdir(dir, { mode: 448, recursive: true });
+    const entry = await fs3.lstat(dir);
     if (!entry.isDirectory() || entry.isSymbolicLink()) {
       throw new Error(`Refusing an unsafe Memlin workspace directory at ${dir}`);
     }
   }
-  const file = path4.join(dir, WORKSPACE_BINDING_FILE);
+  const file = path5.join(dir, WORKSPACE_BINDING_FILE);
   try {
-    const existing = await fs2.lstat(file);
+    const existing = await fs3.lstat(file);
     if (!existing.isFile() || existing.isSymbolicLink()) {
       throw new Error(`Refusing to replace an unsafe workspace binding at ${file}`);
     }
@@ -1707,23 +1754,23 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
     null,
     2
   );
-  const temporary = path4.join(dir, `.config.${randomUUID2()}.tmp`);
+  const temporary = path5.join(dir, `.config.${randomUUID2()}.tmp`);
   let handle;
   try {
-    handle = await fs2.open(temporary, "wx", 384);
+    handle = await fs3.open(temporary, "wx", 384);
     await handle.writeFile(body + "\n", "utf8");
     await handle.sync();
     await handle.close();
     handle = void 0;
-    await fs2.rename(temporary, file);
-    const installed = await fs2.lstat(file);
+    await atomicRename(temporary, file);
+    const installed = await fs3.lstat(file);
     if (!installed.isFile() || installed.isSymbolicLink()) {
       throw new Error(`Workspace binding verification failed at ${file}`);
     }
     return file;
   } finally {
     await handle?.close().catch(() => void 0);
-    await fs2.unlink(temporary).catch(() => void 0);
+    await fs3.unlink(temporary).catch(() => void 0);
   }
 }
 function isFileNotFound(error) {
@@ -1735,13 +1782,13 @@ function exitClean(code) {
   void closeHttpSockets().finally(() => process.exit(code));
 }
 function globalConfigFilePath() {
-  return process.env.MEMLIN_CONFIG_FILE || path5.join(os5.homedir(), ".config", "memlin", "config.json");
+  return process.env.MEMLIN_CONFIG_FILE || path6.join(os5.homedir(), ".config", "memlin", "config.json");
 }
-var CONFIG_DIR = path5.join(os5.homedir(), ".config", "memlin");
-var TOKEN_FILE = path5.join(CONFIG_DIR, "token.json");
+var CONFIG_DIR = path6.join(os5.homedir(), ".config", "memlin");
+var TOKEN_FILE = path6.join(CONFIG_DIR, "token.json");
 async function readConfig() {
   try {
-    const raw = await fs3.readFile(globalConfigFilePath(), "utf8");
+    const raw = await fs4.readFile(globalConfigFilePath(), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.account_id !== "string" || !parsed.account_id.trim() || typeof parsed.user_id !== "string" || !parsed.user_id.trim() || typeof parsed.auth0_sub !== "string" || !parsed.auth0_sub.trim()) {
       return null;
@@ -1815,10 +1862,10 @@ init_state();
 
 // packages/plugin-core/dist/apply.js
 init_state();
-import { promises as fs5 } from "node:fs";
+import { promises as fs6 } from "node:fs";
 import { existsSync } from "node:fs";
 import os7 from "node:os";
-import path7 from "node:path";
+import path8 from "node:path";
 
 // packages/plugin-core/dist/paths.js
 var SLUG = /[^a-z0-9]+/g;
@@ -1851,12 +1898,12 @@ function inferLocalPath(kind, title, existing) {
 // packages/plugin-core/dist/apply.js
 init_host();
 function archiveRoot() {
-  return path7.join(os7.homedir(), ".config", "memlin", "archive");
+  return path8.join(os7.homedir(), ".config", "memlin", "archive");
 }
 async function archiveDestination(trackedRelPath) {
-  const base = path7.join(archiveRoot(), trackedRelPath);
+  const base = path8.join(archiveRoot(), trackedRelPath);
   if (!existsSync(base)) return base;
-  const ext = path7.extname(base);
+  const ext = path8.extname(base);
   const stem = base.slice(0, base.length - ext.length);
   for (let i = 1; i < 1e3; i++) {
     const candidate = `${stem}.${i}${ext}`;
@@ -1880,17 +1927,17 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     if (d.kind === "feedback") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
     currentPaths.add(localPath);
-    const full = path7.join(root, localPath);
+    const full = path8.join(root, localPath);
     const contentHash = hash(d.content);
     let needsWrite = true;
     try {
-      const local = await fs5.readFile(full, "utf8");
+      const local = await fs6.readFile(full, "utf8");
       if (hash(local) === contentHash) needsWrite = false;
     } catch {
     }
     if (needsWrite) {
-      await fs5.mkdir(path7.dirname(full), { recursive: true });
-      await fs5.writeFile(full, d.content, "utf8");
+      await fs6.mkdir(path8.dirname(full), { recursive: true });
+      await fs6.writeFile(full, d.content, "utf8");
       out.written.push(localPath);
     } else {
       out.unchanged.push(localPath);
@@ -1905,11 +1952,11 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
   }
   for (const tracked of Object.keys(state.documents)) {
     if (currentPaths.has(tracked)) continue;
-    const full = path7.join(root, tracked);
+    const full = path8.join(root, tracked);
     if (existsSync(full)) {
       let userEdited = false;
       try {
-        const local = await fs5.readFile(full, "utf8");
+        const local = await fs6.readFile(full, "utf8");
         const prior = state.documents[tracked]?.content_hash;
         userEdited = !prior || hash(local) !== prior;
       } catch {
@@ -1921,8 +1968,8 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
       } else {
         const dest = await archiveDestination(tracked);
         try {
-          await fs5.mkdir(path7.dirname(dest), { recursive: true });
-          await fs5.rename(full, dest);
+          await fs6.mkdir(path8.dirname(dest), { recursive: true });
+          await fs6.rename(full, dest);
           out.archived.push(tracked);
           out.removed.push(`${tracked} (archived)`);
         } catch {
@@ -1950,7 +1997,7 @@ function stateRow(d, h, at) {
 // packages/plugin-core/dist/project-resolver.js
 import { execSync } from "node:child_process";
 import { existsSync as existsSync2, readdirSync } from "node:fs";
-import path8 from "node:path";
+import path9 from "node:path";
 var ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
 function allowAccountMismatch(env = process.env) {
   const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
@@ -1976,7 +2023,7 @@ function formatAccountMismatchWarning(input) {
   ].join("\n");
 }
 async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path8.resolve(cwd);
+  const absCwd = path9.resolve(cwd);
   const remotes = detectGitRemotes(cwd);
   const hasGitRemote = remotes.length > 0;
   try {
@@ -2036,8 +2083,8 @@ function detectGitRemotes(cwd) {
         continue;
       }
       scanned++;
-      const child = path8.join(cwd, entry.name);
-      if (!existsSync2(path8.join(child, ".git"))) continue;
+      const child = path9.join(cwd, entry.name);
+      if (!existsSync2(path9.join(child, ".git"))) continue;
       const remote = readGitRemote(child);
       if (remote && !out.includes(remote)) out.push(remote);
     }
@@ -2157,18 +2204,18 @@ function renderHandoffContext(handoff) {
 
 // packages/plugin-core/dist/heartbeat.js
 import crypto2 from "node:crypto";
-import { promises as fs6 } from "node:fs";
+import { promises as fs7 } from "node:fs";
 import os8 from "node:os";
-import path9 from "node:path";
+import path10 from "node:path";
 init_host();
 var DEFAULT_THROTTLE_MS = 6e4;
 function statePath(cwd, host) {
   const key = crypto2.createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return path9.join(os8.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
+  return path10.join(os8.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
 }
 async function recentlySent(file, throttleMs) {
   try {
-    const raw = await fs6.readFile(file, "utf8");
+    const raw = await fs7.readFile(file, "utf8");
     const parsed = JSON.parse(raw);
     return typeof parsed.sent_at === "number" && Date.now() - parsed.sent_at < throttleMs;
   } catch {
@@ -2184,7 +2231,7 @@ async function recordInstallHeartbeat(cwd, reason, opts = {}) {
     const ctx = await getApi({ cwd });
     if (!ctx) return;
     await ctx.api.getAccount();
-    await fs6.writeFile(file, JSON.stringify({ sent_at: Date.now(), reason, host }), "utf8");
+    await fs7.writeFile(file, JSON.stringify({ sent_at: Date.now(), reason, host }), "utf8");
     log(`${host} activity recorded: ${reason}`);
   } catch (err) {
     log(`${host} activity failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -2192,21 +2239,21 @@ async function recordInstallHeartbeat(cwd, reason, opts = {}) {
 }
 
 // packages/plugin-core/dist/auto-bind.js
-import { promises as fs7 } from "node:fs";
-import path10 from "node:path";
+import { promises as fs8 } from "node:fs";
+import path11 from "node:path";
 async function findWorkspaceRoot(cwd) {
-  let dir = path10.resolve(cwd);
+  let dir = path11.resolve(cwd);
   for (let i = 0; i < 64; i++) {
     try {
-      const stat = await fs7.stat(path10.join(dir, ".git"));
+      const stat = await fs8.stat(path11.join(dir, ".git"));
       if (stat.isDirectory() || stat.isFile()) return dir;
     } catch {
     }
-    const parent = path10.dirname(dir);
+    const parent = path11.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return path10.resolve(cwd);
+  return path11.resolve(cwd);
 }
 async function autoBindWorkspaceIfMatched(args) {
   if (args.workspaceAlreadyBound) {
