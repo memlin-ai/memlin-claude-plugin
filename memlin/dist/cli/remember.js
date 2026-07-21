@@ -442,6 +442,40 @@ var AGENT_EXPECTED_CAPABILITIES = {
   // of its own.
   companion: ["cli", "sync", "realtime", "resolve"]
 };
+var PROVIDER_HOSTS = [
+  "github.com",
+  "gitlab.com",
+  "bitbucket.org",
+  "dev.azure.com",
+  "ssh.dev.azure.com",
+  "codeberg.org",
+  "sr.ht",
+  "git.sr.ht"
+];
+function normalizeGitRemote(raw) {
+  if (!raw) return null;
+  let s = raw.trim();
+  if (!s) return null;
+  s = s.replace(/^git@([^:]+):/, "https://$1/");
+  s = s.replace(/^ssh:\/\//, "");
+  s = s.replace(/^https?:\/\//, "");
+  s = s.replace(/^git@/, "");
+  s = s.replace(/\.git$/, "");
+  s = s.replace(/\/$/, "");
+  const slash = s.indexOf("/");
+  if (slash > 0) {
+    const host = s.slice(0, slash);
+    const rest = s.slice(slash);
+    for (const provider of PROVIDER_HOSTS) {
+      if (host === provider) break;
+      if (host.startsWith(provider + "-")) {
+        s = provider + rest;
+        break;
+      }
+    }
+  }
+  return s || null;
+}
 async function closeHttpSockets() {
   try {
     const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
@@ -1432,223 +1466,188 @@ function runCliMain(main2, onError) {
   );
 }
 
-// packages/plugin-core/src/cli/args.ts
-function parseSlashArgs(raw) {
-  const tokens = [];
-  let cur = "";
-  let inSingle = false;
-  let inDouble = false;
-  let started = false;
-  let i = 0;
-  const flush = () => {
-    if (started) {
-      tokens.push(cur);
-      cur = "";
-      started = false;
-    }
-  };
-  while (i < raw.length) {
-    const ch = raw[i];
-    if (inSingle) {
-      if (ch === "'") {
-        inSingle = false;
-      } else {
-        cur += ch;
-      }
-      i++;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === "\\" && i + 1 < raw.length) {
-        const next = raw[i + 1];
-        if (next === '"' || next === "\\") {
-          cur += next;
-          i += 2;
-          continue;
-        }
-        cur += ch;
-        i++;
-        continue;
-      }
-      if (ch === '"') {
-        inDouble = false;
-        i++;
-        continue;
-      }
-      cur += ch;
-      i++;
-      continue;
-    }
-    if (ch === "'") {
-      inSingle = true;
-      started = true;
-      i++;
-      continue;
-    }
-    if (ch === '"') {
-      inDouble = true;
-      started = true;
-      i++;
-      continue;
-    }
-    if (ch === " " || ch === "	" || ch === "\n") {
-      flush();
-      i++;
-      continue;
-    }
-    cur += ch;
-    started = true;
-    i++;
+// packages/plugin-core/src/project-resolver.ts
+import { execSync } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
+import path7 from "node:path";
+var WORKSPACE_ENV_VARS = [
+  // Claude Code exposes the original project dir to hooks/plugin commands.
+  "CLAUDE_PROJECT_DIR",
+  // Cursor/plugin shims and local tests can set this explicitly.
+  "CURSOR_WORKSPACE_ROOT",
+  "CURSOR_PROJECT_ROOT",
+  "MEMLIN_WORKSPACE_ROOT",
+  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
+  "INIT_CWD"
+];
+function runtimeCwd(fallback = process.cwd()) {
+  for (const name of WORKSPACE_ENV_VARS) {
+    const raw = process.env[name]?.trim();
+    if (raw && path7.isAbsolute(raw)) return path7.resolve(raw);
   }
-  flush();
-  return tokens;
+  return path7.resolve(fallback);
 }
-function argvAsSlashArgs() {
-  const raw = process.argv.slice(2).join(" ").trim();
-  return parseSlashArgs(raw);
+async function resolveProject(api, cwd, configProjectId) {
+  const absCwd = path7.resolve(cwd);
+  const remotes = detectGitRemotes(cwd);
+  const hasGitRemote = remotes.length > 0;
+  try {
+    const result = await api.resolveProject({
+      // Primary remote (back-compat with the single-remote server path).
+      git_remote: remotes[0] ?? null,
+      // All detected remotes — for the workspace-root-of-repos case, this is
+      // every sibling repo so the server resolves to the owning project.
+      git_remotes: remotes,
+      cwd: absCwd
+    });
+    if (result.project_id) {
+      return {
+        project_id: result.project_id,
+        project_name: result.name,
+        account_id: result.account_id,
+        reason: result.reason === "none" ? "config" : result.reason,
+        hasGitRemote
+      };
+    }
+  } catch {
+  }
+  if (configProjectId) {
+    return {
+      project_id: configProjectId,
+      project_name: null,
+      account_id: null,
+      reason: "config",
+      hasGitRemote
+    };
+  }
+  return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
+}
+function readGitRemote(cwd) {
+  try {
+    const url = execSync("git remote get-url origin", {
+      windowsHide: true,
+      cwd,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8"
+    }).trim();
+    return normalizeGitRemote(url);
+  } catch {
+    return null;
+  }
+}
+var MAX_WORKSPACE_SCAN = 64;
+function detectGitRemotes(cwd) {
+  const enclosing = readGitRemote(cwd);
+  if (enclosing) return [enclosing];
+  const out = [];
+  try {
+    let scanned = 0;
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (scanned >= MAX_WORKSPACE_SCAN) break;
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
+        continue;
+      }
+      scanned++;
+      const child = path7.join(cwd, entry.name);
+      if (!existsSync(path7.join(child, ".git"))) continue;
+      const remote = readGitRemote(child);
+      if (remote && !out.includes(remote)) out.push(remote);
+    }
+  } catch {
+  }
+  return out;
 }
 
-// packages/plugin-core/src/cli/audit-explain.ts
-function parseArgs(argv) {
-  const positional = [];
-  for (const a of argv) {
-    if (a === "--help" || a === "-h") return { error: "help" };
-    if (a?.startsWith("--")) return { error: `unknown flag: ${a}` };
-    if (a) positional.push(a);
-  }
-  const auditId = positional[0];
-  if (!auditId) return { error: "missing audit id. usage: memlin audit explain <id>" };
-  if (!/^[0-9a-f-]{36}$/i.test(auditId)) {
-    return { error: `audit id should be a uuid (got "${auditId}")` };
-  }
-  return { auditId };
+// packages/plugin-core/src/cli/remember.ts
+function takeFlag(args, flag) {
+  const i = args.indexOf(flag);
+  if (i < 0) return false;
+  args.splice(i, 1);
+  return true;
 }
-function printHelp() {
-  console.log(
-    [
-      "memlin audit explain \u2014 show the resolver's homework for a past resolve",
-      "",
-      "Usage:",
-      "  memlin audit explain <audit-id>",
-      "",
-      "Example:",
-      "  memlin audit explain 1f399e7b-1da2-47f3-ae06-d1e6967fee4e",
-      "",
-      "See also: memlin audit replay <id> for the bundle itself."
-    ].join("\n")
-  );
-}
-function labelFor(item) {
-  if (item.role === "primary") return "PRIMARY SKILL";
-  if (item.role === "supporting") return "SUPPORTING SKILL";
-  if (item.kind === "goal") return "GOAL";
-  if (item.kind === "schema") return "SCHEMA";
-  if (item.kind === "memory") return "MEMORY";
-  if (item.kind === "decision") return "DECISION";
-  return item.kind.toUpperCase();
-}
-function renderItem(item) {
-  const lines = [];
-  const meta = [`score ${item.effective_score.toFixed(3)}`, `rank ${item.rank}`];
-  if (item.component_name) meta.push(`component: ${item.component_name}`);
-  lines.push(`## ${labelFor(item)} \u2014 ${item.id} (${meta.join(", ")})`);
-  if (item.path) lines.push(`# source: ${item.path} \xB7 v${item.version_number}`);
-  lines.push("");
-  const arith = [
-    ["similarity", item.similarity.toFixed(3)],
-    ["kind_weight", `\xD7 ${item.kind_weight.toFixed(2)}`]
-  ];
-  if (item.active_component_boost_applied) {
-    arith.push(["active_component_boost", `+ ${item.active_component_boost.toFixed(2)}`]);
-  }
-  if (item.rerank_score !== null) {
-    arith.push(["rerank_score", `\u21AA ${item.rerank_score.toFixed(3)} (replaced raw cosine)`]);
-  }
-  arith.push(["base_score", `= ${item.base_score.toFixed(3)}`]);
-  if (item.decay_multiplier < 1) {
-    arith.push(["decay_multiplier", `\xD7 ${item.decay_multiplier.toFixed(2)}`]);
-  }
-  arith.push(["effective_score", `\u21D2 ${item.effective_score.toFixed(3)}`]);
-  const widest = arith.reduce((m, [k]) => Math.max(m, k.length), 0);
-  for (const [k, v] of arith) {
-    lines.push(`  ${k.padEnd(widest, " ")}  ${v}`);
-  }
-  lines.push("");
-  for (const r of item.reasons) lines.push(`  \xB7 ${r}`);
-  lines.push("");
-  return lines.join("\n");
-}
-async function main() {
-  const parsed = parseArgs(argvAsSlashArgs());
-  if ("error" in parsed) {
-    if (parsed.error === "help") {
-      printHelp();
-      exitCli(0);
-    }
-    console.error(`memlin audit explain: ${parsed.error}`);
-    printHelp();
+function takeValueFlag(args, flag) {
+  const i = args.indexOf(flag);
+  if (i < 0) return null;
+  const value = args[i + 1];
+  if (!value || value.startsWith("--")) {
+    console.error(`memlin remember: ${flag} needs a value`);
     exitCli(2);
   }
+  args.splice(i, 2);
+  return value ?? null;
+}
+async function main() {
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
     exitCli(1);
   }
-  let explain;
-  try {
-    explain = await ctx.api.explainAudit(parsed.auditId);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/no_items|410/i.test(msg)) {
+  const { api, config } = ctx;
+  const args = process.argv.slice(2);
+  const useProject = takeFlag(args, "--project");
+  const asSkill = takeFlag(args, "--skill");
+  const title = takeValueFlag(args, "--title");
+  const memoryType = takeValueFlag(args, "--type");
+  const text = args.join(" ").trim();
+  if (!text) {
+    console.error('usage: memlin remember [--project] [--skill] [--title "<t>"] [--type <t>] <text>');
+    exitCli(2);
+  }
+  const cwd = runtimeCwd();
+  let projectId = null;
+  if (useProject) {
+    const resolved = await resolveProject(api, cwd, config.project_id);
+    projectId = resolved.project_id;
+    if (!projectId) {
       console.error(
-        "memlin audit explain: this audit predates the per-item snapshot.",
-        "\n  Try `memlin audit replay`, which works on older rows too."
+        "memlin remember: --project given but no project resolves for this workspace \u2014 saving at team scope instead."
       );
-      exitCli(3);
     }
-    console.error(`memlin audit explain failed: ${msg}`);
+  }
+  const result = await api.rememberMemory(
+    {
+      text,
+      ...title ? { title } : {},
+      kind: asSkill ? "skill" : "memory",
+      ...memoryType ? { memory_type: memoryType } : {},
+      ...projectId ? { project_id: projectId, use_project: true } : {},
+      cwd,
+      git_remote: detectGitRemotes(cwd)[0] ?? null
+    },
+    { accountId: config.account_id }
+  );
+  if (!result.ok) {
+    if (result.reason === "ai_access_blocked") {
+      console.error(
+        "memlin remember: AI access is blocked for this workspace \u2014 saving needs embedding funding."
+      );
+    } else if (result.outcome === "suppressed_tombstone") {
+      console.error(
+        "Not saved: this matches a memory the team previously rejected or superseded. If it should come back, review it in the inbox or rephrase with the new context."
+      );
+    } else {
+      console.error(`memlin remember failed: ${result.reason ?? result.outcome ?? "unknown"}`);
+    }
     exitCli(1);
   }
-  const out = [];
-  out.push(`# Memlin Audit Explain \u2014 resolved ${explain.resolved_at}`);
-  out.push(`# audit_id: ${explain.audit_id}`);
-  out.push(`# task: ${explain.task}`);
-  if (explain.active_component_id) {
-    out.push(`# active component: ${explain.active_component_id}`);
-  }
-  const b = explain.budget;
-  const budgetParts = [`${b.used.toLocaleString()} / ${b.limit.toLocaleString()} tokens`];
-  if (b.tier) budgetParts.push(`tier=${b.tier}`);
-  if (b.source) budgetParts.push(`source=${b.source}`);
-  if (b.truncated) budgetParts.push("(truncated)");
-  out.push(`# budget: ${budgetParts.join(" \xB7 ")}`);
-  if (explain.rerank.used) {
-    out.push(
-      `# rerank: applied` + (explain.rerank.latency_ms != null ? ` (${explain.rerank.latency_ms}ms)` : "")
+  const scopeLabel = result.scope === "project" ? "project" : "team";
+  if (result.outcome === "corroborated") {
+    console.log(
+      `\u2713 Merged into an existing ${scopeLabel} memory (dedup matched): ${result.document_id}` + (result.version_number != null ? ` v${result.version_number}` : "")
+    );
+  } else {
+    console.log(
+      `\u2713 Remembered (${scopeLabel} scope): "${result.title}"
+  ${result.document_id}${result.version_number != null ? ` v${result.version_number}` : ""}`
     );
   }
-  out.push(`# search_mode: ${explain.search_mode}`);
-  out.push("");
-  if (explain.items.length === 0) {
-    out.push("# (no items above threshold at resolve time)");
-  } else {
-    for (const item of explain.items) {
-      out.push(renderItem(item));
-    }
+  if ((result.superseded_ids?.length ?? 0) > 0) {
+    console.log(
+      `  superseded ${result.superseded_ids.length} stale doc(s): ${result.superseded_ids.join(", ")}`
+    );
   }
-  const c = explain.constants;
-  out.push("# ---- constants used by the resolver ----");
-  out.push(
-    `# kind_weights: ${Object.entries(c.KIND_WEIGHTS).map(([k, v]) => `${k}=${v}`).join(", ")}`
-  );
-  out.push(`# active_component_boost: +${c.ACTIVE_COMPONENT_BOOST}`);
-  out.push(
-    `# decay: full weight \u2264${c.DECAY_FRESH_DAYS}d, floor ${c.DECAY_FLOOR_MULTIPLIER} at \u2265${c.DECAY_STALE_DAYS}d (memory only)`
-  );
-  process.stdout.write(out.join("\n") + "\n");
-  return 0;
 }
 runCliMain(main, (err) => {
-  console.error("memlin audit explain failed:", err instanceof Error ? err.message : err);
+  console.error("memlin remember failed:", err instanceof Error ? err.message : err);
   return 1;
 });
