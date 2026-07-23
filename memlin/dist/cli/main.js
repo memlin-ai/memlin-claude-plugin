@@ -8414,6 +8414,7 @@ var init_insights_optout = __esm({
 var init_insight_stats = __esm({
   "packages/shared/dist/insight-stats.js"() {
     "use strict";
+    init_usage_stats();
   }
 });
 
