@@ -8056,6 +8056,14 @@ var init_redact = __esm({
   }
 });
 
+// packages/shared/dist/audit-privacy.js
+var init_audit_privacy = __esm({
+  "packages/shared/dist/audit-privacy.js"() {
+    "use strict";
+    init_redact();
+  }
+});
+
 // packages/shared/dist/sensitive-topics.js
 var init_sensitive_topics = __esm({
   "packages/shared/dist/sensitive-topics.js"() {
@@ -8660,6 +8668,7 @@ var init_dist = __esm({
     init_brand_guidelines_import();
     init_git_remote();
     init_redact();
+    init_audit_privacy();
     init_sensitive_topics();
     init_guardrails();
     init_action_metadata();
