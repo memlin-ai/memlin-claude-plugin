@@ -8410,6 +8410,13 @@ var init_insights_optout = __esm({
   }
 });
 
+// packages/shared/dist/insight-stats.js
+var init_insight_stats = __esm({
+  "packages/shared/dist/insight-stats.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/credit-math.js
 var init_credit_math = __esm({
   "packages/shared/dist/credit-math.js"() {
@@ -8697,6 +8704,7 @@ var init_dist = __esm({
     init_prompt_linter();
     init_usage_stats();
     init_insights_optout();
+    init_insight_stats();
     init_model_prices();
     init_credit_math();
     init_ai_pricing();
