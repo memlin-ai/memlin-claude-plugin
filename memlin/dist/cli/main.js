@@ -8385,13 +8385,28 @@ var init_model_prices = __esm({
 });
 
 // packages/shared/dist/usage-stats.js
-var SONNET_INPUT_USD_PER_MTOK, SONNET_OUTPUT_USD_PER_MTOK;
+function estCostUsd(inputTokens) {
+  const inputCostUsd = inputTokens / 1e6 * SONNET_INPUT_USD_PER_MTOK;
+  const outputCostUsd = inputTokens * OUTPUT_MULTIPLIER / 1e6 * SONNET_OUTPUT_USD_PER_MTOK;
+  return inputCostUsd + outputCostUsd;
+}
+var SONNET_INPUT_USD_PER_MTOK, SONNET_OUTPUT_USD_PER_MTOK, OUTPUT_MULTIPLIER, SONNET_BLENDED_USD_PER_MTOK, SAVINGS_USD_PER_TOKEN;
 var init_usage_stats = __esm({
   "packages/shared/dist/usage-stats.js"() {
     "use strict";
     init_model_prices();
     SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
     SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+    OUTPUT_MULTIPLIER = 0.3;
+    SONNET_BLENDED_USD_PER_MTOK = SONNET_INPUT_USD_PER_MTOK + OUTPUT_MULTIPLIER * SONNET_OUTPUT_USD_PER_MTOK;
+    SAVINGS_USD_PER_TOKEN = estCostUsd(1);
+  }
+});
+
+// packages/shared/dist/insights-optout.js
+var init_insights_optout = __esm({
+  "packages/shared/dist/insights-optout.js"() {
+    "use strict";
   }
 });
 
@@ -8681,6 +8696,7 @@ var init_dist = __esm({
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
+    init_insights_optout();
     init_model_prices();
     init_credit_math();
     init_ai_pricing();
