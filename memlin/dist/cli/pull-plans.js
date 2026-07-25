@@ -552,7 +552,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.54";
+  cachedAgentVersion = "0.2.55";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -1446,7 +1446,8 @@ async function resolveProject(api, cwd, configProjectId) {
         project_name: result.name,
         account_id: result.account_id,
         reason: result.reason === "none" ? "config" : result.reason,
-        hasGitRemote
+        hasGitRemote,
+        enforce_done_deployed: result.enforce_done_deployed
       };
     }
   } catch {
