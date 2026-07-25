@@ -9988,6 +9988,7 @@ ${planText}`;
 function readGitRemoteFor(cwd) {
   try {
     const url = execSync5("git remote get-url origin", {
+      windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
@@ -10042,6 +10043,7 @@ async function main() {
   try {
     const { execSync: execSync6 } = await import("node:child_process");
     const url = execSync6("git remote get-url origin", {
+      windowsHide: true,
       cwd: payload.cwd ?? process.cwd(),
       stdio: ["ignore", "pipe", "ignore"],
       encoding: "utf8"
