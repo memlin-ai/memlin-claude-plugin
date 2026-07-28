@@ -944,7 +944,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.55";
+  cachedAgentVersion = "0.2.56";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -1321,6 +1321,14 @@ var MemlinApiClient = class {
    */
   async resolveProject(input) {
     return this.request("POST", "/projects/resolve", input);
+  }
+  /** GET /account/enforce-done-deployed — the workspace done-deployed gate flag. */
+  async getEnforceDoneDeployed(opts = {}) {
+    return this.request("GET", "/account/enforce-done-deployed", void 0, opts);
+  }
+  /** PUT /account/enforce-done-deployed — owner/admin sets the workspace flag. */
+  async setEnforceDoneDeployed(enabled, opts = {}) {
+    return this.request("PUT", "/account/enforce-done-deployed", { enabled }, opts);
   }
   /**
    * POST /deploy-guard — acquire or release the per-project deploy lease.
@@ -1786,10 +1794,24 @@ function isFileNotFound(error) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
-// packages/plugin-core/dist/client.js
-function exitClean(code) {
-  void closeHttpSockets().finally(() => process.exit(code));
+// packages/plugin-core/dist/hook-exit.js
+var HOOK_WATCHDOG_MS = 2e3;
+function releaseStdin() {
+  try {
+    const stdin = process.stdin;
+    stdin.pause();
+    stdin.unref?.();
+  } catch {
+  }
 }
+function exitHook(code) {
+  process.exitCode = code;
+  releaseStdin();
+  void closeHttpSockets();
+  setTimeout(() => process.exit(), HOOK_WATCHDOG_MS).unref();
+}
+
+// packages/plugin-core/dist/client.js
 function globalConfigFilePath() {
   return process.env.MEMLIN_CONFIG_FILE || path6.join(os5.homedir(), ".config", "memlin", "config.json");
 }
@@ -2111,11 +2133,13 @@ init_state();
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var VERSION_URL = "https://raw.githubusercontent.com/memlin-ai/memlin-claude-plugin/main/.claude-plugin/marketplace.json";
 var FRESHNESS_TTL_MS = 6 * 60 * 60 * 1e3;
+function pluginVersionFromPath(filePath) {
+  const match = filePath.match(/[\\/]memlin-ai[\\/]memlin[\\/](\d+\.\d+\.\d+)[\\/]/);
+  return match ? match[1] : null;
+}
 function detectLocalPluginVersion() {
   try {
-    const filePath = fileURLToPath2(import.meta.url);
-    const match = filePath.match(/\/memlin-ai\/memlin\/(\d+\.\d+\.\d+)\//);
-    return match ? match[1] : null;
+    return pluginVersionFromPath(fileURLToPath2(import.meta.url));
   } catch {
     return null;
   }
@@ -2512,4 +2536,4 @@ void Promise.race([
     }, SESSION_START_DEADLINE_MS);
     t.unref?.();
   })
-]).catch((err) => log(`session-start failed: ${err instanceof Error ? err.message : String(err)}`)).finally(() => exitClean(0));
+]).catch((err) => log(`session-start failed: ${err instanceof Error ? err.message : String(err)}`)).finally(() => exitHook(0));

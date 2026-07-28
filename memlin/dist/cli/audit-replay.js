@@ -536,7 +536,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.55";
+  cachedAgentVersion = "0.2.56";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -913,6 +913,14 @@ var MemlinApiClient = class {
    */
   async resolveProject(input) {
     return this.request("POST", "/projects/resolve", input);
+  }
+  /** GET /account/enforce-done-deployed — the workspace done-deployed gate flag. */
+  async getEnforceDoneDeployed(opts = {}) {
+    return this.request("GET", "/account/enforce-done-deployed", void 0, opts);
+  }
+  /** PUT /account/enforce-done-deployed — owner/admin sets the workspace flag. */
+  async setEnforceDoneDeployed(enabled, opts = {}) {
+    return this.request("PUT", "/account/enforce-done-deployed", { enabled }, opts);
   }
   /**
    * POST /deploy-guard — acquire or release the per-project deploy lease.

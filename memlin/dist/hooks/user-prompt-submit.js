@@ -472,6 +472,43 @@ async function companionForDelegation() {
   return isCompanionHealthyForDelegation(status) ? status : null;
 }
 
+// packages/plugin-core/dist/runtime-shared.js
+async function closeHttpSockets() {
+  try {
+    const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
+    if (dispatcher && typeof dispatcher.close === "function") {
+      let timer;
+      await Promise.race([
+        dispatcher.close(),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, 250);
+          timer.unref?.();
+        })
+      ]).finally(() => {
+        if (timer !== void 0) clearTimeout(timer);
+      });
+    }
+  } catch {
+  }
+}
+
+// packages/plugin-core/dist/hook-exit.js
+var HOOK_WATCHDOG_MS = 2e3;
+function releaseStdin() {
+  try {
+    const stdin = process.stdin;
+    stdin.pause();
+    stdin.unref?.();
+  } catch {
+  }
+}
+function exitHook(code) {
+  process.exitCode = code;
+  releaseStdin();
+  void closeHttpSockets();
+  setTimeout(() => process.exit(), HOOK_WATCHDOG_MS).unref();
+}
+
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
 var hookDir = path5.dirname(fileURLToPath(import.meta.url));
 var RESOLVE_BIN = path5.resolve(hookDir, "../cli/resolve.js");
@@ -532,16 +569,19 @@ async function readStdinJson() {
 async function main() {
   const payload = await readStdinJson();
   if (!payload?.prompt) {
-    process.exit(0);
+    exitHook(0);
+    return;
   }
   const prompt = payload.prompt;
   const cwd = payload.cwd || process.cwd();
   const sessionId = payload.session_id ?? null;
   if (isIgnorablePrompt(prompt)) {
-    process.exit(0);
+    exitHook(0);
+    return;
   }
   if (!await readPersistedTokenFreshness()) {
-    process.exit(0);
+    exitHook(0);
+    return;
   }
   const scribeNotice = await takeCorrectionNotice(sessionId ?? void 0) + await takeScribeNotice(sessionId ?? void 0);
   try {
@@ -555,7 +595,8 @@ async function main() {
     );
     if (continuation) {
       process.stdout.write(scribeNotice + buildContinuityMarker(continuation.audit_id));
-      process.exit(0);
+      exitHook(0);
+      return;
     }
   } catch {
   }
@@ -583,7 +624,8 @@ async function main() {
         "</memlin-resolved-context>"
       ].join("\n")
     );
-    process.exit(0);
+    exitHook(0);
+    return;
   }
   if (lateBundle) {
     process.stdout.write(scribeNotice + buildLateDeliveryEnvelope(lateBundle));
@@ -593,9 +635,10 @@ async function main() {
       host: "claude-code",
       cwd
     });
-    process.exit(0);
+    exitHook(0);
+    return;
   }
   if (scribeNotice) process.stdout.write(scribeNotice);
-  process.exit(0);
+  exitHook(0);
 }
-main().catch(() => process.exit(0));
+main().catch(() => exitHook(0));
