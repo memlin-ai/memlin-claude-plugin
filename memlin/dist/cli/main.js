@@ -9070,16 +9070,18 @@ function normalizeGitRemote(raw) {
   if (!raw) return null;
   let s = raw.trim();
   if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
+  if (!s.includes("://")) {
+    s = s.replace(/^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)/, "https://$1/");
+  }
+  s = s.replace(/^(?:ssh|git|https?):\/\//, "");
+  s = s.replace(/^[^/@]+@/, "");
   s = s.replace(/\.git$/, "");
   s = s.replace(/\/$/, "");
   const slash = s.indexOf("/");
   if (slash > 0) {
-    const host = s.slice(0, slash);
+    const host = s.slice(0, slash).toLowerCase();
     const rest = s.slice(slash);
+    s = host + rest;
     for (const provider of PROVIDER_HOSTS) {
       if (host === provider) break;
       if (host.startsWith(provider + "-")) {
@@ -9672,7 +9674,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.56";
+  cachedAgentVersion = "0.2.57";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -9767,8 +9769,11 @@ var init_memlin_api_client = __esm({
         };
         if (body2 !== void 0) headers["Content-Type"] = "application/json";
         const idempotent = method === "GET";
-        const maxAttempts = idempotent ? (this.cfg.maxRetries ?? DEFAULT_MAX_RETRIES) + 1 : 1;
-        const timeoutMs = this.cfg.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+        const maxAttempts = idempotent ? Math.max(0, opts.maxRetries ?? this.cfg.maxRetries ?? DEFAULT_MAX_RETRIES) + 1 : 1;
+        const timeoutMs = Math.max(
+          1,
+          opts.requestTimeoutMs ?? this.cfg.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+        );
         for (let attempt = 1; ; attempt++) {
           let res;
           let text;
@@ -10048,7 +10053,11 @@ var init_memlin_api_client = __esm({
        * the same account (no global-default/pinned-name mismatch).
        */
       async getAccount(opts = {}) {
-        return this.request("GET", "/account", void 0, { accountId: opts.accountId });
+        return this.request("GET", "/account", void 0, {
+          accountId: opts.accountId,
+          requestTimeoutMs: opts.requestTimeoutMs,
+          maxRetries: opts.maxRetries
+        });
       }
       /**
        * POST /projects/resolve — server-side project resolution.
@@ -10137,9 +10146,9 @@ var init_memlin_api_client = __esm({
        *
        * Called by the PostToolUse hook after the agent runs `git commit`.
        * The server reads the commit message + diff, asks Haiku to extract
-       * any decision/memory/skill baked into the change, and persists
-       * results as documents with metadata.status='proposed'. They appear
-       * in the user's inbox until accepted.
+       * any decision/memory/skill baked into the change, and persists the
+       * results. The server may activate or background captures automatically;
+       * only the post-processing `proposals_pending` subset needs inbox review.
        */
       async scribeDiff(input, opts = {}) {
         return this.request("POST", "/scribe/diff", input, { accountId: opts.accountId });
@@ -10147,7 +10156,8 @@ var init_memlin_api_client = __esm({
       /**
        * POST /scribe/session — Phase 1 auto-capture from a Claude Code
        * session transcript. Server slices the transcript (tail-biased
-       * when too large), runs Haiku extraction, persists proposals.
+       * when too large), runs Haiku extraction, persists proposals, and reports
+       * how many still need review after automatic handling.
        *
        * Triggered manually by /memlin-scribe today; an auto-triggered
        * variant on Stop with a 15-min debounce is a fast follow-up.
@@ -13830,25 +13840,33 @@ var init_archive_plans = __esm({
 
 // packages/plugin-core/src/pending-bundle.ts
 import { spawn } from "node:child_process";
+import crypto2 from "node:crypto";
 import { promises as fs17 } from "node:fs";
 import path23 from "node:path";
 import os13 from "node:os";
-function pendingBundlePath() {
-  return process.env.MEMLIN_RESOLVE_OUT ?? path23.join(os13.homedir(), ".config", "memlin", "pending-bundle.json");
+function pendingBundleSpoolDir() {
+  return process.env.MEMLIN_PENDING_BUNDLE_DIR ?? path23.join(os13.homedir(), ".config", "memlin", PENDING_BUNDLE_DIR);
+}
+function pendingBundleKey(cwd, host, sessionId, task) {
+  return crypto2.createHash("sha256").update(JSON.stringify([cwd, host, sessionId ?? null, task])).digest("hex");
+}
+function pendingBundlePathFor(cwd, host, sessionId, task) {
+  return process.env.MEMLIN_RESOLVE_OUT ?? path23.join(pendingBundleSpoolDir(), `${pendingBundleKey(cwd, host, sessionId, task)}.json`);
 }
 async function writePendingBundle(bundle) {
-  const file = pendingBundlePath();
+  const file = pendingBundlePathFor(bundle.cwd, bundle.host, bundle.session_id, bundle.task);
   await fs17.mkdir(path23.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   await fs17.writeFile(tmp, JSON.stringify(bundle), "utf8");
   await atomicRename(tmp, file);
 }
-var PENDING_BUNDLE_MAX_AGE_MS;
+var PENDING_BUNDLE_MAX_AGE_MS, PENDING_BUNDLE_DIR;
 var init_pending_bundle = __esm({
   "packages/plugin-core/src/pending-bundle.ts"() {
     "use strict";
     init_atomic_rename();
     PENDING_BUNDLE_MAX_AGE_MS = 10 * 60 * 1e3;
+    PENDING_BUNDLE_DIR = "pending-bundles";
   }
 });
 
@@ -13983,7 +14001,7 @@ function renderItem(label, item, extra = []) {
   }
   if (item.component_name) metaParts.push(`component: ${item.component_name}`);
   lines.push(`## ${label}: ${item.title} (${metaParts.join(", ")})`);
-  lines.push(`# source: ${formatCitation3(item)}`);
+  lines.push(`# document_id: ${item.id} \xB7 source: ${formatCitation3(item)}`);
   lines.push("");
   lines.push(item.body.trimEnd());
   lines.push("");
@@ -14008,7 +14026,7 @@ function renderPinned(items) {
   lines.push("");
   for (const item of items) {
     lines.push(`### [${item.kind.toUpperCase()}] ${item.title}`);
-    lines.push(`# source: ${formatCitation3(item)} \xB7 pinned`);
+    lines.push(`# document_id: ${item.id} \xB7 source: ${formatCitation3(item)} \xB7 pinned`);
     lines.push("");
     lines.push(item.body.trimEnd());
     lines.push("");
@@ -14030,7 +14048,9 @@ function renderRequiredCore(items, status) {
   }
   if (status?.complete === false) {
     lines.push("# !!! REQUIRED CORE DEGRADED \u2014 MANDATORY GOVERNANCE CONTEXT IS INCOMPLETE !!!");
-    lines.push("# STOP: do not claim governance compliance or proceed as if the full core was read.");
+    lines.push(
+      "# STOP: do not claim governance compliance or proceed as if the full core was read."
+    );
     lines.push(`# missing required IDs: ${status.missing_ids.join(", ") || "(none reported)"}`);
     lines.push(`# resolver errors: ${status.errors.join(" | ") || "(none reported)"}`);
     lines.push("# Re-resolve or surface this degraded state before governed work continues.");
@@ -14038,7 +14058,9 @@ function renderRequiredCore(items, status) {
   lines.push("");
   for (const item of items) {
     lines.push(`### [${item.kind.toUpperCase()}] ${item.title}`);
-    lines.push(`# source: ${formatCitation3(item)} \xB7 required-core \xB7 governance-required`);
+    lines.push(
+      `# document_id: ${item.id} \xB7 source: ${formatCitation3(item)} \xB7 required-core \xB7 governance-required`
+    );
     lines.push("");
     lines.push(item.body.trimEnd());
     lines.push("");
@@ -14135,7 +14157,7 @@ function renderItemXml(tagName, item, attributes = {}) {
   const belowGate = item.below_gate ? ` below_gate="true"` : "";
   const lines = [];
   lines.push(
-    `<${tagName}${attrs} title="${item.title}" similarity="${item.similarity.toFixed(2)}"${corroborating}${verified}${verifiedModelAttr}${pathMatched}${authorMatched}${belowGate}>`
+    `<${tagName}${attrs} id="${xmlAttr(item.id)}" title="${xmlAttr(item.title)}" similarity="${item.similarity.toFixed(2)}"${corroborating}${verified}${verifiedModelAttr}${pathMatched}${authorMatched}${belowGate}>`
   );
   lines.push(
     `  <citation path="${item.citation.path ?? "(no path)"}" version="v${item.citation.version_number}" updated="${item.citation.updated_at}" />`
@@ -14163,12 +14185,22 @@ function attribution(e) {
   if (e.agent_kind) bits.push(e.agent_kind);
   return bits.length > 0 ? `${bits.join(" \xB7 ")} \xB7 ` : "";
 }
+function hasDeliveredSkill(bundle) {
+  return Boolean(
+    bundle.primary_skill || bundle.supporting_skills.length > 0 || bundle.required_core?.some((item) => item.kind === "skill") || bundle.pinned?.some((item) => item.kind === "skill")
+  );
+}
 function compileBundle(result, parsedTask, agent) {
   const b = result.bundle;
   const out2 = [];
   if (agent === "claude-code") {
     out2.push(`<memlin_context task="${xmlAttr(truncateTask(parsedTask))}">`);
     out2.push(`  <precedence>${READER_CONTRACT}</precedence>`);
+    if (hasDeliveredSkill(b)) {
+      out2.push(
+        '  <application_receipt format="html-comment">&lt;!-- memlin-applied: skill-document-id[, ...] --&gt; \u2014 append to the final response only for resolved skills materially followed; citation or reading alone is not application; omit when none were followed.</application_receipt>'
+      );
+    }
     if (result.active_component) {
       out2.push(`  <active_component name="${result.active_component.name}" boost="0.15" />`);
     }
@@ -14334,6 +14366,11 @@ function compileBundle(result, parsedTask, agent) {
     const tokenLine = `# tokens: ${tb.used.toLocaleString()} / ${tb.limit.toLocaleString()}` + (tb.truncated ? " (truncated \u2014 lower-priority items dropped)" : "");
     out2.push(tokenLine);
     out2.push(`# ${READER_CONTRACT}`);
+    if (hasDeliveredSkill(b)) {
+      out2.push(
+        "# application receipt: append <!-- memlin-applied: skill-document-id[, ...] --> to the final response only for resolved skills materially followed; citation or reading alone is not application; omit when none were followed."
+      );
+    }
     out2.push("");
     if (hasRequiredCoreLane(b)) {
       out2.push(renderRequiredCore(b.required_core ?? [], b.required_core_status));
@@ -15530,11 +15567,20 @@ ${raw}`;
 ` + (result.proposals_extracted === 0 ? "No capture-worthy material in this session.\n" : "All extractions failed to persist \u2014 check server logs.\n")
       );
     } else {
-      process.stdout.write(
-        `\u2713 ${result.proposals_persisted} proposal(s) landed in inbox (run ${result.run_id.slice(0, 8)}, ${result.latency_ms}ms).
+      const pending = typeof result.proposals_pending === "number" ? Math.max(0, Math.min(result.proposals_persisted, result.proposals_pending)) : result.proposals_persisted;
+      const handled = result.proposals_persisted - pending;
+      if (pending === 0) {
+        process.stdout.write(
+          `\u2713 ${result.proposals_persisted} proposal(s) captured and handled automatically (run ${result.run_id.slice(0, 8)}, ${result.latency_ms}ms). No inbox review is needed for this batch.
+`
+        );
+      } else {
+        process.stdout.write(
+          `\u2713 ${result.proposals_persisted} proposal(s) captured: ${handled} handled automatically, ${pending} waiting for review (run ${result.run_id.slice(0, 8)}, ${result.latency_ms}ms).
 Review at https://memlin.ai/app/${ctx.config.account_id}/inbox
 `
-      );
+        );
+      }
     }
   } catch (err2) {
     rethrowCliExit(err2);
@@ -19802,6 +19848,11 @@ function grammarPath(fileName) {
   const override = process.env.MEMLIN_WASM_DIR;
   if (override && existsSync7(path31.join(override, fileName)))
     return path31.join(override, fileName);
+  if (override && fileName === "tree-sitter-python.wasm") {
+    const cursorCompatibilityAsset = path31.resolve(override, "..", "cli", "tree-sitter-python.js");
+    if (existsSync7(cursorCompatibilityAsset))
+      return cursorCompatibilityAsset;
+  }
   const req = createRequire(import.meta.url);
   return path31.join(path31.dirname(req.resolve("tree-sitter-wasms/package.json")), "out", fileName);
 }

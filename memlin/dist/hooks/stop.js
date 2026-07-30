@@ -504,9 +504,9 @@ var require_common = __commonJS({
       }
       return target;
     }
-    function repeat(string, count) {
+    function repeat(string, count2) {
       var result = "", cycle;
-      for (cycle = 0; cycle < count; cycle += 1) {
+      for (cycle = 0; cycle < count2; cycle += 1) {
         result += string;
       }
       return result;
@@ -1888,11 +1888,11 @@ var require_loader = __commonJS({
       }
       return false;
     }
-    function writeFoldedLines(state, count) {
-      if (count === 1) {
+    function writeFoldedLines(state, count2) {
+      if (count2 === 1) {
         state.result += " ";
-      } else if (count > 1) {
-        state.result += common.repeat("\n", count - 1);
+      } else if (count2 > 1) {
+        state.result += common.repeat("\n", count2 - 1);
       }
     }
     function readPlainScalar(state, nodeIndent, withinFlowCollection) {
@@ -3972,16 +3972,18 @@ function normalizeGitRemote(raw) {
   if (!raw) return null;
   let s = raw.trim();
   if (!s) return null;
-  s = s.replace(/^git@([^:]+):/, "https://$1/");
-  s = s.replace(/^ssh:\/\//, "");
-  s = s.replace(/^https?:\/\//, "");
-  s = s.replace(/^git@/, "");
+  if (!s.includes("://")) {
+    s = s.replace(/^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)/, "https://$1/");
+  }
+  s = s.replace(/^(?:ssh|git|https?):\/\//, "");
+  s = s.replace(/^[^/@]+@/, "");
   s = s.replace(/\.git$/, "");
   s = s.replace(/\/$/, "");
   const slash = s.indexOf("/");
   if (slash > 0) {
-    const host = s.slice(0, slash);
+    const host = s.slice(0, slash).toLowerCase();
     const rest = s.slice(slash);
+    s = host + rest;
     for (const provider of PROVIDER_HOSTS) {
       if (host === provider) break;
       if (host.startsWith(provider + "-")) {
@@ -4082,7 +4084,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.56";
+  cachedAgentVersion = "0.2.57";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -4166,8 +4168,11 @@ var MemlinApiClient = class {
     };
     if (body !== void 0) headers["Content-Type"] = "application/json";
     const idempotent = method === "GET";
-    const maxAttempts = idempotent ? (this.cfg.maxRetries ?? DEFAULT_MAX_RETRIES) + 1 : 1;
-    const timeoutMs = this.cfg.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    const maxAttempts = idempotent ? Math.max(0, opts.maxRetries ?? this.cfg.maxRetries ?? DEFAULT_MAX_RETRIES) + 1 : 1;
+    const timeoutMs = Math.max(
+      1,
+      opts.requestTimeoutMs ?? this.cfg.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
+    );
     for (let attempt = 1; ; attempt++) {
       let res;
       let text;
@@ -4447,7 +4452,11 @@ var MemlinApiClient = class {
    * the same account (no global-default/pinned-name mismatch).
    */
   async getAccount(opts = {}) {
-    return this.request("GET", "/account", void 0, { accountId: opts.accountId });
+    return this.request("GET", "/account", void 0, {
+      accountId: opts.accountId,
+      requestTimeoutMs: opts.requestTimeoutMs,
+      maxRetries: opts.maxRetries
+    });
   }
   /**
    * POST /projects/resolve — server-side project resolution.
@@ -4536,9 +4545,9 @@ var MemlinApiClient = class {
    *
    * Called by the PostToolUse hook after the agent runs `git commit`.
    * The server reads the commit message + diff, asks Haiku to extract
-   * any decision/memory/skill baked into the change, and persists
-   * results as documents with metadata.status='proposed'. They appear
-   * in the user's inbox until accepted.
+   * any decision/memory/skill baked into the change, and persists the
+   * results. The server may activate or background captures automatically;
+   * only the post-processing `proposals_pending` subset needs inbox review.
    */
   async scribeDiff(input, opts = {}) {
     return this.request("POST", "/scribe/diff", input, { accountId: opts.accountId });
@@ -4546,7 +4555,8 @@ var MemlinApiClient = class {
   /**
    * POST /scribe/session — Phase 1 auto-capture from a Claude Code
    * session transcript. Server slices the transcript (tail-biased
-   * when too large), runs Haiku extraction, persists proposals.
+   * when too large), runs Haiku extraction, persists proposals, and reports
+   * how many still need review after automatic handling.
    *
    * Triggered manually by /memlin-scribe today; an auto-triggered
    * variant on Stop with a 15-min debounce is a fast follow-up.
@@ -5096,6 +5106,7 @@ import { promises as fs6 } from "node:fs";
 import os6 from "node:os";
 import path8 from "node:path";
 var DEFAULT_THROTTLE_MS = 6e4;
+var HEARTBEAT_REQUEST_TIMEOUT_MS = 750;
 function statePath(cwd, host) {
   const key = crypto.createHash("sha256").update(cwd).digest("hex").slice(0, 16);
   return path8.join(os6.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
@@ -5117,7 +5128,10 @@ async function recordInstallHeartbeat(cwd, reason, opts = {}) {
   try {
     const ctx = await getApi({ cwd });
     if (!ctx) return;
-    await ctx.api.getAccount();
+    await ctx.api.getAccount({
+      requestTimeoutMs: HEARTBEAT_REQUEST_TIMEOUT_MS,
+      maxRetries: 0
+    });
     await fs6.writeFile(file, JSON.stringify({ sent_at: Date.now(), reason, host }), "utf8");
     log(`${host} activity recorded: ${reason}`);
   } catch (err) {
@@ -5141,14 +5155,16 @@ function replayAttributionCandidates(replay) {
       id: row.document_id,
       title: row.title,
       path: typeof row.path === "string" ? row.path : null,
-      version_number: row.version_number
+      version_number: row.version_number,
+      kind: typeof row.kind === "string" ? row.kind : null
     };
   }).filter((item) => item !== null) : [];
   const candidates = Array.isArray(rawDelivered) && (rawDelivered.length === 0 || delivered.length > 0) ? delivered : [...replay.pinned ?? [], ...replay.items ?? []].map((item) => ({
     id: item.id,
     title: item.title,
     path: item.path,
-    version_number: item.version_number
+    version_number: item.version_number,
+    kind: item.kind
   }));
   return [...new Map(candidates.map((candidate) => [candidate.id, candidate])).values()];
 }
@@ -5201,8 +5217,24 @@ function titleReferenceIsExplicit(message, position, length) {
   );
   return delimited || appliedPrefix || referentialSuffix;
 }
+var APPLICATION_RECEIPT_RE = /<!--\s*memlin-applied\s*:\s*([\s\S]*?)-->/gi;
+function applicationReceiptIds(agentMessage, candidates) {
+  const deliveredSkills = new Set(
+    candidates.filter((candidate) => candidate.kind === "skill").map((candidate) => candidate.id)
+  );
+  const applied = [];
+  let match;
+  while ((match = APPLICATION_RECEIPT_RE.exec(agentMessage)) !== null) {
+    for (const rawId of (match[1] ?? "").split(",")) {
+      const id = rawId.trim();
+      if (deliveredSkills.has(id) && !applied.includes(id)) applied.push(id);
+    }
+  }
+  return applied;
+}
 function attributeAppliedItems(agentMessage, replay) {
   const candidates = replayAttributionCandidates(replay);
+  const applied = applicationReceiptIds(agentMessage, candidates);
   const message = normalizeReference(agentMessage);
   const pathIds = /* @__PURE__ */ new Map();
   const pathVersionIds = /* @__PURE__ */ new Map();
@@ -5220,7 +5252,7 @@ function attributeAppliedItems(agentMessage, replay) {
       addReferenceKey(titleVersionIds, `${title}\0${candidate.version_number}`, candidate.id);
     }
   }
-  const applied = [];
+  const referenced = [];
   for (const candidate of candidates) {
     const path11 = candidate.path ? normalizeReference(candidate.path.replace(/^\.\//, "")) : "";
     const title = normalizeReference(candidate.title);
@@ -5245,11 +5277,12 @@ function attributeAppliedItems(agentMessage, replay) {
       if (versioned && titleVersionIsUnique) return true;
       return titleIsUnique && titleReferenceIsExplicit(message, position, title.length);
     });
-    if (pathMatch || titleMatch) applied.push(candidate.id);
+    if (pathMatch || titleMatch) referenced.push(candidate.id);
   }
   return {
     applied_item_ids: applied,
-    attribution_mode: applied.length > 0 ? "explicit_final_message" : "no_explicit_reference"
+    referenced_item_ids: referenced,
+    attribution_mode: applied.length > 0 ? "structured_application_receipt" : referenced.length > 0 ? "explicit_reference" : "no_application_receipt"
   };
 }
 
@@ -5280,6 +5313,25 @@ function getLastResolveForSession(state, sessionId) {
     return state.last_resolves?.[sessionId] ?? (state.last_resolve?.session_id === sessionId ? state.last_resolve : void 0);
   }
   return state.last_resolve?.session_id ? void 0 : state.last_resolve;
+}
+
+// packages/plugin-core/dist/scribe-notice.js
+function count(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+function accumulateScribeNotice(existing, input) {
+  const captured = count(input.captured);
+  if (captured === 0) return existing;
+  const pending = input.pending == null ? captured : Math.min(captured, count(input.pending));
+  const sameSession = existing?.session_id === input.sessionId;
+  const carriedCaptured = sameSession ? count(existing.unsurfaced) : 0;
+  const carriedPending = sameSession ? existing.pending == null ? count(existing.unsurfaced) : Math.min(count(existing.unsurfaced), count(existing.pending)) : 0;
+  return {
+    unsurfaced: carriedCaptured + captured,
+    pending: carriedPending + pending,
+    session_id: input.sessionId,
+    at: input.at
+  };
 }
 
 // packages/plugin-core/dist/project-resolver.js
@@ -10837,6 +10889,7 @@ async function maybeRecordOutcome(ctx, payload) {
   const taskCategory = classifyTask(lastResolve.task);
   let attribution = {
     applied_item_ids: [],
+    referenced_item_ids: [],
     attribution_mode: "replay_unavailable"
   };
   try {
@@ -10862,6 +10915,7 @@ async function maybeRecordOutcome(ctx, payload) {
         agent_apology: agentApology,
         task_category: taskCategory,
         applied_item_ids: attribution.applied_item_ids,
+        referenced_item_ids: attribution.referenced_item_ids,
         attribution_mode: attribution.attribution_mode
       }
     });
@@ -11017,18 +11071,22 @@ ${text}`);
       run_id: "",
       proposals_extracted: 0,
       proposals_persisted: 0,
+      proposals_pending: 0,
       proposal_ids: [],
       latency_ms: 0,
       truncated: false
     });
     if (result.proposals_persisted > 0) {
-      log(`session scribe: ${result.proposals_persisted} proposal(s) queued`);
-      const carried = state.scribe_notice && state.scribe_notice.session_id === sessionId ? state.scribe_notice.unsurfaced : 0;
-      state.scribe_notice = {
-        unsurfaced: carried + result.proposals_persisted,
-        session_id: sessionId,
+      const pending = typeof result.proposals_pending === "number" ? Math.max(0, Math.min(result.proposals_persisted, result.proposals_pending)) : result.proposals_persisted;
+      log(
+        `session scribe: ${result.proposals_persisted} proposal(s) captured, ${pending} pending review`
+      );
+      state.scribe_notice = accumulateScribeNotice(state.scribe_notice, {
+        captured: result.proposals_persisted,
+        pending: result.proposals_pending,
+        sessionId,
         at: now
-      };
+      });
     }
     state.session_scribe = {
       at: now,
