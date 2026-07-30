@@ -9674,7 +9674,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.58";
+  cachedAgentVersion = "0.2.59";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -9692,11 +9692,17 @@ function isRetriableNetworkError(error) {
   }
   return false;
 }
-function unreachableError(url, cause) {
+function unreachableError(url, cause, timeoutMs) {
   let host = url;
   try {
     host = new URL(url).host;
   } catch {
+  }
+  if (cause instanceof Error && (cause.name === "TimeoutError" || cause.name === "AbortError")) {
+    return new Error(
+      `Memlin at ${host} took longer than ${Math.ceil(timeoutMs / 1e3)} seconds to respond. The request was stopped; try again.`,
+      { cause }
+    );
   }
   return new Error(
     `Couldn't reach Memlin at ${host}. Check your internet connection and try again.`,
@@ -9709,7 +9715,7 @@ function delay(ms) {
 function resolveApiUrl() {
   return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
 }
-var DEFAULT_API_URL, cachedAgentVersion, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, RETRIABLE_STATUS, RETRIABLE_NETWORK_CODES, MemlinApiClient;
+var DEFAULT_API_URL, cachedAgentVersion, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, NATIVE_MEMORY_BATCH_SIZE, NATIVE_MEMORY_BATCH_CONCURRENCY, NATIVE_MEMORY_REQUEST_TIMEOUT_MS, NATIVE_MEMORY_BATCH_INDEX, RETRIABLE_STATUS, RETRIABLE_NETWORK_CODES, MemlinApiClient;
 var init_memlin_api_client = __esm({
   "packages/plugin-core/src/memlin-api-client.ts"() {
     "use strict";
@@ -9720,6 +9726,10 @@ var init_memlin_api_client = __esm({
     DEFAULT_REQUEST_TIMEOUT_MS = 15e3;
     DEFAULT_MAX_RETRIES = 2;
     DEFAULT_RETRY_BASE_DELAY_MS = 250;
+    NATIVE_MEMORY_BATCH_SIZE = 20;
+    NATIVE_MEMORY_BATCH_CONCURRENCY = 3;
+    NATIVE_MEMORY_REQUEST_TIMEOUT_MS = 9e4;
+    NATIVE_MEMORY_BATCH_INDEX = "# Native memory satellite batch\n";
     RETRIABLE_STATUS = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504]);
     RETRIABLE_NETWORK_CODES = /* @__PURE__ */ new Set([
       "ECONNRESET",
@@ -9791,7 +9801,7 @@ var init_memlin_api_client = __esm({
               await delay(this.backoffMs(attempt));
               continue;
             }
-            throw unreachableError(url, error);
+            throw unreachableError(url, error, timeoutMs);
           }
           if (idempotent && attempt < maxAttempts && RETRIABLE_STATUS.has(res.status)) {
             await delay(this.backoffMs(attempt));
@@ -10174,7 +10184,73 @@ var init_memlin_api_client = __esm({
        * off native auto-memory lossless.
        */
       async ingestNativeMemory(input, opts = {}) {
-        return this.request("POST", "/memory/ingest-native", input, { accountId: opts.accountId });
+        const satellites = input.satellites ?? [];
+        if (satellites.length <= NATIVE_MEMORY_BATCH_SIZE) {
+          return this.request("POST", "/memory/ingest-native", input, {
+            accountId: opts.accountId,
+            requestTimeoutMs: NATIVE_MEMORY_REQUEST_TIMEOUT_MS
+          });
+        }
+        const satelliteFiles = [
+          .../* @__PURE__ */ new Set([
+            ...input.satellite_files ?? [],
+            ...satellites.map((satellite) => satellite.name)
+          ])
+        ];
+        const batches = [];
+        for (let offset = 0; offset < satellites.length; offset += NATIVE_MEMORY_BATCH_SIZE) {
+          batches.push(satellites.slice(offset, offset + NATIVE_MEMORY_BATCH_SIZE));
+        }
+        const results = [];
+        for (let offset = 0; offset < batches.length; offset += NATIVE_MEMORY_BATCH_CONCURRENCY) {
+          const group = batches.slice(offset, offset + NATIVE_MEMORY_BATCH_CONCURRENCY);
+          const settled = await Promise.allSettled(
+            group.map((batch, groupIndex) => {
+              const batchIndex = offset + groupIndex;
+              return this.request(
+                "POST",
+                "/memory/ingest-native",
+                {
+                  ...input,
+                  memory_index_md: batchIndex === 0 ? input.memory_index_md : NATIVE_MEMORY_BATCH_INDEX,
+                  satellites: batch,
+                  satellite_files: satelliteFiles
+                },
+                {
+                  accountId: opts.accountId,
+                  requestTimeoutMs: NATIVE_MEMORY_REQUEST_TIMEOUT_MS
+                }
+              );
+            })
+          );
+          const rejected = settled.find(
+            (result) => result.status === "rejected"
+          );
+          if (rejected) throw rejected.reason;
+          const groupResults = settled.filter(
+            (result) => result.status === "fulfilled"
+          ).map((result) => result.value);
+          results.push(...groupResults);
+          if (groupResults.some((result) => result.skipped)) break;
+        }
+        const sum = (key) => results.reduce((total, result) => {
+          const value = result[key];
+          return total + (typeof value === "number" ? value : 0);
+        }, 0);
+        const refused = results.find((result) => result.skipped);
+        return {
+          entries_parsed: sum("entries_parsed"),
+          satellites_received: sum("satellites_received"),
+          proposals_built: sum("proposals_built"),
+          run_id: results.find((result) => result.run_id)?.run_id ?? null,
+          proposals_persisted: sum("proposals_persisted"),
+          proposal_ids: results.flatMap((result) => result.proposal_ids),
+          proposals_corroborated: sum("proposals_corroborated"),
+          proposals_auto_promoted: sum("proposals_auto_promoted"),
+          proposals_auto_activated: sum("proposals_auto_activated"),
+          proposals_reconciled: sum("proposals_reconciled"),
+          ...refused ? { skipped: true, reason: refused.reason ?? "skipped" } : {}
+        };
       }
       /**
        * POST /memory/remember — save one user-typed durable memory
