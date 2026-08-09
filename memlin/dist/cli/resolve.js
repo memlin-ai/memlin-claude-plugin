@@ -8858,7 +8858,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.59";
+  cachedAgentVersion = "0.2.60";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -10960,20 +10960,25 @@ async function main() {
         audit_id: result.audit_id ?? null,
         completed_at: Date.now(),
         latency_ms: latencyMs,
-        deadline_ms: deadlineMs
+        deadline_ms: deadlineMs,
+        server_latency_ms: result.latency_ms?.total ?? null
       });
     } catch {
     }
   }
-  if (missedDeadline) {
+  if (hookOutFile) {
     try {
+      const serverLatencyMs = result.latency_ms?.total ?? null;
       await api.writeUsageEvent(
         {
           event_type: "resolve.delivery",
           metadata: {
-            outcome: "late",
+            outcome: missedDeadline ? "late" : "inline",
             audit_id: result.audit_id ?? null,
             latency_ms: latencyMs,
+            server_latency_ms: serverLatencyMs,
+            client_overhead_ms: serverLatencyMs === null ? null : Math.max(0, latencyMs - serverLatencyMs),
+            server_stages: result.latency_ms ?? null,
             deadline_ms: deadlineMs,
             session_id: sessionId,
             host,
