@@ -20,5 +20,6 @@ Checks run in order, each with a 5s network timeout:
 6. **MCP endpoint** — pass when default routing; probe when a custom endpoint override is set
 7. **Writable: ~/.config/memlin** — create + delete a probe file
 8. **Writable: ~/.claude** — same
+9. **Claude Code plugin (user scope)** — plugin enabled and the Memlin marketplace registered
 
 Output format: `✓ pass / ⚠ warn / ✗ fail` per row plus a `N pass · N warn · N fail` summary. Exit code 1 if any check failed, 0 otherwise.

@@ -3835,7 +3835,7 @@ async function writePersistedToken(t) {
   });
   await atomicRename(tmp, file);
 }
-async function refreshAccessToken(refreshToken) {
+async function refreshAccessToken(refreshToken, options2 = {}) {
   requireClientId();
   const body = new URLSearchParams({
     grant_type: "refresh_token",
@@ -3845,7 +3845,8 @@ async function refreshAccessToken(refreshToken) {
   const res = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString()
+    body: body.toString(),
+    signal: AbortSignal.timeout(Math.max(1, options2.timeoutMs ?? 15e3))
   });
   if (!res.ok) {
     throw new Error(`refresh: ${res.status} ${await res.text()}`);
@@ -3858,17 +3859,17 @@ var DEFAULT_FRESHNESS_MARGIN_MS = 6e4;
 async function getValidAccessToken() {
   return ensureFreshToken(DEFAULT_FRESHNESS_MARGIN_MS);
 }
-async function ensureFreshToken(marginMs = DEFAULT_FRESHNESS_MARGIN_MS) {
+async function ensureFreshToken(marginMs = DEFAULT_FRESHNESS_MARGIN_MS, options2 = {}) {
   const persisted = await readPersistedToken();
   if (!persisted) throw new Error("not signed in \u2014 run `memlin login`");
   if (Date.now() < persisted.expires_at - marginMs) return persisted.access_token;
   if (refreshInFlight) return refreshInFlight;
-  refreshInFlight = doRefresh(persisted, marginMs).finally(() => {
+  refreshInFlight = doRefresh(persisted, marginMs, options2).finally(() => {
     refreshInFlight = null;
   });
   return refreshInFlight;
 }
-async function doRefresh(stale, marginMs) {
+async function doRefresh(stale, marginMs, options2) {
   const latest = await readPersistedToken();
   if (latest && Date.now() < latest.expires_at - marginMs) return latest.access_token;
   try {
@@ -3885,7 +3886,7 @@ async function doRefresh(stale, marginMs) {
     throw new Error("access token expired and no refresh token saved \u2014 run `memlin login`");
   }
   try {
-    const fresh = await refreshAccessToken(refreshToken);
+    const fresh = await refreshAccessToken(refreshToken, options2);
     return await withAuthFileLock(async () => {
       const beforeWrite = await readPersistedToken();
       if (!beforeWrite || beforeWrite.access_token !== refreshSource.access_token) {
@@ -4072,7 +4073,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.60";
+  cachedAgentVersion = "0.2.62";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -4278,13 +4279,15 @@ var MemlinApiClient = class {
    *  Returns kind='decision' docs whose `metadata.enforce` is set —
    *  the PreToolUse handler in plugin-core's pre-tool-use-handler
    *  module is the primary caller. */
-  async listEnforceDecisions(opts = {}) {
+  async listEnforceDecisions(opts = {}, requestOpts = {}) {
     const qs = new URLSearchParams();
     if (opts.project_id !== void 0) {
       qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
     }
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    return this.request("GET", `/decisions/enforce${suffix}`);
+    return this.request("GET", `/decisions/enforce${suffix}`, void 0, {
+      accountId: requestOpts.accountId
+    });
   }
   /** POST /usage/event — write a usage_events row from the client.
    *  Server-side enforces an allowlist of event_types (today:
@@ -4295,6 +4298,12 @@ var MemlinApiClient = class {
    *  (multi-account workspaces). */
   async writeUsageEvent(input, opts = {}) {
     return this.request("POST", "/usage/event", input, { accountId: opts.accountId });
+  }
+  /** Batched, idempotent editor-agent telemetry. This stream is deliberately
+   * separate from usage_events: it powers live sessions, subagent visibility,
+   * model analytics, and operational timelines without affecting metering. */
+  async writeAgentActivityBatch(events, opts = {}) {
+    return this.request("POST", "/agent/activity", { events }, opts);
   }
   /** GET /documents — list, filtered. */
   async listDocuments(opts = {}, callOpts = {}) {
@@ -4385,19 +4394,24 @@ var MemlinApiClient = class {
       action
     });
   }
-  async listHandoffs(opts = {}) {
+  async listHandoffs(opts = {}, callOpts = {}) {
     const qs = new URLSearchParams();
     if (opts.project_id) qs.set("project_id", opts.project_id);
     if (opts.target_agent_kind) qs.set("target_agent_kind", opts.target_agent_kind);
     if (opts.status) qs.set("status", opts.status);
     if (opts.limit) qs.set("limit", String(opts.limit));
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
-    return this.request("GET", `/handoffs${suffix}`);
-  }
-  async updateHandoff(handoffId, action) {
-    return this.request("PATCH", `/handoffs/${encodeURIComponent(handoffId)}`, {
-      action
+    return this.request("GET", `/handoffs${suffix}`, void 0, {
+      accountId: callOpts.accountId
     });
+  }
+  async updateHandoff(handoffId, action, opts = {}) {
+    return this.request(
+      "PATCH",
+      `/handoffs/${encodeURIComponent(handoffId)}`,
+      { action },
+      { accountId: opts.accountId }
+    );
   }
   async createHandoff(input) {
     return this.request("POST", "/handoffs", input);
@@ -4500,8 +4514,13 @@ var MemlinApiClient = class {
     return this.request("POST", "/edit-guard", input, { accountId: opts.accountId });
   }
   /** GET /audit/<id>/replay — reconstruct a past resolve's exact bundle. */
-  async replayAudit(auditId) {
-    return this.request("GET", `/audit/${auditId}/replay`);
+  async replayAudit(auditId, opts = {}) {
+    return this.request(
+      "GET",
+      `/audit/${auditId}/replay`,
+      void 0,
+      { accountId: opts.accountId }
+    );
   }
   /** GET /audit/<id>/explain — per-item decomposition of a past resolve's
    *  ranking arithmetic (similarity, kind weight, component boost, rerank,
@@ -4656,8 +4675,8 @@ var MemlinApiClient = class {
    * companion plans row with status='drafted'. Returns the document_id
    * + version metadata for downstream URL construction.
    */
-  async pushPlan(input) {
-    return this.request("POST", "/plans", input);
+  async pushPlan(input, opts = {}) {
+    return this.request("POST", "/plans", input, { accountId: opts.accountId });
   }
   /**
    * GET /plans — list plans for the account, optionally filtered by
@@ -4665,7 +4684,7 @@ var MemlinApiClient = class {
    * UserPromptSubmit + SessionStart hooks to keep ~/.claude/plans/ in
    * sync with the server.
    */
-  async listPlans(opts = {}) {
+  async listPlans(opts = {}, callOpts = {}) {
     const qs = new URLSearchParams();
     if (opts.status) qs.set("status", opts.status);
     if (opts.project_id !== void 0) {
@@ -4675,21 +4694,27 @@ var MemlinApiClient = class {
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const res = await this.request(
       "GET",
-      `/plans${suffix}`
+      `/plans${suffix}`,
+      void 0,
+      { accountId: callOpts.accountId }
     );
     return res.plans;
   }
   /** GET /plans/<id> — full plan detail (status + body + bundle ref). */
-  async getPlan(id) {
-    return this.request("GET", `/plans/${encodeURIComponent(id)}`);
+  async getPlan(id, opts = {}) {
+    return this.request("GET", `/plans/${encodeURIComponent(id)}`, void 0, {
+      accountId: opts.accountId
+    });
   }
   /**
    * PATCH /plans/<id> — replace the plan's body (creates a new
    * document_version, auto-embeds). Used by the PostToolUse hook to push
    * Claude Code edits back up to Memlin.
    */
-  async updatePlan(id, input) {
-    return this.request("PATCH", `/plans/${encodeURIComponent(id)}`, input);
+  async updatePlan(id, input, opts = {}) {
+    return this.request("PATCH", `/plans/${encodeURIComponent(id)}`, input, {
+      accountId: opts.accountId
+    });
   }
   /**
    * POST /projects — create a project in the caller's current account.
@@ -5054,13 +5079,16 @@ async function resolveProject(api, cwd, configProjectId) {
   } catch {
   }
   if (configProjectId) {
-    return {
-      project_id: configProjectId,
-      project_name: null,
-      account_id: null,
-      reason: "config",
-      hasGitRemote
-    };
+    const localBinding = await findWorkspaceBinding(absCwd).catch(() => null);
+    if (localBinding?.binding.project_id === configProjectId) {
+      return {
+        project_id: configProjectId,
+        project_name: null,
+        account_id: null,
+        reason: "config",
+        hasGitRemote
+      };
+    }
   }
   return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
 }
@@ -5098,6 +5126,9 @@ function detectGitRemotes(cwd) {
   } catch {
   }
   return out;
+}
+function isWorkspaceActive(input) {
+  return Boolean(input.resolvedProjectId) || input.workspaceBound;
 }
 
 // packages/plugin-core/dist/plan-sync.js
@@ -5188,11 +5219,15 @@ async function pushPlanFile(api, file, opts = {}) {
   const existing = state.documents[relPath];
   const targetDocId = resolveTargetDocId(existing, existingBinding);
   if (targetDocId) {
-    const result2 = await api.updatePlan(targetDocId, {
-      body,
-      title,
-      commit_message: "edit from claude-code"
-    });
+    const result2 = await api.updatePlan(
+      targetDocId,
+      {
+        body,
+        title,
+        commit_message: "edit from claude-code"
+      },
+      opts.accountId ? { accountId: opts.accountId } : {}
+    );
     await stampPlanFile(file, {
       documentId: result2.document_id,
       projectId: existingBinding?.projectId ?? null
@@ -5215,12 +5250,15 @@ async function pushPlanFile(api, file, opts = {}) {
       created: false
     };
   }
-  const result = await api.pushPlan({
-    title,
-    body,
-    cwd: opts.cwd ?? null,
-    git_remote: opts.gitRemote ?? null
-  });
+  const result = await api.pushPlan(
+    {
+      title,
+      body,
+      cwd: opts.cwd ?? null,
+      git_remote: opts.gitRemote ?? null
+    },
+    opts.accountId ? { accountId: opts.accountId } : {}
+  );
   await updateState((s) => {
     s.documents[relPath] = {
       document_id: result.document_id,
@@ -10172,8 +10210,16 @@ async function maybeScribeCommit(ctx, payload) {
   let diffBody = "";
   try {
     commitSha = execSync4("git rev-parse HEAD", { windowsHide: true, cwd, encoding: "utf8" }).trim();
-    commitMessage = execSync4("git log -1 --format=%B HEAD", { windowsHide: true, cwd, encoding: "utf8" }).trim();
-    diffStat = execSync4("git show --stat --format= HEAD", { windowsHide: true, cwd, encoding: "utf8" }).trim();
+    commitMessage = execSync4("git log -1 --format=%B HEAD", {
+      windowsHide: true,
+      cwd,
+      encoding: "utf8"
+    }).trim();
+    diffStat = execSync4("git show --stat --format= HEAD", {
+      windowsHide: true,
+      cwd,
+      encoding: "utf8"
+    }).trim();
     const buf = execSync4("git show --format= HEAD", {
       windowsHide: true,
       cwd,
@@ -10189,9 +10235,11 @@ async function maybeScribeCommit(ctx, payload) {
   }
   if (!commitSha || !commitMessage) return;
   let accountOverride;
+  let resolvedProjectId = null;
   let repoSlug = null;
   try {
     const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
+    resolvedProjectId = resolved.project_id;
     if (resolved.account_id && resolved.account_id !== ctx.config.account_id) {
       accountOverride = resolved.account_id;
     }
@@ -10206,6 +10254,13 @@ async function maybeScribeCommit(ctx, payload) {
     } catch {
     }
   } catch {
+  }
+  if (!isWorkspaceActive({
+    resolvedProjectId,
+    workspaceBound: ctx.workspaceBound
+  })) {
+    log("diff scribe: skipped \u2014 not a known Memlin workspace");
+    return;
   }
   try {
     const result = await ctx.api.scribeDiff(
@@ -10353,6 +10408,10 @@ async function main() {
     payload.cwd ?? process.cwd(),
     ctx.config.project_id
   );
+  if (!resolved.project_id && !ctx.workspaceBound) {
+    log("plan push: cwd is not a known Memlin workspace \u2014 plan kept local");
+    return;
+  }
   let gitRemote = null;
   try {
     const { execSync: execSync6 } = await import("node:child_process");
