@@ -357,10 +357,36 @@ function buildLateDeliveryEnvelope(bundle) {
     "<memlin-late-context>",
     "# Memlin context resolved for the PREVIOUS prompt \u2014 it finished after that",
     `# turn's delivery deadline. Task it was resolved for: ${JSON.stringify(bundle.task.slice(0, 140))}`,
+    ...bundle.stale ? [
+      `# ADDITIONALLY: the backend was unreachable (${bundle.stale.reason}) \u2014 this is a STALE`,
+      "# fallback bundle, not a live resolve. Weigh it accordingly."
+    ] : [],
     "# Treat as background context; invoke memlin_resolve_task if this turn needs fresh context.",
     "",
     bundle.rendered,
     "</memlin-late-context>"
+  ].join("\n");
+}
+function buildInlineDeliveryEnvelope(bundle) {
+  if (bundle.stale) {
+    return [
+      "<memlin-stale-context>",
+      `# Memlin backend unreachable (${bundle.stale.reason}) \u2014 this is the LAST SUCCESSFUL bundle`,
+      "# for this project, not a live resolve. Treat as possibly out of date; retry",
+      "# memlin_resolve_task later for fresh context. Memory writes are unavailable.",
+      "",
+      bundle.rendered,
+      "</memlin-stale-context>"
+    ].join("\n");
+  }
+  return [
+    "<memlin-resolved-context>",
+    "# Auto-resolved by Memlin \u2014 authoritative project context. Apply skills; honor",
+    "# approved goals and required/pinned decisions/directives; use other decisions as cited",
+    "# context; validate schemas; cite sources; do not re-invoke memlin_resolve_task.",
+    "",
+    bundle.rendered,
+    "</memlin-resolved-context>"
   ].join("\n");
 }
 
@@ -460,7 +486,10 @@ var DEFAULT_CALL_TIMEOUT_MS = 1e3;
 var CALL_TIMEOUTS = {
   "workspace.resolve": 2e3,
   "sync.now": 5e3,
-  "login.start": 1e4
+  "login.start": 1e4,
+  // Local-store reads walk the materialized doc tree on disk.
+  "memory.search": 2e3,
+  "memory.read": 2e3
 };
 var socketDeadUntil = 0;
 var SOCKET_DEAD_TTL_MS = 5e3;
@@ -698,17 +727,7 @@ async function main() {
     sessionId
   });
   if (outcome.bundle?.rendered) {
-    process.stdout.write(
-      scribeNotice + [
-        "<memlin-resolved-context>",
-        "# Auto-resolved by Memlin \u2014 authoritative project context. Apply skills; honor",
-        "# approved goals and required/pinned decisions/directives; use other decisions as cited",
-        "# context; validate schemas; cite sources; do not re-invoke memlin_resolve_task.",
-        "",
-        outcome.bundle.rendered,
-        "</memlin-resolved-context>"
-      ].join("\n")
-    );
+    process.stdout.write(scribeNotice + buildInlineDeliveryEnvelope(outcome.bundle));
     exitHook(0);
     return;
   }

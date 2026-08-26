@@ -54,10 +54,12 @@ __export(companion_client_exports, {
   companionDelegationEnabled: () => companionDelegationEnabled,
   companionForDelegation: () => companionForDelegation,
   companionGetToken: () => companionGetToken,
+  companionReadLocal: () => companionReadLocal,
   companionReportSession: () => companionReportSession,
   companionRequest: () => companionRequest,
   companionResolveWorkspace: () => companionResolveWorkspace,
   companionRunDir: () => companionRunDir,
+  companionSearchLocal: () => companionSearchLocal,
   companionSocketPath: () => companionSocketPath,
   companionStatus: () => companionStatus,
   companionSyncNow: () => companionSyncNow,
@@ -162,6 +164,12 @@ async function companionResolveWorkspace(cwd) {
 async function companionSyncNow(req) {
   return companionRequest("sync.now", req);
 }
+async function companionSearchLocal(req) {
+  return companionRequest("memory.search", req);
+}
+async function companionReadLocal(req) {
+  return companionRequest("memory.read", req);
+}
 async function companionReportSession(req) {
   return (await companionRequest("session.report", req))?.registered ?? false;
 }
@@ -201,7 +209,10 @@ var init_companion_client = __esm({
     CALL_TIMEOUTS = {
       "workspace.resolve": 2e3,
       "sync.now": 5e3,
-      "login.start": 1e4
+      "login.start": 1e4,
+      // Local-store reads walk the materialized doc tree on disk.
+      "memory.search": 2e3,
+      "memory.read": 2e3
     };
     socketDeadUntil = 0;
     SOCKET_DEAD_TTL_MS = 5e3;
@@ -3580,7 +3591,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs8 = __require("fs");
+    var fs9 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -3664,7 +3675,7 @@ var require_gray_matter = __commonJS({
       return stringify(file, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs8.readFileSync(filepath, "utf8");
+      const str2 = fs9.readFileSync(filepath, "utf8");
       const file = matter3(str2, options2);
       file.path = filepath;
       return file;
@@ -3694,9 +3705,9 @@ var require_gray_matter = __commonJS({
 
 // apps/cli-plugin/src/hooks/post-tool-use.ts
 import { execSync as execSync5 } from "node:child_process";
-import { promises as fs7 } from "node:fs";
-import path12 from "node:path";
-import os8 from "node:os";
+import { promises as fs8 } from "node:fs";
+import path13 from "node:path";
+import os9 from "node:os";
 
 // packages/plugin-core/dist/client.js
 import { promises as fs4 } from "node:fs";
@@ -3743,6 +3754,73 @@ async function atomicRename(from, to, dependencies = {}) {
   } finally {
     if (renameQueues.get(queueKey) === run) renameQueues.delete(queueKey);
   }
+}
+
+// packages/plugin-core/dist/backend-error.js
+var MemlinApiError = class extends Error {
+  constructor(message, status) {
+    super(message);
+    this.status = status;
+    this.name = "MemlinApiError";
+  }
+  status;
+};
+function looksLikeHtml(text) {
+  const head = text.slice(0, 512).trimStart().toLowerCase();
+  return head.startsWith("<!doctype html") || head.startsWith("<html") || head.includes("<html") || head.startsWith("<") && /<\/(head|body|title|div|p)>/i.test(text);
+}
+function singleLine(text, max = 200) {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max - 1)}\u2026`;
+}
+function describeOpaqueBody(status, text) {
+  const trimmed = text.trim();
+  if (!trimmed) return `HTTP ${status}`;
+  if (looksLikeHtml(trimmed)) {
+    const via = /cloudflare/i.test(trimmed) ? "Cloudflare " : "";
+    return `HTTP ${status} (${via}HTML error page suppressed, ${trimmed.length} chars)`;
+  }
+  return `HTTP ${status}: ${singleLine(trimmed)}`;
+}
+function backendUnreachableLine(detail) {
+  return `memlin: backend unreachable (${detail}), no memory available`;
+}
+var ROUTING_PATTERN = /account routing (unavailable|lookup failed)/i;
+var CLOUDFLARE_STATUS = /\b(52[0-7])\b/;
+function statusOf(err) {
+  if (err instanceof MemlinApiError) return err.status;
+  const status = err?.status;
+  if (typeof status === "number" && status >= 100 && status <= 599) return status;
+  const message = err instanceof Error ? err.message : String(err);
+  const arrow = message.match(/→ (\d{3}):/);
+  if (arrow) return Number(arrow[1]);
+  return null;
+}
+function summarizeBackendFailure(err) {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  const status = statusOf(err);
+  if (ROUTING_PATTERN.test(message)) {
+    const embedded = message.match(CLOUDFLARE_STATUS)?.[1];
+    const code = embedded ?? (status !== null && status >= 500 ? String(status) : null);
+    const detail = code ? `routing ${code}` : "routing unavailable";
+    return { kind: "routing", status: code ? Number(code) : status, detail, line: backendUnreachableLine(detail) };
+  }
+  if (status !== null && status >= 500) {
+    const detail = `HTTP ${status}`;
+    return { kind: "http", status, detail, line: backendUnreachableLine(detail) };
+  }
+  if (/took longer than \d+ seconds/i.test(message)) {
+    return { kind: "network", status: null, detail: "timeout", line: backendUnreachableLine("timeout") };
+  }
+  if (/couldn'?t reach|fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network/i.test(message)) {
+    return {
+      kind: "network",
+      status: null,
+      detail: "network unreachable",
+      line: backendUnreachableLine("network unreachable")
+    };
+  }
+  return null;
 }
 
 // packages/plugin-core/dist/auth.js
@@ -3849,7 +3927,7 @@ async function refreshAccessToken(refreshToken, options2 = {}) {
     signal: AbortSignal.timeout(Math.max(1, options2.timeoutMs ?? 15e3))
   });
   if (!res.ok) {
-    throw new Error(`refresh: ${res.status} ${await res.text()}`);
+    throw new Error(`refresh: ${describeOpaqueBody(res.status, await res.text())}`);
   }
   const json = await res.json();
   return toPersisted(json, refreshToken);
@@ -4073,7 +4151,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.62";
+  cachedAgentVersion = "0.2.63";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -4086,7 +4164,7 @@ var NATIVE_MEMORY_BATCH_SIZE = 20;
 var NATIVE_MEMORY_BATCH_CONCURRENCY = 3;
 var NATIVE_MEMORY_REQUEST_TIMEOUT_MS = 9e4;
 var NATIVE_MEMORY_BATCH_INDEX = "# Native memory satellite batch\n";
-var RETRIABLE_STATUS = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504]);
+var RETRIABLE_STATUS = /* @__PURE__ */ new Set([408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
 var RETRIABLE_NETWORK_CODES = /* @__PURE__ */ new Set([
   "ECONNRESET",
   "ECONNREFUSED",
@@ -4203,8 +4281,9 @@ var MemlinApiClient = class {
         }
       }
       if (!res.ok) {
-        const errMsg = parsed?.error ?? text ?? `HTTP ${res.status}`;
-        throw new Error(`${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`);
+        const serverError = parsed?.error;
+        const errMsg = typeof serverError === "string" && serverError ? singleLine(serverError, 300) : describeOpaqueBody(res.status, text);
+        throw new MemlinApiError(`${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`, res.status);
       }
       return parsed;
     }
@@ -4314,6 +4393,7 @@ var MemlinApiClient = class {
     if (opts.project_id !== void 0) {
       qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
     }
+    if (opts.has_trigger) qs.set("has_trigger", "true");
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const res = await this.request("GET", `/documents${suffix}`, void 0, { accountId: callOpts.accountId });
     return res.documents.map((d) => {
@@ -5057,6 +5137,7 @@ async function resolveProject(api, cwd, configProjectId) {
   const absCwd = path7.resolve(cwd);
   const remotes = detectGitRemotes(cwd);
   const hasGitRemote = remotes.length > 0;
+  let serverFailure;
   try {
     const result = await api.resolveProject({
       // Primary remote (back-compat with the single-remote server path).
@@ -5076,7 +5157,8 @@ async function resolveProject(api, cwd, configProjectId) {
         enforce_done_deployed: result.enforce_done_deployed
       };
     }
-  } catch {
+  } catch (e) {
+    serverFailure = summarizeBackendFailure(e) ?? void 0;
   }
   if (configProjectId) {
     const localBinding = await findWorkspaceBinding(absCwd).catch(() => null);
@@ -5086,11 +5168,19 @@ async function resolveProject(api, cwd, configProjectId) {
         project_name: null,
         account_id: null,
         reason: "config",
-        hasGitRemote
+        hasGitRemote,
+        server_failure: serverFailure
       };
     }
   }
-  return { project_id: null, project_name: null, account_id: null, reason: "none", hasGitRemote };
+  return {
+    project_id: null,
+    project_name: null,
+    account_id: null,
+    reason: "none",
+    hasGitRemote,
+    server_failure: serverFailure
+  };
 }
 function readGitRemote(cwd) {
   try {
@@ -5324,7 +5414,7 @@ function parsePlanFile(raw) {
 
 // packages/plugin-core/dist/pre-tool-use-handler.js
 import { execSync as execSync3 } from "node:child_process";
-import path11 from "node:path";
+import path12 from "node:path";
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -5804,8 +5894,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path13, errorMaps, issueData } = params;
-  const fullPath = [...path13, ...issueData.path || []];
+  const { data, path: path14, errorMaps, issueData } = params;
+  const fullPath = [...path14, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -5921,11 +6011,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path13, key) {
+  constructor(parent, value, path14, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path13;
+    this._path = path14;
     this._key = key;
   }
   get path() {
@@ -10177,6 +10267,11 @@ async function recordEditActivity(ctx, payload) {
   }
 }
 
+// packages/plugin-core/dist/trigger-memories.js
+import { promises as fs7 } from "node:fs";
+import os8 from "node:os";
+import path11 from "node:path";
+
 // packages/plugin-core/dist/pre-tool-use-handler.js
 async function releaseDeployLease(ctx, args) {
   if (!args.session_id || !isDeployCommand(args.command)) return;
@@ -10321,15 +10416,15 @@ async function captureApprovedPlan(ctx, payload) {
   }
   const firstLine = planText.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "Plan";
   const title = firstLine.replace(/^#+\s*/, "").slice(0, 200) || "Plan";
-  const plansDir = path12.join(os8.homedir(), ".claude", "plans");
-  await fs7.mkdir(plansDir, { recursive: true });
+  const plansDir = path13.join(os9.homedir(), ".claude", "plans");
+  await fs8.mkdir(plansDir, { recursive: true });
   let fileName = `${slugify(title)}.md`;
-  let abs = path12.join(plansDir, fileName);
+  let abs = path13.join(plansDir, fileName);
   try {
-    const existing = await fs7.readFile(abs, "utf8");
+    const existing = await fs8.readFile(abs, "utf8");
     if (existing.trim() !== planText) {
       fileName = `${slugify(title)}-${shortHash(planText)}.md`;
-      abs = path12.join(plansDir, fileName);
+      abs = path13.join(plansDir, fileName);
     }
   } catch {
   }
@@ -10337,7 +10432,7 @@ async function captureApprovedPlan(ctx, payload) {
 
 ${planText}`;
   try {
-    await fs7.writeFile(abs, fileBody.endsWith("\n") ? fileBody : fileBody + "\n", "utf8");
+    await fs8.writeFile(abs, fileBody.endsWith("\n") ? fileBody : fileBody + "\n", "utf8");
   } catch (err) {
     log(`exit-plan-mode: write failed: ${err instanceof Error ? err.message : String(err)}`);
     return;
@@ -10393,12 +10488,12 @@ async function main() {
   }
   const file = payload.tool_input?.file_path;
   if (!file) return;
-  const abs = path12.resolve(file);
-  const plansDir = path12.join(os8.homedir(), ".claude", "plans");
-  if (!abs.startsWith(plansDir + path12.sep)) return;
+  const abs = path13.resolve(file);
+  const plansDir = path13.join(os9.homedir(), ".claude", "plans");
+  if (!abs.startsWith(plansDir + path13.sep)) return;
   if (!abs.endsWith(".md")) return;
   try {
-    const st = await fs7.stat(abs);
+    const st = await fs8.stat(abs);
     if (!st.isFile() || st.size === 0) return;
   } catch {
     return;
@@ -10430,7 +10525,7 @@ async function main() {
       gitRemote
     });
     log(
-      `pushed plan ${path12.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
+      `pushed plan ${path13.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
     );
   } catch (err) {
     log(`plan push failed: ${err instanceof Error ? err.message : String(err)}`);
