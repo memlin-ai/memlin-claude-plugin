@@ -8001,7 +8001,12 @@ function luhnValid(digits) {
 function isValidCardNumber(match) {
   const digits = match.replace(/\D/g, "");
   if (digits.length < 13 || digits.length > 19) return false;
-  if (!/^[2-6]/.test(digits)) return false;
+  const first = digits.charCodeAt(0) - 48;
+  if (first < 2 || first > 6) return false;
+  if (first === 2) {
+    const bin = Number(digits.slice(0, 4));
+    if (bin < 2221 || bin > 2720) return false;
+  }
   return luhnValid(digits);
 }
 function isValidUsSsn(match) {
@@ -8456,10 +8461,21 @@ var ActionMetadataSchema = external_exports.object({
 // packages/shared/dist/task-classifier.js
 var DEPLOY_TOOL_RE = /\b(?:vercel\s+(?:deploy|--?prod\w*)|fly(?:ctl)?\s+deploy|wrangler\s+(?:deploy|publish)|sst\s+deploy|serverless\s+deploy|sls\s+deploy|(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy|make\s+deploy|git\s+push\s+\S*(?:deploy|prod|production|heroku))\b/i;
 var DEPLOY_CMD_RE = /(?:^|;|&&|\|\||&|\|)\s*(?:[\w./-]*\/)?deploy(?:\.[a-z]+)?(?=\s|$)/i;
+var FOREGROUND_SHIP_CMD_RE = /(?:^|;|&&|\|\||&|\|)\s*(?:(?:bash|sh|env)\s+)?(?:[\w./-]*\/)?deploy-(?:web|admin|prod)(?:-local)?(?:\.[a-z]+)?(?=\s|$)|(?:^|;|&&|\|\||&|\|)\s*az\s+webapp\s+deploy\b|(?:^|;|&&|\|\||&|\|)\s*azd\s+deploy\b/i;
 var DEPLOY_TRIGGER_CMD_RE = /\bgh\s+pr\s+merge\b|\bgh\s+workflow\s+run\b[^;&|]*\b(?:deploy|prod|production|release)\b|\bgit\s+push\b[^;&|]*?[\s:](?:main|master|prod|production|release\/\S+)(?=\s|$)/i;
 function isDeployCommand(command) {
   if (!command) return false;
-  return DEPLOY_TOOL_RE.test(command) || DEPLOY_CMD_RE.test(command) || DEPLOY_TRIGGER_CMD_RE.test(command);
+  return DEPLOY_TOOL_RE.test(command) || DEPLOY_CMD_RE.test(command) || FOREGROUND_SHIP_CMD_RE.test(command) || DEPLOY_TRIGGER_CMD_RE.test(command);
+}
+function isForegroundDeployCommand(command) {
+  if (!command) return false;
+  return DEPLOY_TOOL_RE.test(command) || DEPLOY_CMD_RE.test(command) || FOREGROUND_SHIP_CMD_RE.test(command);
+}
+function isSelfLeasingDeployCommand(command) {
+  if (!command) return false;
+  return /(?:^|;|&&|\|\||&|\|)\s*(?:(?:bash|sh|env)\s+)?(?:[\w./-]*\/)?deploy-(?:web|admin|prod)(?:-local)?(?:\.[a-z]+)?(?=\s|$)/i.test(
+    command
+  ) || /(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy:(?:web|admin)\b/i.test(command);
 }
 function isDeployTriggerCommand(command) {
   if (!command) return false;
@@ -9142,7 +9158,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.64";
+  cachedAgentVersion = "0.2.65";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -10113,22 +10129,29 @@ async function getApi(opts = {}) {
   }
   const cwd = opts.cwd ?? process.cwd();
   const overlay = await findWorkspaceBinding(cwd);
-  const { workspaceBound, workspaceRoot } = applyWorkspaceOverlay(config, overlay);
+  const { workspaceBound, workspaceRoot, workspaceAccountName } = applyWorkspaceOverlay(
+    config,
+    overlay
+  );
   const apiUrl = process.env.MEMLIN_API_URL?.trim() || config.api_url || resolveApiUrl();
   const api = new MemlinApiClient({
     baseUrl: apiUrl,
     getAccessToken: () => getIdentityBoundAccessToken(config),
     accountId: config.account_id
   });
-  return { api, config, workspaceBound, workspaceRoot };
+  return { api, config, workspaceBound, workspaceRoot, workspaceAccountName };
 }
 function applyWorkspaceOverlay(config, overlay) {
-  if (!overlay) return { workspaceBound: false, workspaceRoot: null };
+  if (!overlay) return { workspaceBound: false, workspaceRoot: null, workspaceAccountName: null };
   config.account_id = overlay.binding.account_id;
   if (overlay.binding.project_id !== void 0) {
     config.project_id = overlay.binding.project_id;
   }
-  return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
+  return {
+    workspaceBound: true,
+    workspaceRoot: overlay.workspaceRoot,
+    workspaceAccountName: overlay.binding.account_name ?? null
+  };
 }
 function log(msg) {
   if (process.env.MEMLIN_DEBUG) {
@@ -10687,35 +10710,51 @@ function deployLeaseLivenessMin() {
 function __isDeployLeaseOrphaned(minutesAgo, livenessMin = deployLeaseLivenessMin()) {
   return typeof minutesAgo === "number" && minutesAgo > livenessMin;
 }
-function deployCommandOf(payload) {
-  if (payload.tool_name !== "Bash") return null;
+var SHELL_DEPLOY_TOOLS = /* @__PURE__ */ new Set(["bash", "shell", "powershell"]);
+function isShellDeployTool(toolName) {
+  if (!toolName) return false;
+  return SHELL_DEPLOY_TOOLS.has(toolName.toLowerCase());
+}
+function __deployCommandOf(payload) {
+  if (!isShellDeployTool(payload.tool_name)) return null;
   const cmd = payload.tool_input?.command;
   if (typeof cmd !== "string" || !cmd.trim()) return null;
   return isDeployCommand(cmd) ? cmd : null;
+}
+function deployCommandOf(payload) {
+  return __deployCommandOf(payload);
 }
 async function evaluateDeployGuard(ctx, payload, projectId, projectAccountId) {
   const command = deployCommandOf(payload);
   if (!command) return null;
   if (deployGuardMode() === "off") return null;
   if (!projectId || !payload.session_id) return null;
+  const accountOpts = projectAccountId ? { accountId: projectAccountId } : {};
+  const selfLease = isSelfLeasingDeployCommand(command);
   let res;
   try {
     res = await ctx.api.deployGuard(
-      {
+      selfLease ? { action: "status", project_id: projectId, session_id: payload.session_id } : {
         action: "acquire",
         project_id: projectId,
         session_id: payload.session_id,
-        task: command.slice(0, 200)
+        task: command.slice(0, 200),
+        kind: isForegroundDeployCommand(command) ? "foreground" : "trigger"
       },
-      projectAccountId ? { accountId: projectAccountId } : {}
+      accountOpts
     );
   } catch (err) {
     log(
-      `deploy-guard: acquire failed (fail-open): ${err instanceof Error ? err.message : String(err)}`
+      `deploy-guard: ${selfLease ? "status" : "acquire"} failed (fail-open): ${err instanceof Error ? err.message : String(err)}`
     );
     return null;
   }
-  if (res.acquired !== false) return null;
+  if (selfLease) {
+    if (res.held !== true) return null;
+    if (res.holder_session && res.holder_session === payload.session_id) return null;
+  } else if (res.acquired !== false) {
+    return null;
+  }
   if (isDeployTriggerCommand(res.holder_task) && __isDeployLeaseOrphaned(res.minutes_ago)) {
     log(
       `deploy-guard: trigger-command holder lease is ${res.minutes_ago}m old (> ${deployLeaseLivenessMin()}m liveness) \u2014 orphaned, not a live collision; allowing`

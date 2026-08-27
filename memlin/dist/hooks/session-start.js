@@ -4679,7 +4679,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.64";
+  cachedAgentVersion = "0.2.65";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -5709,22 +5709,29 @@ async function getApi(opts = {}) {
   }
   const cwd = opts.cwd ?? process.cwd();
   const overlay = await findWorkspaceBinding(cwd);
-  const { workspaceBound, workspaceRoot } = applyWorkspaceOverlay(config, overlay);
+  const { workspaceBound, workspaceRoot, workspaceAccountName } = applyWorkspaceOverlay(
+    config,
+    overlay
+  );
   const apiUrl = process.env.MEMLIN_API_URL?.trim() || config.api_url || resolveApiUrl();
   const api = new MemlinApiClient({
     baseUrl: apiUrl,
     getAccessToken: () => getIdentityBoundAccessToken(config),
     accountId: config.account_id
   });
-  return { api, config, workspaceBound, workspaceRoot };
+  return { api, config, workspaceBound, workspaceRoot, workspaceAccountName };
 }
 function applyWorkspaceOverlay(config, overlay) {
-  if (!overlay) return { workspaceBound: false, workspaceRoot: null };
+  if (!overlay) return { workspaceBound: false, workspaceRoot: null, workspaceAccountName: null };
   config.account_id = overlay.binding.account_id;
   if (overlay.binding.project_id !== void 0) {
     config.project_id = overlay.binding.project_id;
   }
-  return { workspaceBound: true, workspaceRoot: overlay.workspaceRoot };
+  return {
+    workspaceBound: true,
+    workspaceRoot: overlay.workspaceRoot,
+    workspaceAccountName: overlay.binding.account_name ?? null
+  };
 }
 function log(msg) {
   if (process.env.MEMLIN_DEBUG) {
@@ -6034,6 +6041,18 @@ async function getLatestPublishedVersion(state) {
   } catch {
     return cache?.latest_version ?? null;
   }
+}
+async function resolveBannerAccountName(input) {
+  const accountId = input.resolvedAccountId ?? input.configAccountId;
+  try {
+    const { name } = await input.api.getAccount({ accountId });
+    if (name) return name;
+  } catch {
+  }
+  if (input.workspaceAccountName && accountId === input.configAccountId) {
+    return input.workspaceAccountName;
+  }
+  return `${accountId.slice(0, 8)}\u2026`;
 }
 function formatBanner(opts) {
   const lines = [];
@@ -10508,7 +10527,12 @@ function luhnValid(digits) {
 function isValidCardNumber(match) {
   const digits = match.replace(/\D/g, "");
   if (digits.length < 13 || digits.length > 19) return false;
-  if (!/^[2-6]/.test(digits)) return false;
+  const first = digits.charCodeAt(0) - 48;
+  if (first < 2 || first > 6) return false;
+  if (first === 2) {
+    const bin = Number(digits.slice(0, 4));
+    if (bin < 2221 || bin > 2720) return false;
+  }
   return luhnValid(digits);
 }
 function isValidUsSsn(match) {
@@ -11260,7 +11284,7 @@ async function main() {
     log("not configured \u2014 skipping pull");
     return;
   }
-  const { api, config, workspaceBound } = ctx;
+  const { api, config, workspaceBound, workspaceAccountName } = ctx;
   const companion = await companionForDelegation().catch(() => null);
   if (companion) {
     await companionReportSession({ cwd: process.cwd(), host: "claude-code" }).catch(() => false);
@@ -11283,12 +11307,19 @@ async function main() {
       };
     }
   }
+  const accountName = await resolveBannerAccountName({
+    api,
+    configAccountId: config.account_id,
+    resolvedAccountId: resolved.account_id,
+    workspaceAccountName
+  });
   let autoBoundJustNow = false;
   try {
     const autoBindResult = await autoBindWorkspaceIfMatched({
       cwd: process.cwd(),
       resolved,
-      workspaceAlreadyBound: workspaceBound
+      workspaceAlreadyBound: workspaceBound,
+      accountName
     });
     if (autoBindResult.bound) {
       autoBoundJustNow = true;
@@ -11377,13 +11408,6 @@ async function main() {
   } catch (err) {
     log(`trigger compile failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
   }
-  let accountName = "(unknown account)";
-  try {
-    const acct = await api.getAccount();
-    accountName = acct.name;
-  } catch {
-    accountName = `${config.account_id.slice(0, 8)}\u2026`;
-  }
   let source = "config";
   if (workspaceBound) source = "workspace";
   else if (resolved.account_id && resolved.account_id !== config.account_id) {
@@ -11447,7 +11471,9 @@ void Promise.race([
   main(),
   new Promise((resolve) => {
     const t = setTimeout(() => {
-      log(`session-start: hit the ${SESSION_START_DEADLINE_MS}ms deadline \u2014 exiting (sync resumes next launch)`);
+      log(
+        `session-start: hit the ${SESSION_START_DEADLINE_MS}ms deadline \u2014 exiting (sync resumes next launch)`
+      );
       resolve();
     }, SESSION_START_DEADLINE_MS);
     t.unref?.();
