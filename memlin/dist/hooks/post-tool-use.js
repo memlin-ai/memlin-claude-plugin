@@ -3706,8 +3706,8 @@ var require_gray_matter = __commonJS({
 // apps/cli-plugin/src/hooks/post-tool-use.ts
 import { execSync as execSync5 } from "node:child_process";
 import { promises as fs8 } from "node:fs";
-import path13 from "node:path";
-import os9 from "node:os";
+import path17 from "node:path";
+import os11 from "node:os";
 
 // packages/plugin-core/dist/client.js
 import { promises as fs4 } from "node:fs";
@@ -4151,7 +4151,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.65";
+  cachedAgentVersion = "0.2.68";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -4394,6 +4394,7 @@ var MemlinApiClient = class {
       qs.set("project_id", opts.project_id === null ? "null" : opts.project_id);
     }
     if (opts.has_trigger) qs.set("has_trigger", "true");
+    if (opts.path) qs.set("path", opts.path);
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
     const res = await this.request("GET", `/documents${suffix}`, void 0, { accountId: callOpts.accountId });
     return res.documents.map((d) => {
@@ -4478,6 +4479,7 @@ var MemlinApiClient = class {
     const qs = new URLSearchParams();
     if (opts.project_id) qs.set("project_id", opts.project_id);
     if (opts.target_agent_kind) qs.set("target_agent_kind", opts.target_agent_kind);
+    if (opts.target_session_id) qs.set("target_session_id", opts.target_session_id);
     if (opts.status) qs.set("status", opts.status);
     if (opts.limit) qs.set("limit", String(opts.limit));
     const suffix = qs.toString() ? `?${qs.toString()}` : "";
@@ -4591,6 +4593,11 @@ var MemlinApiClient = class {
    * project_id is passed explicitly (the hook resolves it from cwd first).
    */
   async editGuard(input, opts = {}) {
+    return this.request("POST", "/edit-guard", input, { accountId: opts.accountId });
+  }
+  /** Transactional edit broker. prepare acquires exact-path ownership or
+   * returns the first holder that still needs compatibility proof. */
+  async editBroker(input, opts = {}) {
     return this.request("POST", "/edit-guard", input, { accountId: opts.accountId });
   }
   /** GET /audit/<id>/replay — reconstruct a past resolve's exact bundle. */
@@ -4925,12 +4932,12 @@ async function canonicalSafeDirectory(candidate) {
     const before = await fs3.lstat(candidate);
     if (before.isSymbolicLink() || !before.isDirectory()) return null;
     await fs3.access(candidate, constants.R_OK | constants.X_OK);
-    const canonical = await fs3.realpath(candidate);
+    const canonical2 = await fs3.realpath(candidate);
     const after = await fs3.lstat(candidate);
     if (after.isSymbolicLink() || !after.isDirectory() || after.dev !== before.dev || after.ino !== before.ino) {
       return null;
     }
-    return canonical;
+    return canonical2;
   } catch {
     return null;
   }
@@ -5421,7 +5428,7 @@ function parsePlanFile(raw) {
 
 // packages/plugin-core/dist/pre-tool-use-handler.js
 import { execSync as execSync3 } from "node:child_process";
-import path12 from "node:path";
+import path16 from "node:path";
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
 var external_exports = {};
@@ -5901,8 +5908,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path14, errorMaps, issueData } = params;
-  const fullPath = [...path14, ...issueData.path || []];
+  const { data, path: path18, errorMaps, issueData } = params;
+  const fullPath = [...path18, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -6018,11 +6025,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path14, key) {
+  constructor(parent, value, path18, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path14;
+    this._path = path18;
     this._key = key;
   }
   get path() {
@@ -9998,7 +10005,7 @@ var ActionMetadataSchema = external_exports.object({
 // packages/shared/dist/task-classifier.js
 var DEPLOY_TOOL_RE = /\b(?:vercel\s+(?:deploy|--?prod\w*)|fly(?:ctl)?\s+deploy|wrangler\s+(?:deploy|publish)|sst\s+deploy|serverless\s+deploy|sls\s+deploy|(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy|make\s+deploy|git\s+push\s+\S*(?:deploy|prod|production|heroku))\b/i;
 var DEPLOY_CMD_RE = /(?:^|;|&&|\|\||&|\|)\s*(?:[\w./-]*\/)?deploy(?:\.[a-z]+)?(?=\s|$)/i;
-var FOREGROUND_SHIP_CMD_RE = /(?:^|;|&&|\|\||&|\|)\s*(?:(?:bash|sh|env)\s+)?(?:[\w./-]*\/)?deploy-(?:web|admin|prod)(?:-local)?(?:\.[a-z]+)?(?=\s|$)|(?:^|;|&&|\|\||&|\|)\s*az\s+webapp\s+deploy\b|(?:^|;|&&|\|\||&|\|)\s*azd\s+deploy\b/i;
+var FOREGROUND_SHIP_CMD_RE = /(?:^|;|&&|\|\||&|\|)\s*(?:(?:bash|sh|env)\s+)?(?:[\w./-]*\/)?deploy-(?:web|admin|prod|mcp)(?:-local)?(?:\.[a-z]+)?(?=\s|$)|(?:^|;|&&|\|\||&|\|)\s*az\s+webapp\s+deploy\b|(?:^|;|&&|\|\||&|\|)\s*azd\s+deploy\b/i;
 var DEPLOY_TRIGGER_CMD_RE = /\bgh\s+pr\s+merge\b|\bgh\s+workflow\s+run\b[^;&|]*\b(?:deploy|prod|production|release)\b|\bgit\s+push\b[^;&|]*?[\s:](?:main|master|prod|production|release\/\S+)(?=\s|$)/i;
 function isDeployCommand(command) {
   if (!command) return false;
@@ -10006,9 +10013,9 @@ function isDeployCommand(command) {
 }
 function isSelfLeasingDeployCommand(command) {
   if (!command) return false;
-  return /(?:^|;|&&|\|\||&|\|)\s*(?:(?:bash|sh|env)\s+)?(?:[\w./-]*\/)?deploy-(?:web|admin|prod)(?:-local)?(?:\.[a-z]+)?(?=\s|$)/i.test(
+  return /(?:^|;|&&|\|\||&|\|)\s*(?:(?:bash|sh|env)\s+)?(?:[\w./-]*\/)?deploy-(?:web|admin|prod|mcp)(?:-local)?(?:\.[a-z]+)?(?=\s|$)/i.test(
     command
-  ) || /(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy:(?:web|admin)\b/i.test(command);
+  ) || /(?:npm|pnpm|yarn)\s+(?:run\s+)?deploy:(?:web|admin|mcp)\b/i.test(command);
 }
 
 // packages/shared/dist/authority.js
@@ -10039,20 +10046,37 @@ var MODEL_PRICES = {
   "claude-haiku-4-5": { inputUsdPerMTok: 1, outputUsdPerMTok: 5 },
   "claude-sonnet-4-6": { inputUsdPerMTok: 3, outputUsdPerMTok: 15 },
   "claude-sonnet-4-5": { inputUsdPerMTok: 3, outputUsdPerMTok: 15 },
-  // ⚠️ INTRODUCTORY pricing, in effect only through 2026-08-31. On 2026-09-01
-  // Sonnet 5 reverts to $3 / $15 — the tripwire test in model-prices.test.ts
-  // goes red on that date until this is bumped. Do NOT set it to $3/$15 early:
-  // that over-bills every Sonnet 5 turn by 50% until the window actually ends.
+  // $2/$10 launched as introductory pricing through 2026-08-31, and the
+  // scheduled 2026-09-01 revert to $3/$15 was CANCELLED — Anthropic made the
+  // introductory rate standard. Verified 2026-09-02 against
+  // https://platform.claude.com/docs/en/about-claude/pricing, which states the
+  // increase "will not occur". This is the standard price now; do not "restore"
+  // $3/$15 on the strength of the old launch announcement — that over-bills
+  // every Sonnet 5 turn by 50%.
   "claude-sonnet-5": { inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+  // Opus 5 was absent until 2026-09-02. The app never requests it, but
+  // aggregateTurnTiming prices provider-reported models from ingested Claude
+  // Code telemetry, where it is a current default — so every Opus 5 turn was
+  // bucketed 'unknown_model' and dropped out of cost totals. Unpriced is the
+  // safe fallback, but it is still a silent hole in the numbers.
+  "claude-opus-5": { inputUsdPerMTok: 5, outputUsdPerMTok: 25 },
   "claude-opus-4-5": { inputUsdPerMTok: 5, outputUsdPerMTok: 25 },
   "claude-opus-4-6": { inputUsdPerMTok: 5, outputUsdPerMTok: 25 },
   "claude-opus-4-7": { inputUsdPerMTok: 5, outputUsdPerMTok: 25 },
   "claude-opus-4-8": { inputUsdPerMTok: 5, outputUsdPerMTok: 25 },
-  // Deprecated (retires 2026-08-05) but still billable until then, so priced
-  // rather than left to report $0. 3x Opus 4.8's rate — a stray call costed at
-  // $0 would be a material miss. Drop this entry after the retirement date.
+  // Retired on the Claude API (2026-08-05) but STILL SERVED — and still
+  // billable — on Amazon Bedrock and Google Cloud (verified 2026-09-02 against
+  // the pricing docs), so it stays priced. Do not drop this entry: a partner
+  // call costed at $0 is a material miss, and 3x Opus 4.8's rate makes it an
+  // expensive one.
   "claude-opus-4-1": { inputUsdPerMTok: 15, outputUsdPerMTok: 75 },
   // Anthropic's most capable tier. Mythos 5 (Project Glasswing) shares the sheet.
+  // The 5.1 pair prices the same per base token as the 5 pair but reads cache at
+  // 0.025x rather than the standard 0.1x, so they cannot be plain table rows —
+  // without the override a cache-heavy Fable 5.1 turn costs 4x what it should,
+  // and cache reads dominate an agentic turn.
+  "claude-fable-5-1": { inputUsdPerMTok: 10, outputUsdPerMTok: 50, cacheReadMultiplier: 0.025 },
+  "claude-mythos-5-1": { inputUsdPerMTok: 10, outputUsdPerMTok: 50, cacheReadMultiplier: 0.025 },
   "claude-fable-5": { inputUsdPerMTok: 10, outputUsdPerMTok: 50 },
   "claude-mythos-5": { inputUsdPerMTok: 10, outputUsdPerMTok: 50 },
   // OpenAI
@@ -10215,15 +10239,194 @@ var FACET_BY_TERM = new Map(
 
 // packages/plugin-core/dist/edit-activity.js
 import { execSync as execSync2 } from "node:child_process";
-import path10 from "node:path";
+import { realpathSync as realpathSync2 } from "node:fs";
+import path11 from "node:path";
+import os8 from "node:os";
+
+// packages/plugin-core/dist/edit-broker-local.js
+import crypto2 from "node:crypto";
+import {
+  closeSync,
+  existsSync as existsSync2,
+  mkdirSync,
+  openSync,
+  readFileSync as readFileSync2,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import os7 from "node:os";
-var EDIT_TOOLS = /* @__PURE__ */ new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+import path10 from "node:path";
+import { execFileSync } from "node:child_process";
+var LOCK_STALE_MS2 = 1e4;
+var STATE_VERSION = 1;
+function digest(value) {
+  return crypto2.createHash("sha256").update(value).digest("hex");
+}
+function git(cwd, args) {
+  try {
+    return execFileSync("git", args, {
+      cwd,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+      encoding: "utf8",
+      timeout: 500
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+function canonical(value) {
+  try {
+    return realpathSync(value);
+  } catch {
+    return path10.resolve(value);
+  }
+}
+function localBrokerIdentity(cwd) {
+  const rootRaw = git(cwd, ["rev-parse", "--show-toplevel"]);
+  const commonRaw = git(cwd, ["rev-parse", "--git-common-dir"]);
+  if (!rootRaw || !commonRaw) return null;
+  const root = canonical(rootRaw);
+  const commonDir = canonical(
+    path10.isAbsolute(commonRaw) ? commonRaw : path10.resolve(cwd, commonRaw)
+  );
+  const deviceId = digest(`${os7.hostname()}\0${os7.platform()}\0${os7.arch()}`);
+  return {
+    root,
+    commonDir,
+    worktreeId: digest(`${deviceId}\0${root}`),
+    deviceId,
+    branch: git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]),
+    head: git(cwd, ["rev-parse", "HEAD"])
+  };
+}
+function statePaths(identity) {
+  const dir = path10.join(identity.commonDir, "memlin");
+  return {
+    dir,
+    state: path10.join(dir, "edit-broker-state.json"),
+    lock: path10.join(dir, "edit-broker.lock")
+  };
+}
+function emptyState() {
+  return { version: STATE_VERSION, worktrees: {}, leases: [] };
+}
+function readState2(file) {
+  try {
+    const parsed = JSON.parse(readFileSync2(file, "utf8"));
+    if (parsed?.version === STATE_VERSION && parsed.worktrees && Array.isArray(parsed.leases)) {
+      return parsed;
+    }
+  } catch {
+  }
+  return emptyState();
+}
+function writeState2(file, state) {
+  const temp = `${file}.${process.pid}.${crypto2.randomUUID()}.tmp`;
+  writeFileSync(temp, JSON.stringify(state), { mode: 384 });
+  renameSync(temp, file);
+}
+function pause(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+    }
+  }
+}
+function withState(identity, mutate) {
+  const files = statePaths(identity);
+  mkdirSync(files.dir, { recursive: true, mode: 448 });
+  let lockFd = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      lockFd = openSync(files.lock, "wx", 384);
+      break;
+    } catch {
+      try {
+        const lock = JSON.parse(readFileSync2(files.lock, "utf8"));
+        if (typeof lock.at !== "number" || Date.now() - lock.at > LOCK_STALE_MS2) {
+          rmSync(files.lock, { force: true });
+          continue;
+        }
+      } catch {
+        rmSync(files.lock, { force: true });
+        continue;
+      }
+      pause(25);
+    }
+  }
+  if (lockFd === null) throw new Error("local edit-broker lock timed out");
+  try {
+    writeFileSync(lockFd, JSON.stringify({ pid: process.pid, at: Date.now() }));
+    const state = readState2(files.state);
+    const now = Date.now();
+    state.leases = state.leases.filter((lease) => lease.expiresAt > now);
+    state.worktrees[identity.worktreeId] = {
+      id: identity.worktreeId,
+      root: identity.root,
+      branch: identity.branch,
+      head: identity.head,
+      seenAt: now
+    };
+    const result = mutate(state);
+    writeState2(files.state, state);
+    return result;
+  } finally {
+    closeSync(lockFd);
+    rmSync(files.lock, { force: true });
+  }
+}
+function releaseLocalWriteLeases(identity, sessionId, paths) {
+  withState(identity, (state) => {
+    state.leases = state.leases.filter(
+      (lease) => !(lease.sessionId === sessionId && lease.worktreeId === identity.worktreeId && (!paths || paths.includes(lease.path)))
+    );
+  });
+}
+
+// packages/plugin-core/dist/edit-activity.js
+var EDIT_TOOLS = /* @__PURE__ */ new Set([
+  "edit",
+  "write",
+  "multiedit",
+  "notebookedit",
+  "editnotebook"
+]);
+var APPLY_PATCH_TOOLS = /* @__PURE__ */ new Set(["applypatch", "apply_patch"]);
+var SHELL_TOOLS = /* @__PURE__ */ new Set(["bash", "shell", "powershell"]);
+function normalizedTool(toolName) {
+  return toolName.replace(/[^A-Za-z_]/g, "").toLowerCase();
+}
 function editedPathsFromHook(toolName, toolInput) {
-  if (!toolName || !EDIT_TOOLS.has(toolName) || !toolInput) return [];
+  if (!toolName || !toolInput) return [];
+  const tool = normalizedTool(toolName);
+  if (APPLY_PATCH_TOOLS.has(tool) || SHELL_TOOLS.has(tool)) {
+    const patch = [
+      toolInput.patch,
+      toolInput.input,
+      toolInput.content,
+      SHELL_TOOLS.has(tool) ? toolInput.command : null
+    ].find(
+      (value) => typeof value === "string"
+    );
+    if (!patch || SHELL_TOOLS.has(tool) && !/\b(?:apply_patch|git\s+apply|patch)\b/i.test(patch)) {
+      return [];
+    }
+    return [
+      ...new Set(
+        [...patch.matchAll(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/gm)].map((match) => match[1]?.trim()).filter((value) => Boolean(value))
+      )
+    ];
+  }
+  if (!EDIT_TOOLS.has(tool)) return [];
   const p = typeof toolInput.file_path === "string" && toolInput.file_path || typeof toolInput.notebook_path === "string" && toolInput.notebook_path || null;
   return p ? [p] : [];
 }
-function repoRelativePath(absPath, cwd) {
+function gitToplevel(cwd) {
   try {
     const top = execSync2("git rev-parse --show-toplevel", {
       windowsHide: true,
@@ -10232,13 +10435,35 @@ function repoRelativePath(absPath, cwd) {
       encoding: "utf8",
       timeout: 250
     }).trim();
-    if (top) {
-      const rel = path10.relative(top, absPath);
-      if (rel && !rel.startsWith("..") && !path10.isAbsolute(rel)) return rel;
-    }
+    return top || null;
   } catch {
+    return null;
   }
-  return path10.basename(absPath);
+}
+function repoRelativePath(absPath, cwd) {
+  const top = gitToplevel(cwd);
+  if (top) {
+    const canonicalWithMissingTail = (candidate) => {
+      const tail = [];
+      let cursor = path11.resolve(candidate);
+      while (true) {
+        try {
+          return path11.join(realpathSync2(cursor), ...tail.reverse());
+        } catch {
+          const parent = path11.dirname(cursor);
+          if (parent === cursor) return path11.resolve(candidate);
+          tail.push(path11.basename(cursor));
+          cursor = parent;
+        }
+      }
+    };
+    const rel = path11.relative(
+      canonicalWithMissingTail(top),
+      canonicalWithMissingTail(absPath)
+    );
+    if (rel && !rel.startsWith("..") && !path11.isAbsolute(rel)) return rel;
+  }
+  return path11.basename(absPath);
 }
 function readGitBranch(cwd) {
   try {
@@ -10259,14 +10484,15 @@ async function recordEditActivity(ctx, payload) {
     const rawPaths = editedPathsFromHook(payload.tool_name, payload.tool_input);
     if (rawPaths.length === 0) return;
     const cwd = payload.cwd ?? process.cwd();
-    const plansDir = path10.join(os7.homedir(), ".claude", "plans");
-    const abs = rawPaths.map((p) => path10.resolve(cwd, p));
-    const codePaths = abs.filter((p) => !p.startsWith(plansDir + path10.sep));
+    const plansDir = path11.join(os8.homedir(), ".claude", "plans");
+    const abs = rawPaths.map((p) => path11.resolve(cwd, p));
+    const codePaths = abs.filter((p) => !p.startsWith(plansDir + path11.sep));
     if (codePaths.length === 0) return;
     const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
     if (!resolved.project_id) return;
     const accountOverride = resolved.account_id && resolved.account_id !== ctx.config.account_id ? resolved.account_id : void 0;
     const relPaths = [...new Set(codePaths.map((p) => repoRelativePath(p, cwd)))];
+    const identity = localBrokerIdentity(cwd);
     await ctx.api.writeUsageEvent(
       {
         event_type: "edit.activity",
@@ -10274,7 +10500,10 @@ async function recordEditActivity(ctx, payload) {
           project_id: resolved.project_id,
           session_id: payload.session_id ?? null,
           paths: relPaths,
-          git_branch: readGitBranch(cwd)
+          git_branch: readGitBranch(cwd),
+          git_head: identity?.head ?? null,
+          worktree_id: identity?.worktreeId ?? null,
+          device_id: identity?.deviceId ?? null
         }
       },
       accountOverride ? { accountId: accountOverride } : {}
@@ -10286,10 +10515,72 @@ async function recordEditActivity(ctx, payload) {
   }
 }
 
+// packages/plugin-core/dist/edit-broker.js
+import {
+  mkdtempSync,
+  readFileSync as readFileSync4,
+  rmSync as rmSync2,
+  writeFileSync as writeFileSync2
+} from "node:fs";
+import os9 from "node:os";
+import path13 from "node:path";
+import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
+
+// packages/plugin-core/dist/edit-intent.js
+import crypto3 from "node:crypto";
+import { readFileSync as readFileSync3 } from "node:fs";
+import path12 from "node:path";
+function hashEditContent(value) {
+  return crypto3.createHash("sha256").update(value).digest("hex");
+}
+
+// packages/plugin-core/dist/edit-broker.js
+async function completeEditBroker(ctx, payload) {
+  const sessionId = payload.session_id;
+  if (!sessionId) return;
+  const cwd = payload.cwd ?? process.cwd();
+  const identity = localBrokerIdentity(cwd);
+  const rawPaths = editedPathsFromHook(payload.tool_name, payload.tool_input);
+  if (!identity || rawPaths.length === 0) return;
+  const paths = [...new Set(rawPaths.map(
+    (file) => repoRelativePath(path13.resolve(cwd, file), cwd).replaceAll(path13.sep, "/")
+  ))];
+  try {
+    const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
+    if (!resolved.project_id) return;
+    const opts = resolved.account_id ? { accountId: resolved.account_id } : {};
+    for (const relPath of paths) {
+      let content;
+      try {
+        content = readFileSync4(path13.join(identity.root, relPath), "utf8");
+      } catch {
+        continue;
+      }
+      await ctx.api.editBroker(
+        {
+          action: "complete",
+          project_id: resolved.project_id,
+          session_id: sessionId,
+          path: relPath,
+          result_hash: hashEditContent(content)
+        },
+        opts
+      );
+    }
+  } catch (error) {
+    log(`edit-broker: complete failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    releaseLocalWriteLeases(identity, sessionId, paths);
+  }
+}
+
+// packages/plugin-core/dist/edit-collision-report.js
+import path14 from "node:path";
+
 // packages/plugin-core/dist/trigger-memories.js
 import { promises as fs7 } from "node:fs";
-import os8 from "node:os";
-import path11 from "node:path";
+import os10 from "node:os";
+import path15 from "node:path";
 
 // packages/plugin-core/dist/pre-tool-use-handler.js
 async function releaseDeployLease(ctx, args) {
@@ -10436,15 +10727,15 @@ async function captureApprovedPlan(ctx, payload) {
   }
   const firstLine = planText.split("\n").find((l) => l.trim().length > 0)?.trim() ?? "Plan";
   const title = firstLine.replace(/^#+\s*/, "").slice(0, 200) || "Plan";
-  const plansDir = path13.join(os9.homedir(), ".claude", "plans");
+  const plansDir = path17.join(os11.homedir(), ".claude", "plans");
   await fs8.mkdir(plansDir, { recursive: true });
   let fileName = `${slugify(title)}.md`;
-  let abs = path13.join(plansDir, fileName);
+  let abs = path17.join(plansDir, fileName);
   try {
     const existing = await fs8.readFile(abs, "utf8");
     if (existing.trim() !== planText) {
       fileName = `${slugify(title)}-${shortHash(planText)}.md`;
-      abs = path13.join(plansDir, fileName);
+      abs = path17.join(plansDir, fileName);
     }
   } catch {
   }
@@ -10492,6 +10783,7 @@ async function main() {
   } catch {
     return;
   }
+  await completeEditBroker(ctx, payload);
   await recordEditActivity(ctx, payload);
   if (payload.tool_name === "Bash") {
     await releaseDeployLease(ctx, {
@@ -10508,9 +10800,9 @@ async function main() {
   }
   const file = payload.tool_input?.file_path;
   if (!file) return;
-  const abs = path13.resolve(file);
-  const plansDir = path13.join(os9.homedir(), ".claude", "plans");
-  if (!abs.startsWith(plansDir + path13.sep)) return;
+  const abs = path17.resolve(file);
+  const plansDir = path17.join(os11.homedir(), ".claude", "plans");
+  if (!abs.startsWith(plansDir + path17.sep)) return;
   if (!abs.endsWith(".md")) return;
   try {
     const st = await fs8.stat(abs);
@@ -10545,7 +10837,7 @@ async function main() {
       gitRemote
     });
     log(
-      `pushed plan ${path13.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
+      `pushed plan ${path17.basename(abs)} (${result.created ? "new" : "v" + result.version_number}, project ${resolved.project_id?.slice(0, 8) ?? "(none)"})`
     );
   } catch (err) {
     log(`plan push failed: ${err instanceof Error ? err.message : String(err)}`);

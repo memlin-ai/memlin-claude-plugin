@@ -183,7 +183,7 @@ function buildContinuityMarker(auditId) {
     "<memlin-context-unchanged>",
     `# This turn is a follow-up to the prior turn. The same Memlin context applies.`,
     `# Refer to the bundle injected on the previous turn (audit_id: ${auditId}).`,
-    "# If you need fresh context, ask the user to rephrase or invoke memlin_resolve_task directly.",
+    "# Do not invoke memlin_resolve_task automatically for this follow-up.",
     "</memlin-context-unchanged>"
   ].join("\n");
 }
@@ -267,9 +267,10 @@ async function takePendingBundle(cwd, host, match) {
   return selected.bundle;
 }
 var DEFAULT_RESOLVE_BUDGET_MS = 6e3;
-function resolveBudgetMs() {
+function resolveBudgetMs(defaultMs = DEFAULT_RESOLVE_BUDGET_MS) {
   const v = Number(process.env.MEMLIN_RESOLVE_BUDGET_MS);
-  return Number.isFinite(v) && v >= 1e3 ? Math.floor(v) : DEFAULT_RESOLVE_BUDGET_MS;
+  const fallback = Number.isFinite(defaultMs) && defaultMs >= 1e3 ? Math.floor(defaultMs) : DEFAULT_RESOLVE_BUDGET_MS;
+  return Number.isFinite(v) && v >= 1e3 ? Math.floor(v) : fallback;
 }
 function runResolveWithBudget(opts) {
   const budget = opts.budgetMs ?? resolveBudgetMs();
@@ -325,10 +326,13 @@ function runResolveWithBudget(opts) {
     };
     const timer = setTimeout(() => {
       if (settled) return;
-      settled = true;
       clearInterval(bundlePoll);
-      child.unref();
-      resolve({ bundle: null, stillRunning: true });
+      void claimBundle().then((bundle) => {
+        if (settled) return;
+        settled = true;
+        child.unref();
+        resolve(bundle ? { bundle, stillRunning: false } : { bundle: null, stillRunning: true });
+      });
     }, budget);
     const bundlePoll = setInterval(() => {
       if (!settled) void settleFromBundle();
@@ -352,16 +356,16 @@ function runResolveWithBudget(opts) {
     });
   });
 }
-function buildLateDeliveryEnvelope(bundle) {
+function buildLateDeliveryEnvelope(bundle, opts = {}) {
   return [
     "<memlin-late-context>",
     "# Memlin context resolved for the PREVIOUS prompt \u2014 it finished after that",
-    `# turn's delivery deadline. Task it was resolved for: ${JSON.stringify(bundle.task.slice(0, 140))}`,
+    `# turn's delivery deadline. It is not fresh context for the current prompt.`,
     ...bundle.stale ? [
       `# ADDITIONALLY: the backend was unreachable (${bundle.stale.reason}) \u2014 this is a STALE`,
       "# fallback bundle, not a live resolve. Weigh it accordingly."
     ] : [],
-    "# Treat as background context; invoke memlin_resolve_task if this turn needs fresh context.",
+    opts.currentResolvePending ? "# Treat as background context. The current prompt resolve is already in flight; do not invoke memlin_resolve_task again." : "# Treat as background context; invoke memlin_resolve_task if this turn needs fresh context.",
     "",
     bundle.rendered,
     "</memlin-late-context>"
