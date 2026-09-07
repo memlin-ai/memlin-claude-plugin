@@ -40,6 +40,7 @@ var AUTH_FILE_LOCK_STALE_MS = 2 * 6e4;
 
 // packages/plugin-core/dist/memlin-api-client.js
 import { readFileSync } from "node:fs";
+import crypto from "node:crypto";
 import os3 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -67,6 +68,9 @@ async function closeHttpSockets() {
 // packages/plugin-core/dist/host.js
 import os2 from "node:os";
 import path3 from "node:path";
+
+// packages/plugin-core/dist/memlin-api-client.js
+var RESOLVE_V2_MAX_LINE_BYTES = 2 * 1024 * 1024;
 
 // packages/plugin-core/dist/workspace-binding.js
 import { randomUUID as randomUUID2 } from "node:crypto";
@@ -96,7 +100,7 @@ var CONFIG_DIR = path5.join(os4.homedir(), ".config", "memlin");
 var TOKEN_FILE = path5.join(CONFIG_DIR, "token.json");
 
 // packages/plugin-core/dist/edit-broker-local.js
-import crypto from "node:crypto";
+import crypto2 from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -114,7 +118,7 @@ import { execFileSync } from "node:child_process";
 var LOCK_STALE_MS = 1e4;
 var STATE_VERSION = 1;
 function digest(value) {
-  return crypto.createHash("sha256").update(value).digest("hex");
+  return crypto2.createHash("sha256").update(value).digest("hex");
 }
 function git(cwd, args) {
   try {
@@ -176,7 +180,7 @@ function readState(file) {
   return emptyState();
 }
 function writeState(file, state) {
-  const temp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  const temp = `${file}.${process.pid}.${crypto2.randomUUID()}.tmp`;
   writeFileSync(temp, JSON.stringify(state), { mode: 384 });
   renameSync(temp, file);
 }
@@ -241,7 +245,7 @@ function releaseLocalWriteLeases(identity, sessionId, paths) {
 }
 
 // packages/plugin-core/dist/edit-intent.js
-import crypto2 from "node:crypto";
+import crypto3 from "node:crypto";
 import { readFileSync as readFileSync3 } from "node:fs";
 import path9 from "node:path";
 

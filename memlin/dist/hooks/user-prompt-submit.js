@@ -5,8 +5,8 @@ const __filename = __ftp(import.meta.url); const __dirname = __dn(__filename);
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
 import { spawn as spawn2 } from "node:child_process";
 import { promises as fs4 } from "node:fs";
-import path5 from "node:path";
-import os4 from "node:os";
+import path6 from "node:path";
+import os5 from "node:os";
 import { fileURLToPath } from "node:url";
 
 // packages/plugin-core/dist/state.js
@@ -131,6 +131,48 @@ async function markLastResolveDelivered(input) {
   }
 }
 
+// packages/plugin-core/dist/deploy-broker.js
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import os2 from "node:os";
+import path3 from "node:path";
+function deployWaiterDir() {
+  const override = process.env.MEMLIN_DEPLOY_WAITER_DIR?.trim();
+  if (override) return override;
+  return path3.join(os2.homedir(), ".config", "memlin", "deploy-waiters");
+}
+function waiterPath(sessionId) {
+  const safe = sessionId.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 180);
+  return path3.join(deployWaiterDir(), `${safe}.json`);
+}
+function clearLocalDeployWaiter(sessionId) {
+  try {
+    unlinkSync(waiterPath(sessionId));
+  } catch {
+  }
+}
+function readLocalDeployWaiter(sessionId) {
+  try {
+    const raw = readFileSync(waiterPath(sessionId), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed.session_id !== "string") return null;
+    if (parsed.session_id !== sessionId) return null;
+    if (parsed.status !== "waiting" && parsed.status !== "ready") return null;
+    const expiresAt = parsed.expires_at ? new Date(parsed.expires_at).getTime() : new Date(parsed.queued_at).getTime() + 60 * 60 * 1e3;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      clearLocalDeployWaiter(sessionId);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+function hasPendingDeployWaiter(sessionId) {
+  if (!sessionId) return false;
+  if (!existsSync(waiterPath(sessionId))) return false;
+  return readLocalDeployWaiter(sessionId) != null;
+}
+
 // packages/plugin-core/dist/continuity.js
 var CONTINUITY_WINDOW_MS = 10 * 60 * 1e3;
 var CONTINUATION_PATTERNS = [
@@ -175,6 +217,7 @@ function isContinuation(prompt, cwd, host, last, sessionId) {
   return false;
 }
 function continuationForPrompt(state, prompt, cwd, host, sessionId) {
+  if (hasPendingDeployWaiter(sessionId)) return null;
   const last = getLastResolveForSession(state, sessionId);
   return last && isContinuation(prompt, cwd, host, last, sessionId) ? last : null;
 }
@@ -192,21 +235,28 @@ function buildContinuityMarker(auditId) {
 import { spawn } from "node:child_process";
 import crypto2 from "node:crypto";
 import { promises as fs3 } from "node:fs";
-import path3 from "node:path";
-import os2 from "node:os";
+import path4 from "node:path";
+import os3 from "node:os";
 var PENDING_BUNDLE_MAX_AGE_MS = 10 * 60 * 1e3;
 function pendingBundlePath() {
-  return process.env.MEMLIN_RESOLVE_OUT ?? path3.join(os2.homedir(), ".config", "memlin", "pending-bundle.json");
+  return process.env.MEMLIN_RESOLVE_OUT ?? path4.join(os3.homedir(), ".config", "memlin", "pending-bundle.json");
 }
 var PENDING_BUNDLE_DIR = "pending-bundles";
 function pendingBundleSpoolDir() {
-  return process.env.MEMLIN_PENDING_BUNDLE_DIR ?? path3.join(os2.homedir(), ".config", "memlin", PENDING_BUNDLE_DIR);
+  return process.env.MEMLIN_PENDING_BUNDLE_DIR ?? path4.join(os3.homedir(), ".config", "memlin", PENDING_BUNDLE_DIR);
 }
 function pendingBundleKey(cwd, host, sessionId, task) {
   return crypto2.createHash("sha256").update(JSON.stringify([cwd, host, sessionId ?? null, task])).digest("hex");
 }
+function canonicalPendingBundlePathFor(cwd, host, sessionId, task) {
+  return path4.join(pendingBundleSpoolDir(), `${pendingBundleKey(cwd, host, sessionId, task)}.json`);
+}
+function pendingBundleTurnIndexPath(cwd, host, sessionId) {
+  const key = crypto2.createHash("sha256").update(JSON.stringify([cwd, host, sessionId ?? null])).digest("hex");
+  return path4.join(pendingBundleSpoolDir(), `turn-${key}.json`);
+}
 function pendingBundlePathFor(cwd, host, sessionId, task) {
-  return process.env.MEMLIN_RESOLVE_OUT ?? path3.join(pendingBundleSpoolDir(), `${pendingBundleKey(cwd, host, sessionId, task)}.json`);
+  return process.env.MEMLIN_RESOLVE_OUT ?? canonicalPendingBundlePathFor(cwd, host, sessionId, task);
 }
 async function takePendingBundle(cwd, host, match) {
   const explicitFile = process.env.MEMLIN_RESOLVE_OUT;
@@ -214,10 +264,13 @@ async function takePendingBundle(cwd, host, match) {
   let files;
   if (explicitFile) {
     files = [explicitFile];
+  } else if (match?.task !== void 0) {
+    files = [pendingBundlePathFor(cwd, host, match.sessionId ?? null, match.task)];
   } else {
+    const indexFile = pendingBundleTurnIndexPath(cwd, host, match?.sessionId ?? null);
     try {
-      const names = await fs3.readdir(spoolDir);
-      files = names.filter((name) => name.endsWith(".json")).slice(0, 256).map((name) => path3.join(spoolDir, name));
+      const parsed = JSON.parse(await fs3.readFile(indexFile, "utf8"));
+      files = /^[a-f0-9]{64}\.json$/.test(parsed.file ?? "") ? [path4.join(spoolDir, parsed.file)] : [];
     } catch {
       files = [];
     }
@@ -227,6 +280,8 @@ async function takePendingBundle(cwd, host, match) {
   for (const file of [...new Set(files)]) {
     let bundle;
     try {
+      await fs3.chmod(file, 384).catch(() => {
+      });
       bundle = JSON.parse(await fs3.readFile(file, "utf8"));
     } catch {
       continue;
@@ -242,7 +297,7 @@ async function takePendingBundle(cwd, host, match) {
       continue;
     }
     if (bundle.cwd !== cwd || bundle.host !== host) continue;
-    if (match?.sessionId != null && bundle.session_id != null && bundle.session_id !== match.sessionId) {
+    if ((bundle.session_id ?? null) !== (match?.sessionId ?? null)) {
       continue;
     }
     if (match?.task !== void 0 && bundle.task !== match.task) continue;
@@ -254,8 +309,20 @@ async function takePendingBundle(cwd, host, match) {
   const claimed = `${selected.file}.${process.pid}.${Date.now()}.claim`;
   try {
     await fs3.rename(selected.file, claimed);
+    await fs3.chmod(claimed, 384).catch(() => {
+    });
   } catch {
     return null;
+  }
+  if (!explicitFile) {
+    const indexFile = pendingBundleTurnIndexPath(cwd, host, match?.sessionId ?? null);
+    try {
+      const pointer = JSON.parse(await fs3.readFile(indexFile, "utf8"));
+      if (pointer.file === path4.basename(selected.file)) {
+        await fs3.rm(indexFile, { force: true });
+      }
+    } catch {
+    }
   }
   if (match?.task === void 0) {
     await Promise.all(
@@ -291,7 +358,8 @@ function runResolveWithBudget(opts) {
           MEMLIN_RESOLVE_DEADLINE_MS: String(budget),
           // Forward the agent's session id so the resolve's usage_event is
           // attributable to this session (concurrent-work awareness).
-          ...opts.sessionId ? { MEMLIN_SESSION_ID: opts.sessionId } : {}
+          ...opts.sessionId ? { MEMLIN_SESSION_ID: opts.sessionId } : {},
+          ...opts.turnId ? { MEMLIN_TURN_ID: opts.turnId } : {}
         },
         // Detached + no shared stdio: when the caller stops waiting, the
         // child owns its own lifetime and finishes in the background.
@@ -469,8 +537,9 @@ async function takeCorrectionNotice(currentSessionId) {
 
 // packages/plugin-core/dist/companion-client.js
 import http from "node:http";
-import os3 from "node:os";
-import path4 from "node:path";
+import crypto3 from "node:crypto";
+import os4 from "node:os";
+import path5 from "node:path";
 var COMPANION_PROTOCOL = 1;
 var MIN_COMPANION_PROTOCOL = 1;
 var MAX_COMPANION_PROTOCOL = 1;
@@ -481,14 +550,21 @@ function companionSocketPath(env = process.env) {
   const override = env[COMPANION_SOCKET_ENV];
   if (override) return override;
   if (process.platform === "win32") {
-    return `\\\\.\\pipe\\memlin-companion-${os3.userInfo().username}`;
+    return `\\\\.\\pipe\\memlin-companion-${os4.userInfo().username}`;
   }
-  return path4.join(os3.homedir(), ".config", "memlin", "run", "companion.sock");
+  return path5.join(os4.homedir(), ".config", "memlin", "run", "companion.sock");
 }
 var CONNECT_TIMEOUT_MS = 150;
 var DEFAULT_CALL_TIMEOUT_MS = 1e3;
 var CALL_TIMEOUTS = {
   "workspace.resolve": 2e3,
+  "resolve.start": 750,
+  "resolve.reuse": 4500,
+  "resolve.reserve": 750,
+  "resolve.reserve-late": 750,
+  "resolve.commit": 750,
+  "resolve.release": 500,
+  "resolve.report": 500,
   "sync.now": 5e3,
   "login.start": 1e4,
   // Local-store reads walk the materialized doc tree on disk.
@@ -552,8 +628,10 @@ async function companionRequest(method, body, opts = {}) {
     }, CONNECT_TIMEOUT_MS);
     connectTimer.unref?.();
     req.on("socket", (socket) => {
-      socket.once("connect", () => clearTimeout(connectTimer));
+      if (!socket.connecting) clearTimeout(connectTimer);
+      else socket.once("connect", () => clearTimeout(connectTimer));
     });
+    req.once("close", () => clearTimeout(connectTimer));
     req.on("timeout", () => {
       req.destroy();
       fail(false);
@@ -562,8 +640,8 @@ async function companionRequest(method, body, opts = {}) {
     req.end(payload);
   });
 }
-async function companionStatus() {
-  const status = await companionRequest("status.get", {});
+async function companionStatus(opts = {}) {
+  const status = await companionRequest("status.get", {}, opts);
   if (!status) return null;
   if (status.protocol < MIN_COMPANION_PROTOCOL || status.protocol > MAX_COMPANION_PROTOCOL) {
     return null;
@@ -628,9 +706,9 @@ function exitHook(code) {
 }
 
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
-var hookDir = path5.dirname(fileURLToPath(import.meta.url));
-var RESOLVE_BIN = path5.resolve(hookDir, "../cli/resolve.js");
-var PULL_PLANS_BIN = path5.resolve(hookDir, "../cli/pull-plans.js");
+var hookDir = path6.dirname(fileURLToPath(import.meta.url));
+var RESOLVE_BIN = path6.resolve(hookDir, "../cli/resolve.js");
+var PULL_PLANS_BIN = path6.resolve(hookDir, "../cli/pull-plans.js");
 function firePlanSync(cwd) {
   try {
     const child = spawn2(process.execPath, [PULL_PLANS_BIN], {
@@ -647,7 +725,7 @@ function firePlanSync(cwd) {
 async function readPersistedTokenFreshness() {
   try {
     const raw = await fs4.readFile(
-      path5.join(os4.homedir(), ".config", "memlin", "token.json"),
+      path6.join(os5.homedir(), ".config", "memlin", "token.json"),
       "utf8"
     );
     const t = JSON.parse(raw);
