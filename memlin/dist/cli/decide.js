@@ -4108,9 +4108,6 @@ var init_workspace_binding = __esm({
   }
 });
 
-// packages/plugin-core/src/cli/ask.ts
-import { execSync as execSync2 } from "node:child_process";
-
 // packages/plugin-core/src/client.ts
 import { promises as fs4 } from "node:fs";
 import path6 from "node:path";
@@ -4149,46 +4146,6 @@ function describeOpaqueBody(status, text) {
     return `HTTP ${status} (${via}HTML error page suppressed, ${trimmed.length} chars)`;
   }
   return `HTTP ${status}: ${singleLine(trimmed)}`;
-}
-function backendUnreachableLine(detail) {
-  return `memlin: backend unreachable (${detail}), no memory available`;
-}
-var ROUTING_PATTERN = /account routing (unavailable|lookup failed)/i;
-var CLOUDFLARE_STATUS = /\b(52[0-7])\b/;
-function statusOf(err) {
-  if (err instanceof MemlinApiError) return err.status;
-  const status = err?.status;
-  if (typeof status === "number" && status >= 100 && status <= 599) return status;
-  const message = err instanceof Error ? err.message : String(err);
-  const arrow = message.match(/→ (\d{3}):/);
-  if (arrow) return Number(arrow[1]);
-  return null;
-}
-function summarizeBackendFailure(err) {
-  const message = err instanceof Error ? err.message : String(err ?? "");
-  const status = statusOf(err);
-  if (ROUTING_PATTERN.test(message)) {
-    const embedded = message.match(CLOUDFLARE_STATUS)?.[1];
-    const code = embedded ?? (status !== null && status >= 500 ? String(status) : null);
-    const detail = code ? `routing ${code}` : "routing unavailable";
-    return { kind: "routing", status: code ? Number(code) : status, detail, line: backendUnreachableLine(detail) };
-  }
-  if (status !== null && status >= 500) {
-    const detail = `HTTP ${status}`;
-    return { kind: "http", status, detail, line: backendUnreachableLine(detail) };
-  }
-  if (/took longer than \d+ seconds/i.test(message)) {
-    return { kind: "network", status: null, detail: "timeout", line: backendUnreachableLine("timeout") };
-  }
-  if (/couldn'?t reach|fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network/i.test(message)) {
-    return {
-      kind: "network",
-      status: null,
-      detail: "network unreachable",
-      line: backendUnreachableLine("network unreachable")
-    };
-  }
-  return null;
 }
 
 // packages/plugin-core/src/auth.ts
@@ -4855,8 +4812,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path8, errorMaps, issueData } = params;
-  const fullPath = [...path8, ...issueData.path || []];
+  const { data, path: path7, errorMaps, issueData } = params;
+  const fullPath = [...path7, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4972,11 +4929,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path8, key) {
+  constructor(parent, value, path7, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path8;
+    this._path = path7;
     this._key = key;
   }
   get path() {
@@ -9315,19 +9272,19 @@ var ContextManifestV1Schema = external_exports.object({
       location: `linked_contexts.${index}`
     }))
   ];
-  references.forEach(({ ref, path: path8, location }) => {
+  references.forEach(({ ref, path: path7, location }) => {
     const identity = contextReferenceIdentityKey(ref);
     const prior = seen.get(identity);
     if (prior && prior.revision !== ref.revision) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path8,
+        path: path7,
         message: `context ${identity} has conflicting revisions in ${prior.location} and ${location}`
       });
     } else if (prior && location.startsWith("linked_contexts.")) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path8,
+        path: path7,
         message: `duplicate linked context ${identity}`
       });
     }
@@ -9641,11 +9598,11 @@ var ContextBundleV1Schema = external_exports.object({
         path: ["coverage", coverageIndex, "omitted_contexts", index, "context_ref"]
       }))
     ];
-    for (const { ref, path: path8 } of references) {
+    for (const { ref, path: path7 } of references) {
       if (!contextKeys.has(contextReferenceKey(ref))) {
         ctx.addIssue({
           code: external_exports.ZodIssueCode.custom,
-          path: path8,
+          path: path7,
           message: "provider coverage is outside the exact manifest contexts"
         });
       }
@@ -11698,42 +11655,6 @@ var AGENT_EXPECTED_CAPABILITIES = {
   // of its own.
   companion: ["cli", "sync", "realtime", "resolve"]
 };
-var PROVIDER_HOSTS = [
-  "github.com",
-  "gitlab.com",
-  "bitbucket.org",
-  "dev.azure.com",
-  "ssh.dev.azure.com",
-  "codeberg.org",
-  "sr.ht",
-  "git.sr.ht"
-];
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  if (!s.includes("://")) {
-    s = s.replace(/^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)/, "https://$1/");
-  }
-  s = s.replace(/^(?:ssh|git|https?):\/\//, "");
-  s = s.replace(/^[^/@]+@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash).toLowerCase();
-    const rest = s.slice(slash);
-    s = host + rest;
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
-}
 async function closeHttpSockets() {
   try {
     const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
@@ -12992,6 +12913,82 @@ function applyWorkspaceOverlay(config, overlay) {
   };
 }
 
+// packages/plugin-core/src/cli/args.ts
+function parseSlashArgs(raw) {
+  const tokens = [];
+  let cur = "";
+  let inSingle = false;
+  let inDouble = false;
+  let started = false;
+  let i = 0;
+  const flush = () => {
+    if (started) {
+      tokens.push(cur);
+      cur = "";
+      started = false;
+    }
+  };
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        cur += ch;
+      }
+      i++;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === "\\" && i + 1 < raw.length) {
+        const next = raw[i + 1];
+        if (next === '"' || next === "\\") {
+          cur += next;
+          i += 2;
+          continue;
+        }
+        cur += ch;
+        i++;
+        continue;
+      }
+      if (ch === '"') {
+        inDouble = false;
+        i++;
+        continue;
+      }
+      cur += ch;
+      i++;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      started = true;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      started = true;
+      i++;
+      continue;
+    }
+    if (ch === " " || ch === "	" || ch === "\n") {
+      flush();
+      i++;
+      continue;
+    }
+    cur += ch;
+    started = true;
+    i++;
+  }
+  flush();
+  return tokens;
+}
+function argvAsSlashArgs() {
+  const raw = process.argv.slice(2).join(" ").trim();
+  return parseSlashArgs(raw);
+}
+
 // packages/plugin-core/src/cli/cli-runner.ts
 var WATCHDOG_MS = 2e3;
 var CliExit = class extends Error {
@@ -13034,252 +13031,107 @@ function runCliMain(main2, onError) {
   );
 }
 
-// packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import { existsSync, readdirSync } from "node:fs";
-import path7 from "node:path";
-init_workspace_binding();
-var WORKSPACE_ENV_VARS = [
-  // Claude Code exposes the original project dir to hooks/plugin commands.
-  "CLAUDE_PROJECT_DIR",
-  // Cursor/plugin shims and local tests can set this explicitly.
-  "CURSOR_WORKSPACE_ROOT",
-  "CURSOR_PROJECT_ROOT",
-  "MEMLIN_WORKSPACE_ROOT",
-  // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
-  "INIT_CWD"
-];
-function runtimeCwd(fallback = process.cwd()) {
-  for (const name of WORKSPACE_ENV_VARS) {
-    const raw = process.env[name]?.trim();
-    if (raw && path7.isAbsolute(raw)) return path7.resolve(raw);
-  }
-  return path7.resolve(fallback);
+// packages/plugin-core/src/cli/decide-args.ts
+var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isUuid(value) {
+  return UUID_RE.test(value);
 }
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path7.resolve(cwd);
-  const remotes = detectGitRemotes(cwd);
-  const hasGitRemote = remotes.length > 0;
-  let serverFailure;
-  try {
-    const result = await api.resolveProject({
-      // Primary remote (back-compat with the single-remote server path).
-      git_remote: remotes[0] ?? null,
-      // All detected remotes — for the workspace-root-of-repos case, this is
-      // every sibling repo so the server resolves to the owning project.
-      git_remotes: remotes,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason,
-        hasGitRemote,
-        enforce_done_deployed: result.enforce_done_deployed
-      };
-    }
-  } catch (e) {
-    serverFailure = summarizeBackendFailure(e) ?? void 0;
-  }
-  if (configProjectId) {
-    const localBinding = await findWorkspaceBinding(absCwd).catch(() => null);
-    if (localBinding?.binding.project_id === configProjectId) {
-      return {
-        project_id: configProjectId,
-        project_name: null,
-        account_id: null,
-        reason: "config",
-        hasGitRemote,
-        server_failure: serverFailure
-      };
-    }
-  }
-  return {
-    project_id: null,
-    project_name: null,
-    account_id: null,
-    reason: "none",
-    hasGitRemote,
-    server_failure: serverFailure
-  };
-}
-function readGitRemote(cwd) {
-  try {
-    const url = execSync("git remote get-url origin", {
-      windowsHide: true,
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
-}
-var MAX_WORKSPACE_SCAN = 64;
-function detectGitRemotes(cwd) {
-  const enclosing = readGitRemote(cwd);
-  if (enclosing) return [enclosing];
-  const out = [];
-  try {
-    let scanned = 0;
-    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
-      if (scanned >= MAX_WORKSPACE_SCAN) break;
-      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
-        continue;
+function extractNoteFlag(args) {
+  const rest = [];
+  let note = null;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--note") {
+      const value = args[i + 1];
+      if (value === void 0 || value.startsWith("--")) {
+        return { args: rest, note: null, error: 'missing value for --note \u2014 use --note "your reason"' };
       }
-      scanned++;
-      const child = path7.join(cwd, entry.name);
-      if (!existsSync(path7.join(child, ".git"))) continue;
-      const remote = readGitRemote(child);
-      if (remote && !out.includes(remote)) out.push(remote);
+      note = value;
+      i++;
+      continue;
     }
-  } catch {
+    if (arg.startsWith("--note=")) {
+      note = arg.slice("--note=".length);
+      continue;
+    }
+    rest.push(arg);
   }
-  return out;
+  const trimmed = note?.trim() ?? "";
+  return { args: rest, note: trimmed ? trimmed : null, error: null };
+}
+var DECIDE_USAGE = 'usage: memlin decide <id> <option> [--note "why"]';
+function parseDecideArgs(args) {
+  const split = extractNoteFlag(args);
+  if (split.error) return { error: split.error };
+  const unknown = split.args.find((a) => a.startsWith("--"));
+  if (unknown) return { error: `unknown flag ${unknown} \u2014 ${DECIDE_USAGE}` };
+  const [id, option, ...extra] = split.args;
+  if (!id || !option) return { error: DECIDE_USAGE };
+  if (extra.length > 0) {
+    return { error: `unexpected argument "${extra[0]}" \u2014 quote the note: --note "\u2026"` };
+  }
+  return { id, option, note: split.note };
+}
+function matchById(items, needle, noun = "open decision") {
+  const exact = items.find((d) => d.id === needle);
+  if (exact) return exact;
+  const matches = items.filter((d) => d.id.startsWith(needle));
+  if (matches.length === 1) return matches[0];
+  if (matches.length === 0) return { error: `no ${noun} matches "${needle}"` };
+  return {
+    error: `"${needle}" is ambiguous \u2014 matches ${matches.length} ${noun}s; use more characters`
+  };
 }
 
-// packages/plugin-core/src/cli/ask.ts
-function parseArgs(argv) {
-  const positional = [];
-  let org;
-  let maxTokens;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--org" || a === "-o") {
-      org = argv[++i];
-      if (!org) return { error: "--org requires a value" };
-    } else if (a === "--max-tokens") {
-      const v = argv[++i];
-      if (!v) return { error: "--max-tokens requires a value" };
-      const n = Number(v);
-      if (!Number.isFinite(n) || n <= 0) return { error: `--max-tokens: bad number "${v}"` };
-      maxTokens = Math.floor(n);
-    } else if (a === "--help" || a === "-h") {
-      return { error: "help" };
-    } else if (a?.startsWith("--")) {
-      return { error: `unknown flag: ${a}` };
-    } else if (a) {
-      positional.push(a);
-    }
-  }
-  const question = positional.join(" ").trim();
-  if (!question) {
-    return { error: 'missing question. usage: memlin ask "<question>"' };
-  }
-  return {
-    question,
-    ...org !== void 0 ? { org } : {},
-    ...maxTokens !== void 0 ? { maxTokens } : {}
-  };
-}
-function printHelp() {
-  console.log(
-    [
-      "memlin ask \u2014 Q&A over your team's workspace memory",
-      "",
-      "Usage:",
-      '  memlin ask "<question>" [options]',
-      "",
-      "Options:",
-      "  --org <name|uuid>      Target a specific org (fuzzy match)",
-      "  --max-tokens <n>       Bundle token budget (default 4000)",
-      "",
-      "Examples:",
-      `  memlin ask "what's our approach to webhook retries"`,
-      `  memlin ask --org Memlin "what's our brand voice"`
-    ].join("\n")
-  );
-}
-function readGitRemote2(cwd) {
-  try {
-    const url = execSync2("git remote get-url origin", {
-      windowsHide: true,
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url);
-  } catch {
-    return null;
-  }
-}
+// packages/plugin-core/src/cli/decide.ts
 async function main() {
-  const argv = process.argv.slice(2);
-  const parsed = parseArgs(argv);
+  const parsed = parseDecideArgs(argvAsSlashArgs());
   if ("error" in parsed) {
-    if (parsed.error === "help") {
-      printHelp();
-      exitCli(0);
-    }
-    console.error(`memlin ask: ${parsed.error}`);
-    printHelp();
-    exitCli(2);
+    process.stderr.write(`${parsed.error}
+`);
+    exitCli(1);
   }
   const ctx = await getApi();
   if (!ctx) {
-    console.error("memlin ask: not configured. Run `memlin login` first.");
+    process.stderr.write("not signed in \u2014 run /memlin-login first\n");
     exitCli(1);
   }
-  const { api, config } = ctx;
-  const cwd = runtimeCwd();
-  const gitRemote = readGitRemote2(cwd);
-  let accountOverride;
-  if (parsed.org) {
-    const me = await api.me();
-    const lower = parsed.org.toLowerCase();
-    const match = me.accounts.find((a) => a.id === parsed.org) ?? me.accounts.find((a) => a.name.toLowerCase().includes(lower));
-    if (!match) {
-      console.error(`memlin ask: couldn't find org matching "${parsed.org}".`);
-      console.error("Run `memlin link --list` to see your orgs.");
+  let id = parsed.id;
+  if (!isUuid(id)) {
+    const { decisions } = await ctx.api.listDecisions({ limit: 200 });
+    const match = matchById(decisions, id);
+    if ("error" in match) {
+      process.stderr.write(`${match.error}
+`);
+      exitCli(2);
+    }
+    const valid = match.options.map((o) => o.id);
+    if (!valid.includes(parsed.option)) {
+      process.stderr.write(
+        `"${parsed.option}" is not an option for this ${match.kind} decision \u2014 choose one of: ${valid.join(", ")}
+`
+      );
       exitCli(1);
     }
-    accountOverride = match.id;
-  } else {
-    try {
-      const resolved = await resolveProject(api, cwd, config.project_id);
-      if (resolved.account_id && resolved.account_id !== config.account_id) {
-        accountOverride = resolved.account_id;
-      }
-    } catch {
-    }
+    id = match.id;
   }
-  let result;
-  try {
-    result = await api.ask(
-      {
-        question: parsed.question,
-        cwd,
-        git_remote: gitRemote,
-        ...parsed.maxTokens !== void 0 ? { max_tokens: parsed.maxTokens } : {}
-      },
-      accountOverride ? { accountId: accountOverride } : {}
-    );
-  } catch (err) {
-    console.error(`memlin ask failed: ${err instanceof Error ? err.message : err}`);
-    exitCli(1);
-  }
-  console.log(result.answer);
-  if (result.empty_bundle) {
-    console.log("\n(no workspace items above the relevance threshold for this question)");
-  }
-  if (result.citations.length > 0) {
-    console.log("\nCited:");
-    for (const [i, c] of result.citations.entries()) {
-      const idShort = c.id.slice(0, 8);
-      const path8 = c.path ? ` \xB7 ${c.path}` : "";
-      console.log(`  [#${i + 1}] ${c.kind}: ${c.title}${path8} \xB7 v${c.version_number} (${idShort})`);
-    }
-  }
-  console.log(
-    `
-resolve ${result.timings.resolve_ms}ms \xB7 answer ${result.timings.answer_ms}ms \xB7 replay: memlin audit replay ${result.audit_id}`
-  );
+  const result = await ctx.api.answerDecision(id, {
+    option: parsed.option,
+    note: parsed.note,
+    via: "cli"
+  });
+  const verb = result.replayed ? "Already recorded" : "Recorded";
+  process.stdout.write(`\u2713 ${verb}: ${result.option.label} \u2014 ${result.decision.question}
+`);
+  process.stdout.write(`  ${result.consequence}
+`);
+  if (parsed.note) process.stdout.write(`  Note kept with the answer: "${parsed.note}"
+`);
+  if (result.reversible) process.stdout.write("  Can be undone from the Handled page.\n");
 }
 runCliMain(main, (err) => {
-  console.error("memlin ask failed:", err instanceof Error ? err.message : err);
+  process.stderr.write(`memlin decide failed: ${err instanceof Error ? err.message : String(err)}
+`);
   return 1;
 });
 /*! Bundled license information:
