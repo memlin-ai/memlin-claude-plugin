@@ -11842,9 +11842,177 @@ var init_public_experience = __esm({
 });
 
 // packages/shared/dist/memory-decisions.js
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function labelDecisionOptionIds(kind, text) {
+  const spec = DECISION_KINDS[kind];
+  if (!spec || !text) return text;
+  let out2 = text;
+  const options2 = [...spec.options].sort((a, b) => b.id.length - a.id.length);
+  for (const o of options2) {
+    const id = escapeRegExp(o.id);
+    const bare = o.id.includes("_") ? `|(?<![\\w-])${id}(?![\\w-])` : "";
+    out2 = out2.replace(new RegExp(`\`${id}\`${bare}`, "gi"), o.label);
+  }
+  return out2;
+}
+var DECISION_KINDS;
 var init_memory_decisions = __esm({
   "packages/shared/dist/memory-decisions.js"() {
     "use strict";
+    DECISION_KINDS = {
+      replace: {
+        id: "replace",
+        label: "Replace live memory",
+        raisedWhen: "A new capture would retire or rewrite a live doc that governs agents: a decision, a correction, a verified directive, or anything a person wrote.",
+        whyHuman: "Agents follow the existing doc today. Replacing it changes what every agent is told, and the evidence alone cannot say the new version is right.",
+        options: [
+          {
+            id: "replace",
+            label: "Replace",
+            consequence: "The new capture goes live and the existing doc is retired.",
+            reversible: true
+          },
+          {
+            id: "keep_both",
+            label: "Keep both",
+            consequence: "Both stay live. Agents may be given both.",
+            reversible: true
+          },
+          {
+            id: "keep_existing",
+            label: "Keep existing",
+            consequence: "Nothing changes for agents. The new capture stays searchable only.",
+            reversible: true
+          }
+        ],
+        defaultOption: "keep_existing",
+        deadlineDays: 7,
+        urgent: true,
+        aiExplanation: true
+      },
+      conflict: {
+        id: "conflict",
+        label: "Two live docs disagree",
+        raisedWhen: "Two live docs contradict, at least one was served to agents in the last 30 days, and at least one is a decision or was written by a person.",
+        whyHuman: "Agents are being given both answers. Which one is current is a judgement about your project that neither doc settles.",
+        options: [
+          {
+            id: "a_wins",
+            label: "First is current",
+            consequence: "The first doc stays live and the second is retired.",
+            reversible: true
+          },
+          {
+            id: "b_wins",
+            label: "Second is current",
+            consequence: "The second doc stays live and the first is retired.",
+            reversible: true
+          },
+          {
+            id: "both_valid",
+            label: "Both are valid",
+            consequence: "Both stay live; the pair is marked as not a conflict and is not raised again.",
+            reversible: true
+          }
+        ],
+        defaultOption: "both_valid",
+        deadlineDays: 14,
+        urgent: false,
+        aiExplanation: true
+      },
+      sensitive: {
+        id: "sensitive",
+        label: "Sensitive content",
+        raisedWhen: "A capture matches a sensitive topic: compensation, HR, personal data or banking.",
+        whyHuman: "Whether this should be remembered, and who may see it, is not something automation should decide.",
+        options: [
+          {
+            id: "keep",
+            label: "Keep for the team",
+            consequence: "It goes live at its captured scope.",
+            reversible: true
+          },
+          {
+            id: "private",
+            label: "Keep private to me",
+            consequence: "It goes live, visible only to you.",
+            reversible: true
+          },
+          {
+            id: "discard",
+            label: "Discard",
+            consequence: "It is removed and will not be captured again.",
+            reversible: true
+          }
+        ],
+        defaultOption: "discard",
+        deadlineDays: 7,
+        urgent: true,
+        aiExplanation: false
+      },
+      runbook: {
+        id: "runbook",
+        label: "Incident runbook",
+        raisedWhen: "A session that handled an incident produced a runbook.",
+        whyHuman: "A runbook steers future incident response. You were there; you know whether it is what should happen next time.",
+        options: [
+          {
+            id: "keep_live",
+            label: "Keep live",
+            consequence: "Agents are given it for similar incidents.",
+            reversible: true
+          },
+          {
+            id: "searchable_only",
+            label: "Searchable only",
+            consequence: "It is kept and findable, but not given to agents unprompted.",
+            reversible: true
+          },
+          {
+            id: "discard",
+            label: "Discard",
+            consequence: "It is removed.",
+            reversible: true
+          }
+        ],
+        defaultOption: "searchable_only",
+        deadlineDays: 7,
+        urgent: false,
+        aiExplanation: true
+      },
+      goal: {
+        id: "goal",
+        label: "Goal approval",
+        raisedWhen: "A goal was proposed and needs approval before agents work toward it.",
+        whyHuman: "Goals direct what agents optimise for. Only a person can commit the team to one.",
+        options: [
+          {
+            id: "approve",
+            label: "Approve",
+            consequence: "Agents are given the goal.",
+            reversible: true
+          },
+          {
+            id: "not_now",
+            label: "Not now",
+            consequence: "It stays a draft that agents are not given.",
+            reversible: true
+          },
+          {
+            id: "reject",
+            label: "Reject",
+            consequence: "It is closed.",
+            reversible: true
+          }
+        ],
+        defaultOption: "not_now",
+        deadlineDays: 14,
+        urgent: false,
+        aiExplanation: true
+      }
+    };
   }
 });
 
@@ -11853,6 +12021,15 @@ var init_memory_transitions = __esm({
   "packages/shared/dist/memory-transitions.js"() {
     "use strict";
     init_memory_decisions();
+  }
+});
+
+// packages/shared/dist/memory-drift-consumer.js
+var init_memory_drift_consumer = __esm({
+  "packages/shared/dist/memory-drift-consumer.js"() {
+    "use strict";
+    init_memory_decisions();
+    init_memory_transitions();
   }
 });
 
@@ -11952,6 +12129,7 @@ var init_dist = __esm({
     init_public_experience();
     init_memory_decisions();
     init_memory_transitions();
+    init_memory_drift_consumer();
     init_decision_prompt();
     init_admission();
     init_review_reasons();
@@ -13121,7 +13299,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.70";
+  cachedAgentVersion = "0.2.71";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -20608,57 +20786,48 @@ var init_inbox = __esm({
   }
 });
 
-// packages/plugin-core/src/cli/decisions.ts
-var decisions_exports = {};
+// packages/plugin-core/src/cli/decisions-view.ts
 function label(d, id) {
   return d.options.find((o) => o.id === id)?.label ?? id ?? "";
 }
-async function listDecisions(api) {
-  const { decisions, count } = await api.listDecisions({ limit: 50 });
-  if (decisions.length === 0) {
-    process.stdout.write("No open decisions \u2014 Memlin has nothing it needs you to decide.\n");
-    return;
-  }
-  process.stdout.write(
+function labelWithId(d, id) {
+  const l = label(d, id);
+  return l && l !== id ? `${l} (${id})` : id;
+}
+function prose(d, text) {
+  return labelDecisionOptionIds(d.kind, text);
+}
+function formatDecisionList(decisions, count, nowMs = Date.now()) {
+  if (decisions.length === 0) return NO_OPEN_DECISIONS;
+  const out2 = [
     `${count} open decision${count === 1 ? "" : "s"}. Memlin could not settle ${count === 1 ? "this" : "these"} itself; ignoring one is safe \u2014 its default applies at the deadline.
 
 `
-  );
+  ];
   for (const d of decisions) {
-    process.stdout.write(`  ${d.id.slice(0, 8)}  ${d.kind.padEnd(9)} ${d.question}
+    out2.push(`  ${d.id.slice(0, 8)}  ${d.kind.padEnd(9)} ${d.question}
 `);
-    process.stdout.write(`            Why you: ${d.whyHuman}
+    out2.push(`            Why you: ${d.whyHuman}
 `);
-    process.stdout.write(`            Options: ${d.options.map((o) => o.id).join(" \xB7 ")}
+    out2.push(`            Options: ${d.options.map((o) => o.id).join(" \xB7 ")}
 `);
     if (d.recommendation) {
-      process.stdout.write(
-        `            Recommended: ${d.recommendation.option} \u2014 ${d.recommendation.rationale}
+      out2.push(
+        `            Recommended: ${labelWithId(d, d.recommendation.option)} \u2014 ${prose(d, d.recommendation.rationale)}
 `
       );
     }
-    process.stdout.write(
-      `            If ignored: ${d.defaultOption} applies ${describeDeadline(d.deadlineAt)}
+    out2.push(
+      `            If ignored: ${labelWithId(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt, nowMs)}
 `
     );
   }
-  process.stdout.write(
+  out2.push(
     '\nExplain one:  memlin decisions <id>   \xB7   Answer:  memlin decide <id> <option> --note "why"\n(<id> is the 8-char prefix shown above)\n'
   );
+  return out2.join("");
 }
-async function showDecision(api, needle) {
-  let id = needle;
-  if (!isUuid(needle)) {
-    const { decisions } = await api.listDecisions({ limit: 200 });
-    const match = matchById(decisions, needle);
-    if ("error" in match) {
-      process.stderr.write(`${match.error}
-`);
-      exitCli(2);
-    }
-    id = match.id;
-  }
-  const { decision: d, evidence } = await api.getDecision(id);
+function formatDecisionDetail(d, evidence, nowMs = Date.now()) {
   const out2 = [];
   out2.push(`${d.question}`);
   out2.push(`  id ${d.id} \xB7 ${d.kind} \xB7 ${d.state}`);
@@ -20677,8 +20846,8 @@ async function showDecision(api, needle) {
   }
   out2.push("");
   if (d.recommendation) {
-    out2.push(`Recommended: ${label(d, d.recommendation.option)} (${d.recommendation.option})`);
-    out2.push(`  ${d.recommendation.rationale}`);
+    out2.push(`Recommended: ${labelWithId(d, d.recommendation.option)}`);
+    out2.push(`  ${prose(d, d.recommendation.rationale)}`);
   } else {
     out2.push("No recommendation for this one \u2014 decide from the facts above.");
   }
@@ -20686,16 +20855,46 @@ async function showDecision(api, needle) {
   out2.push("Options:");
   for (const o of d.options) {
     out2.push(`  ${o.id.padEnd(16)} ${o.label} \u2014 ${o.consequence}${o.reversible ? " (can be undone)" : ""}`);
-    for (const p of o.pros) out2.push(`  ${"".padEnd(16)} + ${p}`);
-    for (const c of o.cons) out2.push(`  ${"".padEnd(16)} \u2212 ${c}`);
+    for (const p of o.pros) out2.push(`  ${"".padEnd(16)} + ${prose(d, p)}`);
+    for (const c of o.cons) out2.push(`  ${"".padEnd(16)} \u2212 ${prose(d, c)}`);
   }
   out2.push("");
   out2.push(
-    `If nobody answers: ${label(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt)} \u2014 ${evidence.deadline.consequence}`
+    `If nobody answers: ${label(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt, nowMs)} \u2014 ${evidence.deadline.consequence}`
   );
   out2.push("");
   out2.push(`Answer: memlin decide ${d.id.slice(0, 8)} <option> --note "why"`);
-  process.stdout.write(out2.join("\n") + "\n");
+  return out2.join("\n") + "\n";
+}
+var NO_OPEN_DECISIONS;
+var init_decisions_view = __esm({
+  "packages/plugin-core/src/cli/decisions-view.ts"() {
+    "use strict";
+    init_dist();
+    NO_OPEN_DECISIONS = "No open decisions \u2014 Memlin has nothing it needs you to decide.\n";
+  }
+});
+
+// packages/plugin-core/src/cli/decisions.ts
+var decisions_exports = {};
+async function listDecisions(api) {
+  const { decisions, count } = await api.listDecisions({ limit: 50 });
+  process.stdout.write(formatDecisionList(decisions, count));
+}
+async function showDecision(api, needle) {
+  let id = needle;
+  if (!isUuid(needle)) {
+    const { decisions } = await api.listDecisions({ limit: 200 });
+    const match = matchById(decisions, needle);
+    if ("error" in match) {
+      process.stderr.write(`${match.error}
+`);
+      exitCli(2);
+    }
+    id = match.id;
+  }
+  const { decision, evidence } = await api.getDecision(id);
+  process.stdout.write(formatDecisionDetail(decision, evidence));
 }
 async function main19() {
   const ctx = await getApi();
@@ -20713,11 +20912,11 @@ async function main19() {
 var init_decisions = __esm({
   "packages/plugin-core/src/cli/decisions.ts"() {
     "use strict";
-    init_dist();
     init_client();
     init_args();
     init_cli_runner();
     init_decide_args();
+    init_decisions_view();
     runCliMain(main19, (err2) => {
       process.stderr.write(
         `memlin decisions failed: ${err2 instanceof Error ? err2.message : String(err2)}
@@ -193078,7 +193277,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             }
           }
           return result;
-          function escapeRegExp(str2) {
+          function escapeRegExp2(str2) {
             return str2.replace(/[-[\]/{}()*+?.\\^$|]/g, "\\$&");
           }
           function getTodoCommentsRegExp() {
@@ -193086,7 +193285,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             const multiLineCommentStart = /(?:\/\*+\s*)/.source;
             const anyNumberOfSpacesAndAsterisksAtStartOfLine = /(?:^(?:\s|\*)*)/.source;
             const preamble = "(" + anyNumberOfSpacesAndAsterisksAtStartOfLine + "|" + singleLineCommentStart + "|" + multiLineCommentStart + ")";
-            const literals = "(?:" + map(descriptors, (d) => "(" + escapeRegExp(d.text) + ")").join("|") + ")";
+            const literals = "(?:" + map(descriptors, (d) => "(" + escapeRegExp2(d.text) + ")").join("|") + ")";
             const endOfLineOrEndOfComment = /(?:$|\*\/)/.source;
             const messageRemainder = /(?:.*?)/.source;
             const messagePortion = "(" + literals + messageRemainder + ")";

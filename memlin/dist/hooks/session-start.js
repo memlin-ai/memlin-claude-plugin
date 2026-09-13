@@ -11939,6 +11939,21 @@ var init_public_experience = __esm({
 function isDecisionKind(value) {
   return typeof value === "string" && DECISION_KIND_IDS.includes(value);
 }
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function labelDecisionOptionIds(kind, text) {
+  const spec = DECISION_KINDS[kind];
+  if (!spec || !text) return text;
+  let out = text;
+  const options2 = [...spec.options].sort((a, b) => b.id.length - a.id.length);
+  for (const o of options2) {
+    const id = escapeRegExp(o.id);
+    const bare = o.id.includes("_") ? `|(?<![\\w-])${id}(?![\\w-])` : "";
+    out = out.replace(new RegExp(`\`${id}\`${bare}`, "gi"), o.label);
+  }
+  return out;
+}
 var DECISION_KIND_IDS, DECISION_KINDS, DECISION_CAPS;
 var init_memory_decisions = __esm({
   "packages/shared/dist/memory-decisions.js"() {
@@ -12117,6 +12132,15 @@ var init_memory_transitions = __esm({
   }
 });
 
+// packages/shared/dist/memory-drift-consumer.js
+var init_memory_drift_consumer = __esm({
+  "packages/shared/dist/memory-drift-consumer.js"() {
+    "use strict";
+    init_memory_decisions();
+    init_memory_transitions();
+  }
+});
+
 // packages/shared/dist/decision-prompt.js
 function utf8Bytes(value) {
   return encoder.encode(value).length;
@@ -12161,6 +12185,7 @@ function askLine(host, decision) {
   }
 }
 function renderAt(decision, host, detail, nowMs) {
+  const prose = (text, max) => oneLine(labelDecisionOptionIds(decision.kind, text), max);
   const lines = [];
   lines.push(`<memlin-decision id="${decision.id}" kind="${decision.kind}">`);
   lines.push(
@@ -12172,7 +12197,7 @@ function renderAt(decision, host, detail, nowMs) {
   }
   const rec = decision.recommendation;
   if (rec) {
-    const reason = detail === "minimal" ? "" : ` \u2014 ${oneLine(rec.rationale, detail === "full" ? 500 : 240)}`;
+    const reason = detail === "minimal" ? "" : ` \u2014 ${prose(rec.rationale, detail === "full" ? 500 : 240)}`;
     lines.push(`Recommendation: ${optionLabel(decision, rec.option)} (${rec.option})${reason}`);
   } else if (detail !== "minimal") {
     lines.push(
@@ -12189,8 +12214,8 @@ function renderAt(decision, host, detail, nowMs) {
       `- ${o.label} (${o.id}): ${oneLine(o.consequence, 200)}${o.reversible ? " Can be undone." : " Cannot be undone."}`
     );
     if (detail === "full") {
-      for (const p of o.pros) lines.push(`  + ${oneLine(p, 200)}`);
-      for (const c of o.cons) lines.push(`  - ${oneLine(c, 200)}`);
+      for (const p of o.pros) lines.push(`  + ${prose(p, 200)}`);
+      for (const c of o.cons) lines.push(`  - ${prose(c, 200)}`);
     }
   }
   lines.push(
@@ -12318,6 +12343,7 @@ var init_dist = __esm({
     init_public_experience();
     init_memory_decisions();
     init_memory_transitions();
+    init_memory_drift_consumer();
     init_decision_prompt();
     init_admission();
     init_review_reasons();
@@ -12810,7 +12836,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.70";
+  cachedAgentVersion = "0.2.71";
   return cachedAgentVersion;
 }
 function agentCapabilities() {

@@ -12042,6 +12042,21 @@ var DECISION_KINDS = {
     aiExplanation: true
   }
 };
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function labelDecisionOptionIds(kind, text) {
+  const spec = DECISION_KINDS[kind];
+  if (!spec || !text) return text;
+  let out = text;
+  const options2 = [...spec.options].sort((a, b) => b.id.length - a.id.length);
+  for (const o of options2) {
+    const id = escapeRegExp(o.id);
+    const bare = o.id.includes("_") ? `|(?<![\\w-])${id}(?![\\w-])` : "";
+    out = out.replace(new RegExp(`\`${id}\`${bare}`, "gi"), o.label);
+  }
+  return out;
+}
 var DECISION_CAPS = {
   /** Decisions a single capture may raise. */
   perCapture: 3,
@@ -12098,6 +12113,7 @@ function askLine(host, decision) {
   }
 }
 function renderAt(decision, host, detail, nowMs) {
+  const prose = (text, max) => oneLine(labelDecisionOptionIds(decision.kind, text), max);
   const lines = [];
   lines.push(`<memlin-decision id="${decision.id}" kind="${decision.kind}">`);
   lines.push(
@@ -12109,7 +12125,7 @@ function renderAt(decision, host, detail, nowMs) {
   }
   const rec = decision.recommendation;
   if (rec) {
-    const reason = detail === "minimal" ? "" : ` \u2014 ${oneLine(rec.rationale, detail === "full" ? 500 : 240)}`;
+    const reason = detail === "minimal" ? "" : ` \u2014 ${prose(rec.rationale, detail === "full" ? 500 : 240)}`;
     lines.push(`Recommendation: ${optionLabel(decision, rec.option)} (${rec.option})${reason}`);
   } else if (detail !== "minimal") {
     lines.push(
@@ -12126,8 +12142,8 @@ function renderAt(decision, host, detail, nowMs) {
       `- ${o.label} (${o.id}): ${oneLine(o.consequence, 200)}${o.reversible ? " Can be undone." : " Cannot be undone."}`
     );
     if (detail === "full") {
-      for (const p of o.pros) lines.push(`  + ${oneLine(p, 200)}`);
-      for (const c of o.cons) lines.push(`  - ${oneLine(c, 200)}`);
+      for (const p of o.pros) lines.push(`  + ${prose(p, 200)}`);
+      for (const c of o.cons) lines.push(`  - ${prose(c, 200)}`);
     }
   }
   lines.push(
@@ -12537,7 +12553,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.70";
+  cachedAgentVersion = "0.2.71";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
