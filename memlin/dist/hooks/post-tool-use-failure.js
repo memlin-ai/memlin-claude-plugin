@@ -50,6 +50,20 @@ var init_atomic_rename = __esm({
   }
 });
 
+// packages/plugin-core/dist/auth-refusal.js
+import crypto from "node:crypto";
+import { promises as fs2 } from "node:fs";
+import os from "node:os";
+import path2 from "node:path";
+var AUTH_REFUSAL_TTL_MS;
+var init_auth_refusal = __esm({
+  "packages/plugin-core/dist/auth-refusal.js"() {
+    "use strict";
+    init_atomic_rename();
+    AUTH_REFUSAL_TTL_MS = 15 * 60 * 1e3;
+  }
+});
+
 // node_modules/.pnpm/kind-of@6.0.3/node_modules/kind-of/index.js
 var require_kind_of = __commonJS({
   "node_modules/.pnpm/kind-of@6.0.3/node_modules/kind-of/index.js"(exports2, module2) {
@@ -3421,7 +3435,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs5 = __require("fs");
+    var fs6 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -3505,7 +3519,7 @@ var require_gray_matter = __commonJS({
       return stringify(file2, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs5.readFileSync(filepath, "utf8");
+      const str2 = fs6.readFileSync(filepath, "utf8");
       const file2 = matter3(str2, options2);
       file2.path = filepath;
       return file2;
@@ -3535,13 +3549,14 @@ var require_gray_matter = __commonJS({
 
 // packages/plugin-core/dist/workspace-binding.js
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { constants, promises as fs3 } from "node:fs";
-import path4 from "node:path";
+import { constants, promises as fs4 } from "node:fs";
+import path5 from "node:path";
 var GIT_POINTER_MAX_BYTES;
 var init_workspace_binding = __esm({
   "packages/plugin-core/dist/workspace-binding.js"() {
     "use strict";
     init_atomic_rename();
+    init_auth_refusal();
     GIT_POINTER_MAX_BYTES = 8 * 1024;
   }
 });
@@ -3553,22 +3568,23 @@ import {
   rmSync as rmSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import os7 from "node:os";
-import path10 from "node:path";
+import os8 from "node:os";
+import path11 from "node:path";
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 
 // packages/plugin-core/dist/client.js
-import { promises as fs4 } from "node:fs";
-import path5 from "node:path";
-import os4 from "node:os";
+import { promises as fs5 } from "node:fs";
+import path6 from "node:path";
+import os5 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // packages/plugin-core/dist/auth.js
 init_atomic_rename();
-import { promises as fs2 } from "node:fs";
-import path2 from "node:path";
-import os from "node:os";
+import { promises as fs3 } from "node:fs";
+import path3 from "node:path";
+import os2 from "node:os";
 import { randomUUID } from "node:crypto";
+init_auth_refusal();
 var MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
 var MEMLIN_PROD_AUTH0_CLIENT_ID = "fyYMQ4Cxc6Nu5juVwL8Ihqq4fgAFecG9";
 var AUTH0_DOMAIN = process.env.MEMLIN_AUTH0_DOMAIN || MEMLIN_PROD_AUTH0_DOMAIN;
@@ -4057,8 +4073,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path11, errorMaps, issueData } = params;
-  const fullPath = [...path11, ...issueData.path || []];
+  const { data, path: path12, errorMaps, issueData } = params;
+  const fullPath = [...path12, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4174,11 +4190,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path11, key) {
+  constructor(parent, value, path12, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path11;
+    this._path = path12;
     this._key = key;
   }
   get path() {
@@ -8524,19 +8540,19 @@ var ContextManifestV1Schema = external_exports.object({
       location: `linked_contexts.${index}`
     }))
   ];
-  references.forEach(({ ref, path: path11, location }) => {
+  references.forEach(({ ref, path: path12, location }) => {
     const identity = contextReferenceIdentityKey(ref);
     const prior = seen.get(identity);
     if (prior && prior.revision !== ref.revision) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path11,
+        path: path12,
         message: `context ${identity} has conflicting revisions in ${prior.location} and ${location}`
       });
     } else if (prior && location.startsWith("linked_contexts.")) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path11,
+        path: path12,
         message: `duplicate linked context ${identity}`
       });
     }
@@ -8850,11 +8866,11 @@ var ContextBundleV1Schema = external_exports.object({
         path: ["coverage", coverageIndex, "omitted_contexts", index, "context_ref"]
       }))
     ];
-    for (const { ref, path: path11 } of references) {
+    for (const { ref, path: path12 } of references) {
       if (!contextKeys.has(contextReferenceKey(ref))) {
         ctx.addIssue({
           code: external_exports.ZodIssueCode.custom,
-          path: path11,
+          path: path12,
           message: "provider coverage is outside the exact manifest contexts"
         });
       }
@@ -11743,10 +11759,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path11) {
-  if (!path11)
+function getElementAtPath(obj, path12) {
+  if (!path12)
     return obj;
-  return path11.reduce((acc, key) => acc?.[key], obj);
+  return path12.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12066,11 +12082,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path11, issues) {
+function prefixIssues(path12, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path11);
+    iss.path.unshift(path12);
     return iss;
   });
 }
@@ -12207,7 +12223,7 @@ function treeifyError(error40, _mapper) {
     return issue2.message;
   };
   const result = { errors: [] };
-  const processError = (error41, path11 = []) => {
+  const processError = (error41, path12 = []) => {
     var _a, _b;
     for (const issue2 of error41.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -12217,7 +12233,7 @@ function treeifyError(error40, _mapper) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path11, ...issue2.path];
+        const fullpath = [...path12, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -12247,9 +12263,9 @@ function treeifyError(error40, _mapper) {
   processError(error40);
   return result;
 }
-function toDotPath(path11) {
+function toDotPath(path12) {
   const segs = [];
-  for (const seg of path11) {
+  for (const seg of path12) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -22907,10 +22923,10 @@ function validateFlowDefinitionSemantics(flow) {
       ],
       ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, path: `stages.${stageIndex}.bypass_target` }]
     ];
-    targets.forEach(({ target, path: path11 }) => {
+    targets.forEach(({ target, path: path12 }) => {
       if (!isReservedTarget(target) && !stageById.has(target)) {
         issues.push({
-          path: path11,
+          path: path12,
           code: "missing_transition_target",
           message: `transition target ${JSON.stringify(target)} does not exist`
         });
@@ -22940,7 +22956,7 @@ function validateFlowDefinitionSemantics(flow) {
   const visiting = /* @__PURE__ */ new Set();
   const visited = /* @__PURE__ */ new Set();
   let hasReachableEnd = false;
-  const visit = (stageId, path11, pathBounds) => {
+  const visit = (stageId, path12, pathBounds) => {
     reachable.add(stageId);
     if (visited.has(stageId)) return;
     visiting.add(stageId);
@@ -22956,7 +22972,7 @@ function validateFlowDefinitionSemantics(flow) {
         ...stage.default_transition === null ? [] : [{ target: stage.default_transition, bounded: false }],
         ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, bounded: false }]
       ];
-      const currentPath = [...path11, stageId];
+      const currentPath = [...path12, stageId];
       for (const edge of edges) {
         const { target } = edge;
         if (target === "$end") {
@@ -23064,18 +23080,18 @@ var FlowPackManifestBaseSchema = external_exports2.object({
   evals: external_exports2.array(ManifestEvalSchema).max(256),
   model_roles: external_exports2.array(ManifestModelRoleSchema).max(64)
 }).strict();
-function validateRelativePackPath(path11) {
-  if (path11.startsWith("/") || path11.startsWith("\\")) return "path must be relative";
-  if (/^[A-Za-z]:/.test(path11) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path11)) {
+function validateRelativePackPath(path12) {
+  if (path12.startsWith("/") || path12.startsWith("\\")) return "path must be relative";
+  if (/^[A-Za-z]:/.test(path12) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path12)) {
     return "drive-qualified paths and URI schemes are not allowed";
   }
-  if (/[\u0000-\u001f\u007f]/.test(path11)) return "control characters are not allowed";
-  if (/%(?:2e|2f|5c)/i.test(path11)) return "encoded path traversal is not allowed";
-  if (path11.includes("\\")) return "path must use forward slashes";
-  if (path11.split("/").some((segment) => segment === ".." || segment === ".")) {
+  if (/[\u0000-\u001f\u007f]/.test(path12)) return "control characters are not allowed";
+  if (/%(?:2e|2f|5c)/i.test(path12)) return "encoded path traversal is not allowed";
+  if (path12.includes("\\")) return "path must use forward slashes";
+  if (path12.split("/").some((segment) => segment === ".." || segment === ".")) {
     return "path traversal and dot segments are not allowed";
   }
-  if (path11.split("/").some((segment) => segment.length === 0)) {
+  if (path12.split("/").some((segment) => segment.length === 0)) {
     return "path cannot contain empty segments";
   }
   return null;
@@ -23122,22 +23138,22 @@ function validateFlowPackManifestSemantics(manifest) {
       issues
     );
     role.independence.compare_against_roles.forEach((comparedRole, comparedIndex) => {
-      const path11 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
+      const path12 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
       if (comparedRole === role.id) {
         issues.push({
-          path: path11,
+          path: path12,
           code: "self_referential_model_independence",
           message: "a model role cannot require independence from itself"
         });
       } else if (!modelRolesById.has(comparedRole)) {
         issues.push({
-          path: path11,
+          path: path12,
           code: "missing_independence_model_role",
           message: `independence policy references undeclared model role ${JSON.stringify(comparedRole)}`
         });
       } else if (modelRolesById.get(comparedRole)?.independence !== null) {
         issues.push({
-          path: path11,
+          path: path12,
           code: "independence_reference_not_author",
           message: `independence policy must compare against an author role; ${JSON.stringify(comparedRole)} declares its own independence policy`
         });
@@ -23217,9 +23233,10 @@ var FlowPackManifestSchema = FlowPackManifestBaseSchema.superRefine((value, ctx)
 });
 
 // packages/plugin-core/dist/memlin-api-client.js
+init_auth_refusal();
 import { readFileSync } from "node:fs";
-import crypto from "node:crypto";
-import os3 from "node:os";
+import crypto2 from "node:crypto";
+import os4 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23244,8 +23261,8 @@ async function closeHttpSockets() {
 }
 
 // packages/plugin-core/dist/host.js
-import os2 from "node:os";
-import path3 from "node:path";
+import os3 from "node:os";
+import path4 from "node:path";
 
 // packages/plugin-core/dist/memlin-api-client.js
 var RESOLVE_V2_MAX_LINE_BYTES = 2 * 1024 * 1024;
@@ -23271,11 +23288,12 @@ function exitHook(code) {
 }
 
 // packages/plugin-core/dist/client.js
-var CONFIG_DIR = path5.join(os4.homedir(), ".config", "memlin");
-var TOKEN_FILE = path5.join(CONFIG_DIR, "token.json");
+init_auth_refusal();
+var CONFIG_DIR = path6.join(os5.homedir(), ".config", "memlin");
+var TOKEN_FILE = path6.join(CONFIG_DIR, "token.json");
 
 // packages/plugin-core/dist/edit-broker-local.js
-import crypto2 from "node:crypto";
+import crypto3 from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -23287,13 +23305,13 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import os5 from "node:os";
-import path6 from "node:path";
+import os6 from "node:os";
+import path7 from "node:path";
 import { execFileSync } from "node:child_process";
 var LOCK_STALE_MS = 1e4;
 var STATE_VERSION = 1;
 function digest(value) {
-  return crypto2.createHash("sha256").update(value).digest("hex");
+  return crypto3.createHash("sha256").update(value).digest("hex");
 }
 function git(cwd, args) {
   try {
@@ -23312,7 +23330,7 @@ function canonical(value) {
   try {
     return realpathSync(value);
   } catch {
-    return path6.resolve(value);
+    return path7.resolve(value);
   }
 }
 function localBrokerIdentity(cwd) {
@@ -23321,9 +23339,9 @@ function localBrokerIdentity(cwd) {
   if (!rootRaw || !commonRaw) return null;
   const root = canonical(rootRaw);
   const commonDir = canonical(
-    path6.isAbsolute(commonRaw) ? commonRaw : path6.resolve(cwd, commonRaw)
+    path7.isAbsolute(commonRaw) ? commonRaw : path7.resolve(cwd, commonRaw)
   );
-  const deviceId = digest(`${os5.hostname()}\0${os5.platform()}\0${os5.arch()}`);
+  const deviceId = digest(`${os6.hostname()}\0${os6.platform()}\0${os6.arch()}`);
   return {
     root,
     commonDir,
@@ -23334,11 +23352,11 @@ function localBrokerIdentity(cwd) {
   };
 }
 function statePaths(identity) {
-  const dir = path6.join(identity.commonDir, "memlin");
+  const dir = path7.join(identity.commonDir, "memlin");
   return {
     dir,
-    state: path6.join(dir, "edit-broker-state.json"),
-    lock: path6.join(dir, "edit-broker.lock")
+    state: path7.join(dir, "edit-broker-state.json"),
+    lock: path7.join(dir, "edit-broker.lock")
   };
 }
 function emptyState() {
@@ -23355,7 +23373,7 @@ function readState(file2) {
   return emptyState();
 }
 function writeState(file2, state) {
-  const temp = `${file2}.${process.pid}.${crypto2.randomUUID()}.tmp`;
+  const temp = `${file2}.${process.pid}.${crypto3.randomUUID()}.tmp`;
   writeFileSync(temp, JSON.stringify(state), { mode: 384 });
   renameSync(temp, file2);
 }
@@ -23420,20 +23438,20 @@ function releaseLocalWriteLeases(identity, sessionId, paths) {
 }
 
 // packages/plugin-core/dist/edit-intent.js
-import crypto3 from "node:crypto";
+import crypto4 from "node:crypto";
 import { readFileSync as readFileSync3 } from "node:fs";
-import path9 from "node:path";
+import path10 from "node:path";
 
 // packages/plugin-core/dist/edit-activity.js
 import { execSync as execSync2 } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
-import path8 from "node:path";
-import os6 from "node:os";
+import path9 from "node:path";
+import os7 from "node:os";
 
 // packages/plugin-core/dist/project-resolver.js
 import { execSync } from "node:child_process";
 import { existsSync as existsSync2, readdirSync } from "node:fs";
-import path7 from "node:path";
+import path8 from "node:path";
 init_workspace_binding();
 
 // packages/plugin-core/dist/edit-activity.js
@@ -23493,25 +23511,25 @@ function repoRelativePath(absPath, cwd) {
   if (top) {
     const canonicalWithMissingTail = (candidate) => {
       const tail = [];
-      let cursor = path8.resolve(candidate);
+      let cursor = path9.resolve(candidate);
       while (true) {
         try {
-          return path8.join(realpathSync2(cursor), ...tail.reverse());
+          return path9.join(realpathSync2(cursor), ...tail.reverse());
         } catch {
-          const parent = path8.dirname(cursor);
-          if (parent === cursor) return path8.resolve(candidate);
-          tail.push(path8.basename(cursor));
+          const parent = path9.dirname(cursor);
+          if (parent === cursor) return path9.resolve(candidate);
+          tail.push(path9.basename(cursor));
           cursor = parent;
         }
       }
     };
-    const rel = path8.relative(
+    const rel = path9.relative(
       canonicalWithMissingTail(top),
       canonicalWithMissingTail(absPath)
     );
-    if (rel && !rel.startsWith("..") && !path8.isAbsolute(rel)) return rel;
+    if (rel && !rel.startsWith("..") && !path9.isAbsolute(rel)) return rel;
   }
-  return path8.basename(absPath);
+  return path9.basename(absPath);
 }
 
 // packages/plugin-core/dist/edit-broker.js
@@ -23521,7 +23539,7 @@ function releaseEditBrokerTool(payload) {
   const identity = localBrokerIdentity(cwd);
   if (!identity) return;
   const paths = editedPathsFromHook(payload.tool_name, payload.tool_input).map(
-    (file2) => repoRelativePath(path10.resolve(cwd, file2), cwd).replaceAll(path10.sep, "/")
+    (file2) => repoRelativePath(path11.resolve(cwd, file2), cwd).replaceAll(path11.sep, "/")
   );
   releaseLocalWriteLeases(identity, payload.session_id, paths.length > 0 ? paths : void 0);
 }
