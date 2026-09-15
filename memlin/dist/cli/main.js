@@ -24943,6 +24943,29 @@ var init_project_flow_contracts = __esm({
   }
 });
 
+// packages/shared/dist/needs-you-groups.js
+function whole(n) {
+  const v = typeof n === "number" ? n : typeof n === "string" && n.trim() ? Number(n) : NaN;
+  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null;
+}
+function decisionCountsOf(res) {
+  return { open: whole(res?.count) ?? 0, needsYou: whole(res?.needs_you_count) };
+}
+function needsYouDecisionsPhrase(counts) {
+  const { open, needsYou } = counts;
+  if (needsYou === null) {
+    return open > 0 ? `${open} open decision${open === 1 ? "" : "s"}` : "";
+  }
+  if (needsYou === 0 && open === 0) return "";
+  const head = `${needsYou} decision${needsYou === 1 ? "" : "s"} need${needsYou === 1 ? "s" : ""} you`;
+  return open !== needsYou ? `${head} (${open} open question${open === 1 ? "" : "s"})` : head;
+}
+var init_needs_you_groups = __esm({
+  "packages/shared/dist/needs-you-groups.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25015,6 +25038,7 @@ var init_dist = __esm({
     init_entitlements();
     init_beta_trial();
     init_project_flow_contracts();
+    init_needs_you_groups();
   }
 });
 
@@ -26316,7 +26340,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.73";
+  cachedAgentVersion = "0.2.74";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -27415,7 +27439,12 @@ var init_memlin_api_client = __esm({
           accountId: opts.accountId
         });
       }
-      /** GET /decisions — open memory decisions (most consequential first) + the one open count. */
+      /**
+       * GET /decisions — open memory decisions (most consequential first), the raw
+       * open `count`, and the grouped `needs_you_count` + `groups` the web app
+       * shows. The grouped fields are absent on older servers: read them through
+       * decisionCountsOf (@memlin/shared), which falls back to `count`.
+       */
       async listDecisions(opts = {}) {
         const qs = opts.limit ? `?limit=${encodeURIComponent(String(opts.limit))}` : "";
         return this.request("GET", `/decisions${qs}`, void 0, {
@@ -29302,6 +29331,102 @@ var init_plan_sync = __esm({
   }
 });
 
+// packages/plugin-core/src/cli/decisions-view.ts
+function label(d, id) {
+  return d.options.find((o) => o.id === id)?.label ?? id ?? "";
+}
+function labelWithId(d, id) {
+  const l = label(d, id);
+  return l && l !== id ? `${l} (${id})` : id;
+}
+function prose(d, text) {
+  return labelDecisionOptionIds(d.kind, text);
+}
+function formatDecisionStatusLine(counts) {
+  const phrase = needsYouDecisionsPhrase(counts);
+  return phrase ? `${phrase} \u2014 memlin decisions` : "none";
+}
+function formatDecisionList(decisions, count, nowMs = Date.now()) {
+  if (decisions.length === 0) return NO_OPEN_DECISIONS;
+  const counts = typeof count === "number" ? { open: count, needsYou: null } : count;
+  const n = counts.needsYou ?? counts.open;
+  const head = needsYouDecisionsPhrase(counts) || needsYouDecisionsPhrase({ open: decisions.length, needsYou: null });
+  const grouped = counts.needsYou !== null && counts.needsYou !== counts.open;
+  const out2 = [
+    `${head}. Memlin could not settle ${n === 1 ? "this" : "these"} itself; ignoring one is safe \u2014 its default applies at the deadline.
+` + (grouped ? "Related questions (one incident session's runbooks, one doc) count as one decision; every open question is listed below.\n" : "") + "\n"
+  ];
+  for (const d of decisions) {
+    out2.push(`  ${d.id.slice(0, 8)}  ${d.kind.padEnd(9)} ${d.question}
+`);
+    out2.push(`            Why you: ${d.whyHuman}
+`);
+    out2.push(`            Options: ${d.options.map((o) => o.id).join(" \xB7 ")}
+`);
+    if (d.recommendation) {
+      out2.push(
+        `            Recommended: ${labelWithId(d, d.recommendation.option)} \u2014 ${prose(d, d.recommendation.rationale)}
+`
+      );
+    }
+    out2.push(
+      `            If ignored: ${labelWithId(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt, nowMs)}
+`
+    );
+  }
+  out2.push(
+    '\nExplain one:  memlin decisions <id>   \xB7   Answer:  memlin decide <id> <option> --note "why"\n(<id> is the 8-char prefix shown above)\n'
+  );
+  return out2.join("");
+}
+function formatDecisionDetail(d, evidence, nowMs = Date.now()) {
+  const out2 = [];
+  out2.push(`${d.question}`);
+  out2.push(`  id ${d.id} \xB7 ${d.kind} \xB7 ${d.state}`);
+  out2.push("");
+  out2.push(`Why a person is needed: ${d.whyHuman}`);
+  out2.push(`Where it came from: ${evidence.origin.summary}`);
+  if (evidence.reason.detail) out2.push(`Reason: ${evidence.reason.detail}`);
+  if (evidence.automation.length) {
+    out2.push("What automation already did:");
+    for (const step of evidence.automation) out2.push(`  - ${step}`);
+  }
+  if (evidence.diff?.text) {
+    out2.push(`Change (+${evidence.diff.added} \u2212${evidence.diff.removed}):`);
+    for (const line of evidence.diff.text.split("\n")) out2.push(`  ${line}`);
+    if (evidence.diff.truncated) out2.push("  \u2026");
+  }
+  out2.push("");
+  if (d.recommendation) {
+    out2.push(`Recommended: ${labelWithId(d, d.recommendation.option)}`);
+    out2.push(`  ${prose(d, d.recommendation.rationale)}`);
+  } else {
+    out2.push("No recommendation for this one \u2014 decide from the facts above.");
+  }
+  out2.push("");
+  out2.push("Options:");
+  for (const o of d.options) {
+    out2.push(`  ${o.id.padEnd(16)} ${o.label} \u2014 ${o.consequence}${o.reversible ? " (can be undone)" : ""}`);
+    for (const p of o.pros) out2.push(`  ${"".padEnd(16)} + ${prose(d, p)}`);
+    for (const c of o.cons) out2.push(`  ${"".padEnd(16)} \u2212 ${prose(d, c)}`);
+  }
+  out2.push("");
+  out2.push(
+    `If nobody answers: ${label(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt, nowMs)} \u2014 ${evidence.deadline.consequence}`
+  );
+  out2.push("");
+  out2.push(`Answer: memlin decide ${d.id.slice(0, 8)} <option> --note "why"`);
+  return out2.join("\n") + "\n";
+}
+var NO_OPEN_DECISIONS;
+var init_decisions_view = __esm({
+  "packages/plugin-core/src/cli/decisions-view.ts"() {
+    "use strict";
+    init_dist();
+    NO_OPEN_DECISIONS = "No open decisions \u2014 Memlin has nothing it needs you to decide.\n";
+  }
+});
+
 // packages/plugin-core/src/cli/status.ts
 var status_exports = {};
 async function main3() {
@@ -29335,9 +29460,20 @@ async function main3() {
     console.log("");
     console.log(hazardWarning);
   }
+  await printDecisions(ctx.api);
   printRouting(ctx.config.api_url);
   printCompanion(await companionStatus().catch(() => null));
   await printLocalState();
+}
+async function printDecisions(api) {
+  console.log("");
+  console.log("Decisions");
+  try {
+    const res = await api.listDecisions({ limit: 1, maxRetries: 0, requestTimeoutMs: 3e3 });
+    console.log(`  open:        ${formatDecisionStatusLine(decisionCountsOf(res))}`);
+  } catch (err2) {
+    console.log(`  (could not fetch decisions: ${err2 instanceof Error ? err2.message : err2})`);
+  }
 }
 function printCompanion(status) {
   console.log("");
@@ -29506,6 +29642,8 @@ var init_status = __esm({
     init_auth();
     init_plan_sync();
     init_companion_client();
+    init_dist();
+    init_decisions_view();
     main3().catch((err2) => {
       console.error("memlin status failed:", err2 instanceof Error ? err2.message : err2);
       process.exit(1);
@@ -34001,100 +34139,11 @@ var init_inbox = __esm({
   }
 });
 
-// packages/plugin-core/src/cli/decisions-view.ts
-function label(d, id) {
-  return d.options.find((o) => o.id === id)?.label ?? id ?? "";
-}
-function labelWithId(d, id) {
-  const l = label(d, id);
-  return l && l !== id ? `${l} (${id})` : id;
-}
-function prose(d, text) {
-  return labelDecisionOptionIds(d.kind, text);
-}
-function formatDecisionList(decisions, count, nowMs = Date.now()) {
-  if (decisions.length === 0) return NO_OPEN_DECISIONS;
-  const out2 = [
-    `${count} open decision${count === 1 ? "" : "s"}. Memlin could not settle ${count === 1 ? "this" : "these"} itself; ignoring one is safe \u2014 its default applies at the deadline.
-
-`
-  ];
-  for (const d of decisions) {
-    out2.push(`  ${d.id.slice(0, 8)}  ${d.kind.padEnd(9)} ${d.question}
-`);
-    out2.push(`            Why you: ${d.whyHuman}
-`);
-    out2.push(`            Options: ${d.options.map((o) => o.id).join(" \xB7 ")}
-`);
-    if (d.recommendation) {
-      out2.push(
-        `            Recommended: ${labelWithId(d, d.recommendation.option)} \u2014 ${prose(d, d.recommendation.rationale)}
-`
-      );
-    }
-    out2.push(
-      `            If ignored: ${labelWithId(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt, nowMs)}
-`
-    );
-  }
-  out2.push(
-    '\nExplain one:  memlin decisions <id>   \xB7   Answer:  memlin decide <id> <option> --note "why"\n(<id> is the 8-char prefix shown above)\n'
-  );
-  return out2.join("");
-}
-function formatDecisionDetail(d, evidence, nowMs = Date.now()) {
-  const out2 = [];
-  out2.push(`${d.question}`);
-  out2.push(`  id ${d.id} \xB7 ${d.kind} \xB7 ${d.state}`);
-  out2.push("");
-  out2.push(`Why a person is needed: ${d.whyHuman}`);
-  out2.push(`Where it came from: ${evidence.origin.summary}`);
-  if (evidence.reason.detail) out2.push(`Reason: ${evidence.reason.detail}`);
-  if (evidence.automation.length) {
-    out2.push("What automation already did:");
-    for (const step of evidence.automation) out2.push(`  - ${step}`);
-  }
-  if (evidence.diff?.text) {
-    out2.push(`Change (+${evidence.diff.added} \u2212${evidence.diff.removed}):`);
-    for (const line of evidence.diff.text.split("\n")) out2.push(`  ${line}`);
-    if (evidence.diff.truncated) out2.push("  \u2026");
-  }
-  out2.push("");
-  if (d.recommendation) {
-    out2.push(`Recommended: ${labelWithId(d, d.recommendation.option)}`);
-    out2.push(`  ${prose(d, d.recommendation.rationale)}`);
-  } else {
-    out2.push("No recommendation for this one \u2014 decide from the facts above.");
-  }
-  out2.push("");
-  out2.push("Options:");
-  for (const o of d.options) {
-    out2.push(`  ${o.id.padEnd(16)} ${o.label} \u2014 ${o.consequence}${o.reversible ? " (can be undone)" : ""}`);
-    for (const p of o.pros) out2.push(`  ${"".padEnd(16)} + ${prose(d, p)}`);
-    for (const c of o.cons) out2.push(`  ${"".padEnd(16)} \u2212 ${prose(d, c)}`);
-  }
-  out2.push("");
-  out2.push(
-    `If nobody answers: ${label(d, d.defaultOption)} applies ${describeDeadline(d.deadlineAt, nowMs)} \u2014 ${evidence.deadline.consequence}`
-  );
-  out2.push("");
-  out2.push(`Answer: memlin decide ${d.id.slice(0, 8)} <option> --note "why"`);
-  return out2.join("\n") + "\n";
-}
-var NO_OPEN_DECISIONS;
-var init_decisions_view = __esm({
-  "packages/plugin-core/src/cli/decisions-view.ts"() {
-    "use strict";
-    init_dist();
-    NO_OPEN_DECISIONS = "No open decisions \u2014 Memlin has nothing it needs you to decide.\n";
-  }
-});
-
 // packages/plugin-core/src/cli/decisions.ts
 var decisions_exports = {};
 async function listDecisions(api) {
-  const { decisions, count } = await api.listDecisions({ limit: 50 });
-  process.stdout.write(formatDecisionList(decisions, count));
+  const res = await api.listDecisions({ limit: 50 });
+  process.stdout.write(formatDecisionList(res.decisions, decisionCountsOf(res)));
 }
 async function showDecision(api, needle) {
   let id = needle;
@@ -34127,6 +34176,7 @@ async function main19() {
 var init_decisions = __esm({
   "packages/plugin-core/src/cli/decisions.ts"() {
     "use strict";
+    init_dist();
     init_client();
     init_args();
     init_cli_runner();

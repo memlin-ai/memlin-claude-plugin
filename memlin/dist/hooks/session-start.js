@@ -12484,8 +12484,15 @@ var init_memory_decisions = __esm({
       }
     };
     DECISION_CAPS = {
-      /** Decisions a single capture may raise. */
+      /** Decisions a single capture (one scribe run) may raise. */
       perCapture: 3,
+      /** Open questions of a session-grouped kind (runbook, sensitive) one agent
+       *  session may hold. Later captures of that kind from the same session are
+       *  attached to the open question instead of raising another. */
+      openPerSession: 1,
+      /** Captures one session-grouped question may cover. Past it the raise is
+       *  capped, like perCapture. */
+      capturesPerDecision: 100,
       /** Questions injected into one user turn. */
       perTurn: 1,
       /** Questions asked in one session before the rest wait for the web list. */
@@ -25306,6 +25313,29 @@ var init_project_flow_contracts = __esm({
   }
 });
 
+// packages/shared/dist/needs-you-groups.js
+function whole(n) {
+  const v = typeof n === "number" ? n : typeof n === "string" && n.trim() ? Number(n) : NaN;
+  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null;
+}
+function decisionCountsOf(res) {
+  return { open: whole(res?.count) ?? 0, needsYou: whole(res?.needs_you_count) };
+}
+function needsYouDecisionsPhrase(counts) {
+  const { open, needsYou } = counts;
+  if (needsYou === null) {
+    return open > 0 ? `${open} open decision${open === 1 ? "" : "s"}` : "";
+  }
+  if (needsYou === 0 && open === 0) return "";
+  const head = `${needsYou} decision${needsYou === 1 ? "" : "s"} need${needsYou === 1 ? "s" : ""} you`;
+  return open !== needsYou ? `${head} (${open} open question${open === 1 ? "" : "s"})` : head;
+}
+var init_needs_you_groups = __esm({
+  "packages/shared/dist/needs-you-groups.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25378,6 +25408,7 @@ var init_dist = __esm({
     init_entitlements();
     init_beta_trial();
     init_project_flow_contracts();
+    init_needs_you_groups();
   }
 });
 
@@ -25870,7 +25901,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.73";
+  cachedAgentVersion = "0.2.74";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26969,7 +27000,12 @@ var init_memlin_api_client = __esm({
           accountId: opts.accountId
         });
       }
-      /** GET /decisions — open memory decisions (most consequential first) + the one open count. */
+      /**
+       * GET /decisions — open memory decisions (most consequential first), the raw
+       * open `count`, and the grouped `needs_you_count` + `groups` the web app
+       * shows. The grouped fields are absent on older servers: read them through
+       * decisionCountsOf (@memlin/shared), which falls back to `count`.
+       */
       async listDecisions(opts = {}) {
         const qs = opts.limit ? `?limit=${encodeURIComponent(String(opts.limit))}` : "";
         return this.request("GET", `/decisions${qs}`, void 0, {
@@ -27900,15 +27936,20 @@ async function takeUrgentStopDecision(opts) {
     ].join("\n")
   };
 }
-function formatOpenDecisionsLine(count2) {
-  const n = Number.isFinite(count2) ? Math.max(0, Math.floor(count2)) : 0;
-  if (n === 0) return "";
-  return `Memlin: ${n} open decision${n === 1 ? "" : "s"} \u2014 ask me about ${n === 1 ? "it" : "them"}.`;
+function formatOpenDecisionsLine(count2, needsYou = null) {
+  const open = Number.isFinite(count2) ? Math.max(0, Math.floor(count2)) : 0;
+  const grouped = needsYou !== null && Number.isFinite(needsYou) ? Math.max(0, Math.floor(needsYou)) : null;
+  if (grouped === 0) return "";
+  const phrase = needsYouDecisionsPhrase({ open, needsYou: grouped });
+  if (!phrase) return "";
+  const one = (grouped ?? open) === 1;
+  return `Memlin: ${phrase} \u2014 ask me about ${one ? "it" : "them"}.`;
 }
 async function openDecisionsLine(api) {
   try {
     const res = await api.listDecisions({ limit: 1, maxRetries: 0, requestTimeoutMs: 3e3 });
-    return formatOpenDecisionsLine(Number(res?.count));
+    const { open, needsYou } = decisionCountsOf(res);
+    return formatOpenDecisionsLine(open, needsYou);
   } catch {
     return "";
   }
