@@ -9469,7 +9469,15 @@ var init_light = __esm({
       recallNotes: 3,
       captureInputTokens: 8e3,
       captureOutputTokens: 1e3,
-      captureReservationMicros: 2e4
+      captureReservationMicros: 2e4,
+      // Memlin-funded QUERY embeddings (search + recall). Past either ceiling the
+      // same search runs without an embedder: title text, still project-scoped.
+      // Enforced by light_reserve_query_embedding (web routes and hosted MCP).
+      queryEmbeddingsPerDay: 2e3,
+      queryEmbeddingsPerMinute: 30,
+      /** Suggestions the Companion may keep open at once (light_upsert_suggestions). */
+      openSuggestions: 500,
+      suggestionsPerRequest: 100
     });
     LIGHT_HOSTS = [
       "claude",
@@ -26132,7 +26140,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.76";
+  cachedAgentVersion = "0.2.77";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26653,6 +26661,31 @@ var init_memlin_api_client = __esm({
       /** DELETE /light/suppressions */
       async lightUnsuppress(id) {
         return this.request("DELETE", "/light/suppressions", { id }, { requestTimeoutMs: 8e3 });
+      }
+      /**
+       * POST /light/suggestions — upsert this device's suggestions (≤ 100). The
+       * server never reopens a dismissed / accepted row with the same hash. An
+       * older server answers 404/405; callers treat that as "no server store".
+       */
+      async reportLightSuggestions(input) {
+        return this.request("POST", "/light/suggestions", input, { requestTimeoutMs: 8e3 });
+      }
+      /** GET /light/suggestions?status= */
+      async listLightSuggestions(status) {
+        return (await this.request(
+          "GET",
+          `/light/suggestions?status=${encodeURIComponent(status)}`,
+          void 0,
+          { requestTimeoutMs: 8e3 }
+        )).suggestions;
+      }
+      /**
+       * PATCH /light/suggestions — accept or dismiss. Accepting `suppressed_changed`
+       * deletes the suppression server-side; accepting `source_drift` clears
+       * metadata.custom.memlin_frozen (metadata only, no version).
+       */
+      async resolveLightSuggestion(input) {
+        return this.request("PATCH", "/light/suggestions", input, { requestTimeoutMs: 8e3 });
       }
       /** POST /documents/<id>/status — archive / unarchive / approve (curation). */
       async setDocumentStatus(documentId, action) {
