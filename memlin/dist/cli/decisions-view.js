@@ -7791,7 +7791,7 @@ var BrandGuidelinesFrontmatterSchema = external_exports.object({
   imagery: external_exports.array(BrandImageryNoteSchema).optional()
 });
 
-// packages/shared/dist/brand-guidelines-frontmatter.js
+// packages/shared/dist/safe-frontmatter.js
 var import_gray_matter = __toESM(require_gray_matter(), 1);
 
 // packages/shared/dist/redact.js
@@ -8126,9 +8126,6 @@ var DECISION_AUTHORITY = {
   HISTORICAL: AUTHORITY_TIER.HISTORICAL
 };
 
-// packages/shared/dist/skill-frontmatter.js
-var import_gray_matter2 = __toESM(require_gray_matter(), 1);
-
 // packages/shared/dist/model-prices.js
 var MODEL_PRICES = {
   // Anthropic. Opus was absent until 2026-07-23, which meant every Opus turn —
@@ -8212,6 +8209,157 @@ var FEATURE_DISCOVERY_SYSTEM = [
   '{ "features": [ { "name": string, "summary": string, "members": string[] } ] }',
   "where each members entry is an id from the inventory. No prose outside the JSON."
 ].join("\n");
+
+// packages/shared/dist/light-native.js
+var LIGHT_READER_LIMITS = Object.freeze({
+  maxDepth: 3,
+  filesPerHost: 200,
+  memoryFileBytes: 128 * 1024,
+  planFileBytes: 64 * 1024,
+  skillFileBytes: 64 * 1024,
+  hostBytes: 2 * 1024 * 1024,
+  skillFoldersPerHost: 200,
+  resourcesPerSkill: 200,
+  /** Resource files larger than this are listed without a hash. */
+  resourceHashBytes: 16 * 1024 * 1024
+});
+
+// packages/shared/dist/native-memory-parse.js
+var import_gray_matter2 = __toESM(require_gray_matter(), 1);
+var yamlEngine = import_gray_matter2.default.engines.yaml;
+
+// packages/shared/dist/light.js
+var LIGHT_LIMITS = Object.freeze({
+  users: 1,
+  projects: 1,
+  files: 50,
+  fileBytes: 16 * 1024,
+  /** Active (non-archived) native plans synced as kind='plan'. */
+  plans: 20,
+  planBytes: 64 * 1024,
+  /** Inventoried skills: a read-only SKILL.md backup, kind='skill', always draft. */
+  skills: 50,
+  skillBytes: 64 * 1024,
+  historyVersions: 10,
+  writes: 1e3,
+  captures: 50,
+  accountCostMicros: 1e6,
+  globalCostMicros: 1e8,
+  enrollment: 100,
+  // Recall is budgeted in UTF-8 bytes, which is what it actually bounds; a
+  // byte is never less conservative than a token.
+  recallBytes: 2400,
+  recallExcerptBytes: 360,
+  recallNotes: 3,
+  captureInputTokens: 8e3,
+  captureOutputTokens: 1e3,
+  captureReservationMicros: 2e4
+});
+var LIGHT_HOSTS = [
+  "claude",
+  "codex",
+  "cursor",
+  "antigravity",
+  "windsurf",
+  "devin"
+];
+
+// packages/shared/dist/skill-inventory.js
+var AGENTS_HOSTS = ["codex", "cursor", "windsurf", "copilot", "gemini_cli"];
+var CLAUDE_HOSTS = ["claude", "cursor", "windsurf", "copilot"];
+var SKILL_LOCATIONS = [
+  {
+    id: "agents-project",
+    scope: "project",
+    path: ".agents/skills",
+    hosts: [...AGENTS_HOSTS, "antigravity"],
+    owner: "agents",
+    nested: false
+  },
+  {
+    id: "agents-user",
+    scope: "user",
+    path: "~/.agents/skills",
+    hosts: AGENTS_HOSTS,
+    owner: "agents",
+    nested: false
+  },
+  {
+    id: "claude-project",
+    scope: "project",
+    path: ".claude/skills",
+    hosts: CLAUDE_HOSTS,
+    owner: "claude",
+    nested: true
+  },
+  {
+    id: "claude-user",
+    scope: "user",
+    path: "~/.claude/skills",
+    hosts: CLAUDE_HOSTS,
+    owner: "claude",
+    nested: true
+  },
+  {
+    id: "cursor-project",
+    scope: "project",
+    path: ".cursor/skills",
+    hosts: ["cursor"],
+    owner: "cursor",
+    nested: false
+  },
+  {
+    id: "cursor-user",
+    scope: "user",
+    path: "~/.cursor/skills",
+    hosts: ["cursor"],
+    owner: "cursor",
+    nested: false
+  },
+  {
+    id: "windsurf-project",
+    scope: "project",
+    path: ".windsurf/skills",
+    hosts: ["windsurf"],
+    owner: "windsurf",
+    nested: false
+  },
+  {
+    id: "windsurf-user",
+    scope: "user",
+    path: "~/.codeium/windsurf/skills",
+    hosts: ["windsurf"],
+    owner: "windsurf",
+    nested: false
+  },
+  {
+    id: "antigravity-user",
+    scope: "user",
+    path: "~/.gemini/antigravity/skills",
+    hosts: ["antigravity"],
+    owner: "antigravity",
+    nested: false,
+    unverified: true
+  },
+  {
+    id: "antigravity-config-user",
+    scope: "user",
+    path: "~/.gemini/config/skills",
+    hosts: ["antigravity"],
+    owner: "antigravity",
+    nested: false,
+    unverified: true
+  },
+  {
+    id: "codex-legacy-user",
+    scope: "user",
+    path: "~/.codex/skills",
+    hosts: ["codex"],
+    owner: "codex",
+    nested: false,
+    unverified: true
+  }
+];
 
 // packages/shared/dist/memory-taxonomy.js
 var MEMORY_TAXONOMY = [
@@ -10949,51 +11097,8 @@ var ExperienceHarnessRunControlV2Schema = external_exports.discriminatedUnion("a
   }).strict()
 ]);
 
-// packages/shared/dist/light.js
-var LIGHT_LIMITS = Object.freeze({
-  users: 1,
-  projects: 1,
-  files: 50,
-  fileBytes: 16 * 1024,
-  historyVersions: 10,
-  writes: 1e3,
-  captures: 50,
-  accountCostMicros: 1e6,
-  globalCostMicros: 1e8,
-  enrollment: 100,
-  contextTokens: 4e3,
-  captureInputTokens: 8e3,
-  captureOutputTokens: 1e3,
-  captureReservationMicros: 2e4
-});
-
-// packages/shared/dist/thought-handoff-v2.js
-var ThoughtHandoffRequestV2Schema = external_exports.object({
-  version: external_exports.literal(2),
-  idempotency_key: external_exports.string().min(1).max(160),
-  task: external_exports.string().trim().min(1).max(8192),
-  target_agent_installation_id: external_exports.string().uuid(),
-  focus_thought_id: external_exports.string().uuid().optional(),
-  context_revision_token: external_exports.string().regex(/^[0-9a-f]{64}$/)
-}).strict();
-var ThoughtHandoffReceiptV2Schema = external_exports.object({
-  version: external_exports.literal(2),
-  kind: external_exports.literal("thought_handoff_v2"),
-  id: external_exports.string().uuid(),
-  root_thought_id: external_exports.string().uuid(),
-  project_id: external_exports.string().uuid().nullable(),
-  target_agent_installation_id: external_exports.string().uuid(),
-  target_agent_kind: external_exports.enum(AGENT_KINDS),
-  task: external_exports.string(),
-  status: external_exports.enum(["preparing", "pending", "accepted", "completed", "cancelled"]),
-  context_bundle_id: external_exports.string().regex(/^[0-9a-f]{64}$/).nullable(),
-  context_revision_token: external_exports.string(),
-  packet_markdown: external_exports.string().nullable(),
-  target_session_id: external_exports.string().nullable(),
-  created_at: external_exports.string(),
-  stale: external_exports.boolean(),
-  replayed: external_exports.boolean().optional()
-}).passthrough();
+// packages/shared/dist/light-provenance.js
+var HOSTS = new Set(LIGHT_HOSTS);
 
 // packages/shared/dist/memory-decisions.js
 var DECISION_KINDS = {
@@ -11174,6 +11279,34 @@ function describeDeadline(deadlineAt, nowMs = Date.now()) {
   if (days <= 0) return `on ${date5} (due now)`;
   return `on ${date5} (in ${days} day${days === 1 ? "" : "s"})`;
 }
+
+// packages/shared/dist/thought-handoff-v2.js
+var ThoughtHandoffRequestV2Schema = external_exports.object({
+  version: external_exports.literal(2),
+  idempotency_key: external_exports.string().min(1).max(160),
+  task: external_exports.string().trim().min(1).max(8192),
+  target_agent_installation_id: external_exports.string().uuid(),
+  focus_thought_id: external_exports.string().uuid().optional(),
+  context_revision_token: external_exports.string().regex(/^[0-9a-f]{64}$/)
+}).strict();
+var ThoughtHandoffReceiptV2Schema = external_exports.object({
+  version: external_exports.literal(2),
+  kind: external_exports.literal("thought_handoff_v2"),
+  id: external_exports.string().uuid(),
+  root_thought_id: external_exports.string().uuid(),
+  project_id: external_exports.string().uuid().nullable(),
+  target_agent_installation_id: external_exports.string().uuid(),
+  target_agent_kind: external_exports.enum(AGENT_KINDS),
+  task: external_exports.string(),
+  status: external_exports.enum(["preparing", "pending", "accepted", "completed", "cancelled"]),
+  context_bundle_id: external_exports.string().regex(/^[0-9a-f]{64}$/).nullable(),
+  context_revision_token: external_exports.string(),
+  packet_markdown: external_exports.string().nullable(),
+  target_session_id: external_exports.string().nullable(),
+  created_at: external_exports.string(),
+  stale: external_exports.boolean(),
+  replayed: external_exports.boolean().optional()
+}).passthrough();
 
 // packages/shared/dist/entitlements.js
 var COORDINATION_SELF = [

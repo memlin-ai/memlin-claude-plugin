@@ -6,6 +6,9 @@ allowed-tools: Bash
 
 # /memlin-remember
 
+Not part of Memlin Light: on a Light account the command prints that and
+saves nothing — use "Add a note" in Memlin Light instead.
+
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/dist/cli/remember.js" $ARGUMENTS
 ```

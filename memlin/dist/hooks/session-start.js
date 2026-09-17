@@ -8617,12 +8617,20 @@ var require_gray_matter = __commonJS({
   }
 });
 
-// packages/shared/dist/brand-guidelines-frontmatter.js
+// packages/shared/dist/safe-frontmatter.js
 var import_gray_matter;
+var init_safe_frontmatter = __esm({
+  "packages/shared/dist/safe-frontmatter.js"() {
+    "use strict";
+    import_gray_matter = __toESM(require_gray_matter(), 1);
+  }
+});
+
+// packages/shared/dist/brand-guidelines-frontmatter.js
 var init_brand_guidelines_frontmatter = __esm({
   "packages/shared/dist/brand-guidelines-frontmatter.js"() {
     "use strict";
-    import_gray_matter = __toESM(require_gray_matter(), 1);
+    init_safe_frontmatter();
     init_brand_guidelines();
   }
 });
@@ -9175,11 +9183,10 @@ var init_outcome_fitness = __esm({
 });
 
 // packages/shared/dist/skill-frontmatter.js
-var import_gray_matter2;
 var init_skill_frontmatter = __esm({
   "packages/shared/dist/skill-frontmatter.js"() {
     "use strict";
-    import_gray_matter2 = __toESM(require_gray_matter(), 1);
+    init_safe_frontmatter();
     init_schemas();
   }
 });
@@ -9370,6 +9377,221 @@ var init_source_ingest = __esm({
 var init_host_memory_registry = __esm({
   "packages/shared/dist/host-memory-registry.js"() {
     "use strict";
+  }
+});
+
+// packages/shared/dist/light-native.js
+var LIGHT_READER_LIMITS;
+var init_light_native = __esm({
+  "packages/shared/dist/light-native.js"() {
+    "use strict";
+    LIGHT_READER_LIMITS = Object.freeze({
+      maxDepth: 3,
+      filesPerHost: 200,
+      memoryFileBytes: 128 * 1024,
+      planFileBytes: 64 * 1024,
+      skillFileBytes: 64 * 1024,
+      hostBytes: 2 * 1024 * 1024,
+      skillFoldersPerHost: 200,
+      resourcesPerSkill: 200,
+      /** Resource files larger than this are listed without a hash. */
+      resourceHashBytes: 16 * 1024 * 1024
+    });
+  }
+});
+
+// packages/shared/dist/native-memory-parse.js
+var import_gray_matter2, yamlEngine;
+var init_native_memory_parse = __esm({
+  "packages/shared/dist/native-memory-parse.js"() {
+    "use strict";
+    import_gray_matter2 = __toESM(require_gray_matter(), 1);
+    yamlEngine = import_gray_matter2.default.engines.yaml;
+  }
+});
+
+// packages/shared/dist/native-plan-parse.js
+var init_native_plan_parse = __esm({
+  "packages/shared/dist/native-plan-parse.js"() {
+    "use strict";
+    init_native_memory_parse();
+  }
+});
+
+// packages/shared/dist/light.js
+function boundLightText(text, byteLimit) {
+  const encoder2 = new TextEncoder();
+  const bytes = encoder2.encode(text);
+  return bytes.length <= byteLimit ? text : new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, byteLimit)).replace(/\uFFFD$/, "");
+}
+function redactLightTranscript(text) {
+  return text.replace(
+    /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
+    "[private key removed]"
+  ).replace(
+    /\b(?:sk-[\w-]{12,}|gh[pousr]_[\w]{16,}|github_pat_[\w]{16,}|AKIA[A-Z0-9]{16})\b/g,
+    "[credential removed]"
+  ).replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[token removed]").replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, "$1[removed]").replace(
+    /((?:password|secret|api[_-]?key|access[_-]?token)["']?\s*[=:]\s*)[^\s,;]+/gi,
+    "$1[removed]"
+  );
+}
+function lightCaptureExcluded(text, paths = []) {
+  return /(?:^|[\s/\\"'`])(?:\.env(?:\.[\w-]+)?|id_rsa|id_ed25519|credentials\.json)(?=$|[\s/\\"'`:])/m.test(
+    text
+  ) || paths.some((p) => p.length > 0 && text.includes(p));
+}
+var LIGHT_LIMITS, LIGHT_HOSTS;
+var init_light = __esm({
+  "packages/shared/dist/light.js"() {
+    "use strict";
+    LIGHT_LIMITS = Object.freeze({
+      users: 1,
+      projects: 1,
+      files: 50,
+      fileBytes: 16 * 1024,
+      /** Active (non-archived) native plans synced as kind='plan'. */
+      plans: 20,
+      planBytes: 64 * 1024,
+      /** Inventoried skills: a read-only SKILL.md backup, kind='skill', always draft. */
+      skills: 50,
+      skillBytes: 64 * 1024,
+      historyVersions: 10,
+      writes: 1e3,
+      captures: 50,
+      accountCostMicros: 1e6,
+      globalCostMicros: 1e8,
+      enrollment: 100,
+      // Recall is budgeted in UTF-8 bytes, which is what it actually bounds; a
+      // byte is never less conservative than a token.
+      recallBytes: 2400,
+      recallExcerptBytes: 360,
+      recallNotes: 3,
+      captureInputTokens: 8e3,
+      captureOutputTokens: 1e3,
+      captureReservationMicros: 2e4
+    });
+    LIGHT_HOSTS = [
+      "claude",
+      "codex",
+      "cursor",
+      "antigravity",
+      "windsurf",
+      "devin"
+    ];
+  }
+});
+
+// packages/shared/dist/light-consolidate.js
+var init_light_consolidate = __esm({
+  "packages/shared/dist/light-consolidate.js"() {
+    "use strict";
+    init_light();
+    init_light_native();
+    init_native_memory_parse();
+  }
+});
+
+// packages/shared/dist/skill-inventory.js
+var AGENTS_HOSTS, CLAUDE_HOSTS, SKILL_LOCATIONS;
+var init_skill_inventory = __esm({
+  "packages/shared/dist/skill-inventory.js"() {
+    "use strict";
+    AGENTS_HOSTS = ["codex", "cursor", "windsurf", "copilot", "gemini_cli"];
+    CLAUDE_HOSTS = ["claude", "cursor", "windsurf", "copilot"];
+    SKILL_LOCATIONS = [
+      {
+        id: "agents-project",
+        scope: "project",
+        path: ".agents/skills",
+        hosts: [...AGENTS_HOSTS, "antigravity"],
+        owner: "agents",
+        nested: false
+      },
+      {
+        id: "agents-user",
+        scope: "user",
+        path: "~/.agents/skills",
+        hosts: AGENTS_HOSTS,
+        owner: "agents",
+        nested: false
+      },
+      {
+        id: "claude-project",
+        scope: "project",
+        path: ".claude/skills",
+        hosts: CLAUDE_HOSTS,
+        owner: "claude",
+        nested: true
+      },
+      {
+        id: "claude-user",
+        scope: "user",
+        path: "~/.claude/skills",
+        hosts: CLAUDE_HOSTS,
+        owner: "claude",
+        nested: true
+      },
+      {
+        id: "cursor-project",
+        scope: "project",
+        path: ".cursor/skills",
+        hosts: ["cursor"],
+        owner: "cursor",
+        nested: false
+      },
+      {
+        id: "cursor-user",
+        scope: "user",
+        path: "~/.cursor/skills",
+        hosts: ["cursor"],
+        owner: "cursor",
+        nested: false
+      },
+      {
+        id: "windsurf-project",
+        scope: "project",
+        path: ".windsurf/skills",
+        hosts: ["windsurf"],
+        owner: "windsurf",
+        nested: false
+      },
+      {
+        id: "windsurf-user",
+        scope: "user",
+        path: "~/.codeium/windsurf/skills",
+        hosts: ["windsurf"],
+        owner: "windsurf",
+        nested: false
+      },
+      {
+        id: "antigravity-user",
+        scope: "user",
+        path: "~/.gemini/antigravity/skills",
+        hosts: ["antigravity"],
+        owner: "antigravity",
+        nested: false,
+        unverified: true
+      },
+      {
+        id: "antigravity-config-user",
+        scope: "user",
+        path: "~/.gemini/config/skills",
+        hosts: ["antigravity"],
+        owner: "antigravity",
+        nested: false,
+        unverified: true
+      },
+      {
+        id: "codex-legacy-user",
+        scope: "user",
+        path: "~/.codex/skills",
+        hosts: ["codex"],
+        owner: "codex",
+        nested: false,
+        unverified: true
+      }
+    ];
   }
 });
 
@@ -12229,92 +12451,13 @@ var init_experience_harness = __esm({
   }
 });
 
-// packages/shared/dist/light.js
-function boundLightText(text, byteLimit) {
-  const encoder2 = new TextEncoder();
-  const bytes = encoder2.encode(text);
-  return bytes.length <= byteLimit ? text : new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, byteLimit)).replace(/\uFFFD$/, "");
-}
-function redactLightTranscript(text) {
-  return text.replace(
-    /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
-    "[private key removed]"
-  ).replace(
-    /\b(?:sk-[\w-]{12,}|gh[pousr]_[\w]{16,}|github_pat_[\w]{16,}|AKIA[A-Z0-9]{16})\b/g,
-    "[credential removed]"
-  ).replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[token removed]").replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, "$1[removed]").replace(
-    /((?:password|secret|api[_-]?key|access[_-]?token)["']?\s*[=:]\s*)[^\s,;]+/gi,
-    "$1[removed]"
-  );
-}
-function lightCaptureExcluded(text, paths = []) {
-  return /(?:^|[\s/\\"'`])(?:\.env(?:\.[\w-]+)?|id_rsa|id_ed25519|credentials\.json)(?=$|[\s/\\"'`:])/m.test(
-    text
-  ) || paths.some((p) => p.length > 0 && text.includes(p));
-}
-var LIGHT_LIMITS;
-var init_light = __esm({
-  "packages/shared/dist/light.js"() {
+// packages/shared/dist/light-provenance.js
+var HOSTS;
+var init_light_provenance = __esm({
+  "packages/shared/dist/light-provenance.js"() {
     "use strict";
-    LIGHT_LIMITS = Object.freeze({
-      users: 1,
-      projects: 1,
-      files: 50,
-      fileBytes: 16 * 1024,
-      historyVersions: 10,
-      writes: 1e3,
-      captures: 50,
-      accountCostMicros: 1e6,
-      globalCostMicros: 1e8,
-      enrollment: 100,
-      contextTokens: 4e3,
-      captureInputTokens: 8e3,
-      captureOutputTokens: 1e3,
-      captureReservationMicros: 2e4
-    });
-  }
-});
-
-// packages/shared/dist/thought-handoff-v2.js
-var ThoughtHandoffRequestV2Schema, ThoughtHandoffReceiptV2Schema;
-var init_thought_handoff_v2 = __esm({
-  "packages/shared/dist/thought-handoff-v2.js"() {
-    "use strict";
-    init_zod();
-    init_constants();
-    ThoughtHandoffRequestV2Schema = external_exports.object({
-      version: external_exports.literal(2),
-      idempotency_key: external_exports.string().min(1).max(160),
-      task: external_exports.string().trim().min(1).max(8192),
-      target_agent_installation_id: external_exports.string().uuid(),
-      focus_thought_id: external_exports.string().uuid().optional(),
-      context_revision_token: external_exports.string().regex(/^[0-9a-f]{64}$/)
-    }).strict();
-    ThoughtHandoffReceiptV2Schema = external_exports.object({
-      version: external_exports.literal(2),
-      kind: external_exports.literal("thought_handoff_v2"),
-      id: external_exports.string().uuid(),
-      root_thought_id: external_exports.string().uuid(),
-      project_id: external_exports.string().uuid().nullable(),
-      target_agent_installation_id: external_exports.string().uuid(),
-      target_agent_kind: external_exports.enum(AGENT_KINDS),
-      task: external_exports.string(),
-      status: external_exports.enum(["preparing", "pending", "accepted", "completed", "cancelled"]),
-      context_bundle_id: external_exports.string().regex(/^[0-9a-f]{64}$/).nullable(),
-      context_revision_token: external_exports.string(),
-      packet_markdown: external_exports.string().nullable(),
-      target_session_id: external_exports.string().nullable(),
-      created_at: external_exports.string(),
-      stale: external_exports.boolean(),
-      replayed: external_exports.boolean().optional()
-    }).passthrough();
-  }
-});
-
-// packages/shared/dist/public-experience.js
-var init_public_experience = __esm({
-  "packages/shared/dist/public-experience.js"() {
-    "use strict";
+    init_light();
+    HOSTS = new Set(LIGHT_HOSTS);
   }
 });
 
@@ -12514,23 +12657,6 @@ var init_memory_decisions = __esm({
   }
 });
 
-// packages/shared/dist/memory-transitions.js
-var init_memory_transitions = __esm({
-  "packages/shared/dist/memory-transitions.js"() {
-    "use strict";
-    init_memory_decisions();
-  }
-});
-
-// packages/shared/dist/memory-drift-consumer.js
-var init_memory_drift_consumer = __esm({
-  "packages/shared/dist/memory-drift-consumer.js"() {
-    "use strict";
-    init_memory_decisions();
-    init_memory_transitions();
-  }
-});
-
 // packages/shared/dist/decision-prompt.js
 function utf8Bytes(value) {
   return encoder.encode(value).length;
@@ -12652,6 +12778,75 @@ var init_decision_prompt = __esm({
     "use strict";
     init_memory_decisions();
     encoder = new TextEncoder();
+  }
+});
+
+// packages/shared/dist/lexical.js
+var init_lexical = __esm({
+  "packages/shared/dist/lexical.js"() {
+    "use strict";
+    init_decision_prompt();
+    init_light();
+  }
+});
+
+// packages/shared/dist/thought-handoff-v2.js
+var ThoughtHandoffRequestV2Schema, ThoughtHandoffReceiptV2Schema;
+var init_thought_handoff_v2 = __esm({
+  "packages/shared/dist/thought-handoff-v2.js"() {
+    "use strict";
+    init_zod();
+    init_constants();
+    ThoughtHandoffRequestV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      idempotency_key: external_exports.string().min(1).max(160),
+      task: external_exports.string().trim().min(1).max(8192),
+      target_agent_installation_id: external_exports.string().uuid(),
+      focus_thought_id: external_exports.string().uuid().optional(),
+      context_revision_token: external_exports.string().regex(/^[0-9a-f]{64}$/)
+    }).strict();
+    ThoughtHandoffReceiptV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      kind: external_exports.literal("thought_handoff_v2"),
+      id: external_exports.string().uuid(),
+      root_thought_id: external_exports.string().uuid(),
+      project_id: external_exports.string().uuid().nullable(),
+      target_agent_installation_id: external_exports.string().uuid(),
+      target_agent_kind: external_exports.enum(AGENT_KINDS),
+      task: external_exports.string(),
+      status: external_exports.enum(["preparing", "pending", "accepted", "completed", "cancelled"]),
+      context_bundle_id: external_exports.string().regex(/^[0-9a-f]{64}$/).nullable(),
+      context_revision_token: external_exports.string(),
+      packet_markdown: external_exports.string().nullable(),
+      target_session_id: external_exports.string().nullable(),
+      created_at: external_exports.string(),
+      stale: external_exports.boolean(),
+      replayed: external_exports.boolean().optional()
+    }).passthrough();
+  }
+});
+
+// packages/shared/dist/public-experience.js
+var init_public_experience = __esm({
+  "packages/shared/dist/public-experience.js"() {
+    "use strict";
+  }
+});
+
+// packages/shared/dist/memory-transitions.js
+var init_memory_transitions = __esm({
+  "packages/shared/dist/memory-transitions.js"() {
+    "use strict";
+    init_memory_decisions();
+  }
+});
+
+// packages/shared/dist/memory-drift-consumer.js
+var init_memory_drift_consumer = __esm({
+  "packages/shared/dist/memory-drift-consumer.js"() {
+    "use strict";
+    init_memory_decisions();
+    init_memory_transitions();
   }
 });
 
@@ -25391,6 +25586,7 @@ var init_dist = __esm({
     init_decision_authority();
     init_feedback_signals();
     init_outcome_fitness();
+    init_safe_frontmatter();
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
@@ -25407,6 +25603,11 @@ var init_dist = __esm({
     init_feature_discovery();
     init_source_ingest();
     init_host_memory_registry();
+    init_light_native();
+    init_native_memory_parse();
+    init_native_plan_parse();
+    init_light_consolidate();
+    init_skill_inventory();
     init_memory_taxonomy();
     init_context_engine();
     init_context_provider();
@@ -25424,6 +25625,8 @@ var init_dist = __esm({
     init_thought_feedback();
     init_experience_harness();
     init_light();
+    init_light_provenance();
+    init_lexical();
     init_thought_handoff_v2();
     init_public_experience();
     init_memory_decisions();
@@ -25547,10 +25750,10 @@ import os4 from "node:os";
 import path6 from "node:path";
 function resolveHost() {
   const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
-  const make = HOSTS[envHost];
-  return (make ?? HOSTS["claude-code"])();
+  const make = HOSTS2[envHost];
+  return (make ?? HOSTS2["claude-code"])();
 }
-var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, CompanionHost, HOSTS;
+var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, CompanionHost, HOSTS2;
 var init_host = __esm({
   "packages/plugin-core/dist/host.js"() {
     "use strict";
@@ -25603,7 +25806,7 @@ var init_host = __esm({
         super("companion", path6.join(os4.homedir(), ".config", "memlin"));
       }
     };
-    HOSTS = {
+    HOSTS2 = {
       "claude-code": () => new ClaudeCodeHost(),
       cursor: () => new CursorHost(),
       codex: () => new CodexHost(),
@@ -25929,7 +26132,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.75";
+  cachedAgentVersion = "0.2.76";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26090,6 +26293,10 @@ var init_memlin_api_client = __esm({
         this.cfg = cfg;
       }
       cfg;
+      /** The configured account (the light-gate cache key when a call names none). */
+      get defaultAccountId() {
+        return this.cfg.accountId;
+      }
       // ---------- low-level ----------
       async authHeaders(includeAccount = true, override = {}) {
         const token = await this.cfg.getAccessToken();
@@ -26409,6 +26616,68 @@ var init_memlin_api_client = __esm({
           { project_id: projectId, status },
           { maxRetries: 0, requestTimeoutMs: 1500 }
         );
+      }
+      // ---------- Light native sync (B2) ----------
+      // Writes are never retried by request() (only GET is), so a reset after the
+      // server committed can't duplicate a version. Error bodies carry a stable
+      // `{error: code}`; see lightErrorCode() in light/sync-api.ts.
+      /** POST /light/documents — versioned Light write; identical content is a metadata-only merge. */
+      async lightWriteDocument(input) {
+        return this.request("POST", "/light/documents", input, { requestTimeoutMs: 2e4 });
+      }
+      /** POST /light/lease — acquire or renew the per-host sync lease. */
+      async lightAcquireLease(input) {
+        return this.request("POST", "/light/lease", input, { requestTimeoutMs: 8e3 });
+      }
+      /** DELETE /light/lease — release a lease this holder owns. */
+      async lightReleaseLease(input) {
+        return this.request("DELETE", "/light/lease", input, { requestTimeoutMs: 5e3 });
+      }
+      /** POST /light/sync with per-host agent statuses. */
+      async lightReportSync(input) {
+        return this.request("POST", "/light/sync", input, { requestTimeoutMs: 8e3 });
+      }
+      /** GET /light/suppressions — forgotten items (the same hash never reimports). */
+      async listLightSuppressions() {
+        return (await this.request(
+          "GET",
+          "/light/suppressions",
+          void 0,
+          { requestTimeoutMs: 8e3 }
+        )).suppressions;
+      }
+      /** POST /light/suppressions */
+      async lightSuppress(input) {
+        return this.request("POST", "/light/suppressions", input, { requestTimeoutMs: 8e3 });
+      }
+      /** DELETE /light/suppressions */
+      async lightUnsuppress(id) {
+        return this.request("DELETE", "/light/suppressions", { id }, { requestTimeoutMs: 8e3 });
+      }
+      /** POST /documents/<id>/status — archive / unarchive / approve (curation). */
+      async setDocumentStatus(documentId, action) {
+        return this.request(
+          "POST",
+          `/documents/${encodeURIComponent(documentId)}/status`,
+          { action },
+          { requestTimeoutMs: 8e3 }
+        );
+      }
+      /** GET /light/agents — per-host, per-device sync rows. */
+      async listLightAgents() {
+        return (await this.request(
+          "GET",
+          "/light/agents",
+          void 0,
+          { requestTimeoutMs: 8e3 }
+        )).agents;
+      }
+      /**
+       * POST /plans {document_id} — attach a `drafted` plans row to an existing
+       * plan document (a Light plan after an upgrade, D3). Creates no version.
+       */
+      async backfillPlanRow(documentId) {
+        return this.request("POST", "/plans", { document_id: documentId }, { requestTimeoutMs: 8e3 });
       }
       async lightStatus(accountId) {
         try {
@@ -27309,6 +27578,83 @@ var init_state = __esm({
   }
 });
 
+// packages/plugin-core/dist/light-gate.js
+function lightGateMessage(feature) {
+  const lead = `${FEATURE_LABEL[feature]} isn't part of Memlin Light.`;
+  const why = feature === "takeover" || feature === "disable_native" || feature === "ingest_native" ? " Light keeps your agents' own memory on and syncs it." : "";
+  return `${lead}${why} To save something yourself, use "Add a note" in Memlin Light.`;
+}
+function isLightGatedError(error40) {
+  return error40 instanceof LightGatedError || typeof error40 === "object" && error40 !== null && error40.code === "light_gated";
+}
+async function isLightAccount(api, accountId, opts = {}) {
+  if (!api || typeof api.lightStatus !== "function") return false;
+  const now = opts.now ?? Date.now;
+  const key = accountId || api.defaultAccountId || "";
+  const hit = cache.get(key);
+  if (hit && now() - hit.at < LIGHT_GATE_TTL_MS) return hit.light;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const lookup = (async () => {
+    let timer;
+    try {
+      const status = await Promise.race([
+        api.lightStatus(accountId || void 0),
+        new Promise((resolve) => {
+          timer = setTimeout(
+            () => resolve("timeout"),
+            opts.timeoutMs ?? LIGHT_GATE_LOOKUP_TIMEOUT_MS
+          );
+        })
+      ]);
+      if (status === "timeout") return false;
+      const light = status?.active === true;
+      cache.set(key, { light, at: now() });
+      return light;
+    } catch {
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  })();
+  inflight.set(key, lookup);
+  void lookup.finally(() => {
+    if (inflight.get(key) === lookup) inflight.delete(key);
+  });
+  return lookup;
+}
+async function assertNotLight(api, feature, accountId) {
+  if (await isLightAccount(api, accountId)) throw new LightGatedError(feature);
+}
+var LIGHT_GATE_TTL_MS, LIGHT_GATE_LOOKUP_TIMEOUT_MS, FEATURE_LABEL, LightGatedError, cache, inflight;
+var init_light_gate = __esm({
+  "packages/plugin-core/dist/light-gate.js"() {
+    "use strict";
+    LIGHT_GATE_TTL_MS = 5 * 6e4;
+    LIGHT_GATE_LOOKUP_TIMEOUT_MS = 3e3;
+    FEATURE_LABEL = {
+      takeover: "Moving memory into Memlin",
+      disable_native: "Turning off your agent's native memory",
+      report: "The usage report",
+      remember: "Remember",
+      plans: "Plan sync",
+      realtime: "Live sync",
+      ingest_native: "Importing native memory into Memlin"
+    };
+    LightGatedError = class extends Error {
+      constructor(feature) {
+        super(lightGateMessage(feature));
+        this.feature = feature;
+        this.name = "LightGatedError";
+      }
+      feature;
+      code = "light_gated";
+    };
+    cache = /* @__PURE__ */ new Map();
+    inflight = /* @__PURE__ */ new Map();
+  }
+});
+
 // packages/plugin-core/dist/plan-sync.js
 var plan_sync_exports = {};
 __export(plan_sync_exports, {
@@ -27336,6 +27682,7 @@ function plansDir(host) {
 }
 async function fetchPlanPullRows(api, fetchOpts, accountId) {
   const callOpts = accountId ? { accountId } : {};
+  await assertNotLight(api, "plans", accountId);
   const list = await api.listPlans(fetchOpts, callOpts);
   const rows = [];
   for (const plan of list) {
@@ -27350,7 +27697,13 @@ async function pullPlans(api, opts = {}) {
   const fetchOpts = {};
   if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
   if (opts.since) fetchOpts.updated_after = opts.since;
-  const rows = await fetchPlanPullRows(api, fetchOpts, opts.accountId);
+  let rows;
+  try {
+    rows = await fetchPlanPullRows(api, fetchOpts, opts.accountId);
+  } catch (error40) {
+    if (isLightGatedError(error40)) return { pulled: [], unchanged: [], removed: [] };
+    throw error40;
+  }
   await fs10.mkdir(plansDir(opts.host), { recursive: true });
   const state = await readState();
   const newEntries = {};
@@ -27425,6 +27778,7 @@ async function pushPlanFile(api, file2, opts = {}) {
     };
   }
   const targetDocId = resolveTargetDocId(existing, existingBinding);
+  await assertNotLight(api, "plans", opts.accountId);
   if (targetDocId) {
     const result2 = await api.updatePlan(
       targetDocId,
@@ -27504,6 +27858,7 @@ async function reconcileKnownPlans(api, opts = {}) {
   const failed = [];
   const deferred = [];
   const now = opts.now ?? Date.now();
+  let light;
   let entries;
   try {
     entries = await fs10.readdir(plansDir(opts.host));
@@ -27538,6 +27893,11 @@ async function reconcileKnownPlans(api, opts = {}) {
     }
     if (opts.settleMs && now - mtimeMs < opts.settleMs) {
       deferred.push(f);
+      continue;
+    }
+    light ??= await isLightAccount(api, opts.accountId);
+    if (light) {
+      skipped.push(f);
       continue;
     }
     try {
@@ -27579,11 +27939,17 @@ async function flushPlanPushes(api, opts = {}) {
     deferred: [],
     failed: []
   };
+  const isDue = (entry) => Boolean(opts.all) || opts.sessionId !== void 0 && entry.session_id === (opts.sessionId ?? null) || now - entry.last_edit_at >= settleMs;
+  const queue = Object.entries((await readState()).plan_push_queue ?? {});
+  if (queue.some(([, entry]) => isDue(entry)) && await isLightAccount(api, opts.accountId)) {
+    out.deferred.push(...queue.map(([file2]) => path14.basename(file2)));
+    return out;
+  }
   const claimed = [];
   await updateState((s) => {
     for (const [file2, entry] of Object.entries(s.plan_push_queue ?? {})) {
       if (entry.claimed_at && now - entry.claimed_at < PLAN_PUSH_CLAIM_TTL_MS) continue;
-      const due = opts.all || opts.sessionId !== void 0 && entry.session_id === (opts.sessionId ?? null) || now - entry.last_edit_at >= settleMs;
+      const due = isDue(entry);
       if (!due) {
         out.deferred.push(path14.basename(file2));
         continue;
@@ -27715,6 +28081,7 @@ var init_plan_sync = __esm({
     "use strict";
     init_state();
     init_host();
+    init_light_gate();
     DEFAULT_PLAN_SETTLE_MS = 9e4;
     PLAN_PUSH_CLAIM_TTL_MS = 12e4;
     PLAN_PUSH_MAX_ATTEMPTS = 5;
@@ -28418,21 +28785,21 @@ function isOlderVersion(a, b) {
   return false;
 }
 async function getLatestPublishedVersion(state) {
-  const cache = state.plugin_version;
-  if (cache && Date.now() - cache.checked_at < FRESHNESS_TTL_MS) {
-    return cache.latest_version ?? null;
+  const cache2 = state.plugin_version;
+  if (cache2 && Date.now() - cache2.checked_at < FRESHNESS_TTL_MS) {
+    return cache2.latest_version ?? null;
   }
   try {
     const res = await fetch(VERSION_URL, { headers: { Accept: "application/json" } });
-    if (!res.ok) return cache?.latest_version ?? null;
+    if (!res.ok) return cache2?.latest_version ?? null;
     const json2 = await res.json();
     const v = json2.plugins?.[0]?.version;
-    if (typeof v !== "string") return cache?.latest_version ?? null;
+    if (typeof v !== "string") return cache2?.latest_version ?? null;
     state.plugin_version = { latest_version: v, checked_at: Date.now() };
     await writeState(state);
     return v;
   } catch {
-    return cache?.latest_version ?? null;
+    return cache2?.latest_version ?? null;
   }
 }
 async function resolveBannerAccountName(input) {

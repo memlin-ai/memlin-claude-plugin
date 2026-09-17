@@ -7917,12 +7917,33 @@ var require_gray_matter = __commonJS({
   }
 });
 
+// packages/shared/dist/safe-frontmatter.js
+function refuseJavaScriptFrontmatter() {
+  throw new Error("JavaScript frontmatter is not supported");
+}
+function parseFrontmatter(content) {
+  return (0, import_gray_matter.default)(content, SAFE_MATTER_OPTIONS);
+}
+var import_gray_matter, REFUSE, SAFE_MATTER_OPTIONS;
+var init_safe_frontmatter = __esm({
+  "packages/shared/dist/safe-frontmatter.js"() {
+    "use strict";
+    import_gray_matter = __toESM(require_gray_matter(), 1);
+    REFUSE = {
+      parse: refuseJavaScriptFrontmatter,
+      stringify: refuseJavaScriptFrontmatter
+    };
+    SAFE_MATTER_OPTIONS = {
+      engines: { js: REFUSE, javascript: REFUSE }
+    };
+  }
+});
+
 // packages/shared/dist/brand-guidelines-frontmatter.js
-var import_gray_matter;
 var init_brand_guidelines_frontmatter = __esm({
   "packages/shared/dist/brand-guidelines-frontmatter.js"() {
     "use strict";
-    import_gray_matter = __toESM(require_gray_matter(), 1);
+    init_safe_frontmatter();
     init_brand_guidelines();
   }
 });
@@ -8619,7 +8640,7 @@ var init_outcome_fitness = __esm({
 function parseSkill(content) {
   if (!content.trim()) return { frontmatter: { ...EMPTY }, body: "" };
   try {
-    const parsed = (0, import_gray_matter2.default)(content);
+    const parsed = parseFrontmatter(content);
     const fmRaw = parsed.data;
     const fm = SkillFrontmatterSchema.safeParse(fmRaw);
     const frontmatter = fm.success ? fm.data : {
@@ -8640,11 +8661,11 @@ function parseSkill(content) {
     return { frontmatter: { ...EMPTY }, body: content };
   }
 }
-var import_gray_matter2, EMPTY;
+var EMPTY;
 var init_skill_frontmatter = __esm({
   "packages/shared/dist/skill-frontmatter.js"() {
     "use strict";
-    import_gray_matter2 = __toESM(require_gray_matter(), 1);
+    init_safe_frontmatter();
     init_schemas();
     EMPTY = { name: "", description: "" };
   }
@@ -9124,6 +9145,224 @@ var init_source_ingest = __esm({
 var init_host_memory_registry = __esm({
   "packages/shared/dist/host-memory-registry.js"() {
     "use strict";
+  }
+});
+
+// packages/shared/dist/light-native.js
+var LIGHT_READER_LIMITS;
+var init_light_native = __esm({
+  "packages/shared/dist/light-native.js"() {
+    "use strict";
+    LIGHT_READER_LIMITS = Object.freeze({
+      maxDepth: 3,
+      filesPerHost: 200,
+      memoryFileBytes: 128 * 1024,
+      planFileBytes: 64 * 1024,
+      skillFileBytes: 64 * 1024,
+      hostBytes: 2 * 1024 * 1024,
+      skillFoldersPerHost: 200,
+      resourcesPerSkill: 200,
+      /** Resource files larger than this are listed without a hash. */
+      resourceHashBytes: 16 * 1024 * 1024
+    });
+  }
+});
+
+// packages/shared/dist/native-memory-parse.js
+var import_gray_matter2, yamlEngine;
+var init_native_memory_parse = __esm({
+  "packages/shared/dist/native-memory-parse.js"() {
+    "use strict";
+    import_gray_matter2 = __toESM(require_gray_matter(), 1);
+    yamlEngine = import_gray_matter2.default.engines.yaml;
+  }
+});
+
+// packages/shared/dist/native-plan-parse.js
+var init_native_plan_parse = __esm({
+  "packages/shared/dist/native-plan-parse.js"() {
+    "use strict";
+    init_native_memory_parse();
+  }
+});
+
+// packages/shared/dist/light.js
+function validLightPath(value) {
+  return /^memory\/[a-zA-Z0-9][a-zA-Z0-9._-]*\.md$/.test(value) && !value.includes("..") && value.length <= 256;
+}
+function boundLightText(text, byteLimit) {
+  const encoder2 = new TextEncoder();
+  const bytes = encoder2.encode(text);
+  return bytes.length <= byteLimit ? text : new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, byteLimit)).replace(/\uFFFD$/, "");
+}
+function redactLightTranscript(text) {
+  return text.replace(
+    /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
+    "[private key removed]"
+  ).replace(
+    /\b(?:sk-[\w-]{12,}|gh[pousr]_[\w]{16,}|github_pat_[\w]{16,}|AKIA[A-Z0-9]{16})\b/g,
+    "[credential removed]"
+  ).replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[token removed]").replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, "$1[removed]").replace(
+    /((?:password|secret|api[_-]?key|access[_-]?token)["']?\s*[=:]\s*)[^\s,;]+/gi,
+    "$1[removed]"
+  );
+}
+function lightCaptureExcluded(text, paths = []) {
+  return /(?:^|[\s/\\"'`])(?:\.env(?:\.[\w-]+)?|id_rsa|id_ed25519|credentials\.json)(?=$|[\s/\\"'`:])/m.test(
+    text
+  ) || paths.some((p) => p.length > 0 && text.includes(p));
+}
+var LIGHT_LIMITS, LIGHT_HOSTS;
+var init_light = __esm({
+  "packages/shared/dist/light.js"() {
+    "use strict";
+    LIGHT_LIMITS = Object.freeze({
+      users: 1,
+      projects: 1,
+      files: 50,
+      fileBytes: 16 * 1024,
+      /** Active (non-archived) native plans synced as kind='plan'. */
+      plans: 20,
+      planBytes: 64 * 1024,
+      /** Inventoried skills: a read-only SKILL.md backup, kind='skill', always draft. */
+      skills: 50,
+      skillBytes: 64 * 1024,
+      historyVersions: 10,
+      writes: 1e3,
+      captures: 50,
+      accountCostMicros: 1e6,
+      globalCostMicros: 1e8,
+      enrollment: 100,
+      // Recall is budgeted in UTF-8 bytes, which is what it actually bounds; a
+      // byte is never less conservative than a token.
+      recallBytes: 2400,
+      recallExcerptBytes: 360,
+      recallNotes: 3,
+      captureInputTokens: 8e3,
+      captureOutputTokens: 1e3,
+      captureReservationMicros: 2e4
+    });
+    LIGHT_HOSTS = [
+      "claude",
+      "codex",
+      "cursor",
+      "antigravity",
+      "windsurf",
+      "devin"
+    ];
+  }
+});
+
+// packages/shared/dist/light-consolidate.js
+var init_light_consolidate = __esm({
+  "packages/shared/dist/light-consolidate.js"() {
+    "use strict";
+    init_light();
+    init_light_native();
+    init_native_memory_parse();
+  }
+});
+
+// packages/shared/dist/skill-inventory.js
+var AGENTS_HOSTS, CLAUDE_HOSTS, SKILL_LOCATIONS;
+var init_skill_inventory = __esm({
+  "packages/shared/dist/skill-inventory.js"() {
+    "use strict";
+    AGENTS_HOSTS = ["codex", "cursor", "windsurf", "copilot", "gemini_cli"];
+    CLAUDE_HOSTS = ["claude", "cursor", "windsurf", "copilot"];
+    SKILL_LOCATIONS = [
+      {
+        id: "agents-project",
+        scope: "project",
+        path: ".agents/skills",
+        hosts: [...AGENTS_HOSTS, "antigravity"],
+        owner: "agents",
+        nested: false
+      },
+      {
+        id: "agents-user",
+        scope: "user",
+        path: "~/.agents/skills",
+        hosts: AGENTS_HOSTS,
+        owner: "agents",
+        nested: false
+      },
+      {
+        id: "claude-project",
+        scope: "project",
+        path: ".claude/skills",
+        hosts: CLAUDE_HOSTS,
+        owner: "claude",
+        nested: true
+      },
+      {
+        id: "claude-user",
+        scope: "user",
+        path: "~/.claude/skills",
+        hosts: CLAUDE_HOSTS,
+        owner: "claude",
+        nested: true
+      },
+      {
+        id: "cursor-project",
+        scope: "project",
+        path: ".cursor/skills",
+        hosts: ["cursor"],
+        owner: "cursor",
+        nested: false
+      },
+      {
+        id: "cursor-user",
+        scope: "user",
+        path: "~/.cursor/skills",
+        hosts: ["cursor"],
+        owner: "cursor",
+        nested: false
+      },
+      {
+        id: "windsurf-project",
+        scope: "project",
+        path: ".windsurf/skills",
+        hosts: ["windsurf"],
+        owner: "windsurf",
+        nested: false
+      },
+      {
+        id: "windsurf-user",
+        scope: "user",
+        path: "~/.codeium/windsurf/skills",
+        hosts: ["windsurf"],
+        owner: "windsurf",
+        nested: false
+      },
+      {
+        id: "antigravity-user",
+        scope: "user",
+        path: "~/.gemini/antigravity/skills",
+        hosts: ["antigravity"],
+        owner: "antigravity",
+        nested: false,
+        unverified: true
+      },
+      {
+        id: "antigravity-config-user",
+        scope: "user",
+        path: "~/.gemini/config/skills",
+        hosts: ["antigravity"],
+        owner: "antigravity",
+        nested: false,
+        unverified: true
+      },
+      {
+        id: "codex-legacy-user",
+        scope: "user",
+        path: "~/.codex/skills",
+        hosts: ["codex"],
+        owner: "codex",
+        nested: false,
+        unverified: true
+      }
+    ];
   }
 });
 
@@ -11983,95 +12222,13 @@ var init_experience_harness = __esm({
   }
 });
 
-// packages/shared/dist/light.js
-function validLightPath(value) {
-  return /^memory\/[a-zA-Z0-9][a-zA-Z0-9._-]*\.md$/.test(value) && !value.includes("..") && value.length <= 256;
-}
-function boundLightText(text, byteLimit) {
-  const encoder2 = new TextEncoder();
-  const bytes = encoder2.encode(text);
-  return bytes.length <= byteLimit ? text : new TextDecoder("utf-8", { fatal: false }).decode(bytes.slice(0, byteLimit)).replace(/\uFFFD$/, "");
-}
-function redactLightTranscript(text) {
-  return text.replace(
-    /-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g,
-    "[private key removed]"
-  ).replace(
-    /\b(?:sk-[\w-]{12,}|gh[pousr]_[\w]{16,}|github_pat_[\w]{16,}|AKIA[A-Z0-9]{16})\b/g,
-    "[credential removed]"
-  ).replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[token removed]").replace(/\b(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, "$1[removed]").replace(
-    /((?:password|secret|api[_-]?key|access[_-]?token)["']?\s*[=:]\s*)[^\s,;]+/gi,
-    "$1[removed]"
-  );
-}
-function lightCaptureExcluded(text, paths = []) {
-  return /(?:^|[\s/\\"'`])(?:\.env(?:\.[\w-]+)?|id_rsa|id_ed25519|credentials\.json)(?=$|[\s/\\"'`:])/m.test(
-    text
-  ) || paths.some((p) => p.length > 0 && text.includes(p));
-}
-var LIGHT_LIMITS;
-var init_light = __esm({
-  "packages/shared/dist/light.js"() {
+// packages/shared/dist/light-provenance.js
+var HOSTS;
+var init_light_provenance = __esm({
+  "packages/shared/dist/light-provenance.js"() {
     "use strict";
-    LIGHT_LIMITS = Object.freeze({
-      users: 1,
-      projects: 1,
-      files: 50,
-      fileBytes: 16 * 1024,
-      historyVersions: 10,
-      writes: 1e3,
-      captures: 50,
-      accountCostMicros: 1e6,
-      globalCostMicros: 1e8,
-      enrollment: 100,
-      contextTokens: 4e3,
-      captureInputTokens: 8e3,
-      captureOutputTokens: 1e3,
-      captureReservationMicros: 2e4
-    });
-  }
-});
-
-// packages/shared/dist/thought-handoff-v2.js
-var ThoughtHandoffRequestV2Schema, ThoughtHandoffReceiptV2Schema;
-var init_thought_handoff_v2 = __esm({
-  "packages/shared/dist/thought-handoff-v2.js"() {
-    "use strict";
-    init_zod();
-    init_constants();
-    ThoughtHandoffRequestV2Schema = external_exports.object({
-      version: external_exports.literal(2),
-      idempotency_key: external_exports.string().min(1).max(160),
-      task: external_exports.string().trim().min(1).max(8192),
-      target_agent_installation_id: external_exports.string().uuid(),
-      focus_thought_id: external_exports.string().uuid().optional(),
-      context_revision_token: external_exports.string().regex(/^[0-9a-f]{64}$/)
-    }).strict();
-    ThoughtHandoffReceiptV2Schema = external_exports.object({
-      version: external_exports.literal(2),
-      kind: external_exports.literal("thought_handoff_v2"),
-      id: external_exports.string().uuid(),
-      root_thought_id: external_exports.string().uuid(),
-      project_id: external_exports.string().uuid().nullable(),
-      target_agent_installation_id: external_exports.string().uuid(),
-      target_agent_kind: external_exports.enum(AGENT_KINDS),
-      task: external_exports.string(),
-      status: external_exports.enum(["preparing", "pending", "accepted", "completed", "cancelled"]),
-      context_bundle_id: external_exports.string().regex(/^[0-9a-f]{64}$/).nullable(),
-      context_revision_token: external_exports.string(),
-      packet_markdown: external_exports.string().nullable(),
-      target_session_id: external_exports.string().nullable(),
-      created_at: external_exports.string(),
-      stale: external_exports.boolean(),
-      replayed: external_exports.boolean().optional()
-    }).passthrough();
-  }
-});
-
-// packages/shared/dist/public-experience.js
-var init_public_experience = __esm({
-  "packages/shared/dist/public-experience.js"() {
-    "use strict";
+    init_light();
+    HOSTS = new Set(LIGHT_HOSTS);
   }
 });
 
@@ -12250,23 +12407,6 @@ var init_memory_decisions = __esm({
   }
 });
 
-// packages/shared/dist/memory-transitions.js
-var init_memory_transitions = __esm({
-  "packages/shared/dist/memory-transitions.js"() {
-    "use strict";
-    init_memory_decisions();
-  }
-});
-
-// packages/shared/dist/memory-drift-consumer.js
-var init_memory_drift_consumer = __esm({
-  "packages/shared/dist/memory-drift-consumer.js"() {
-    "use strict";
-    init_memory_decisions();
-    init_memory_transitions();
-  }
-});
-
 // packages/shared/dist/decision-prompt.js
 function describeDeadline(deadlineAt, nowMs = Date.now()) {
   const t = Date.parse(deadlineAt);
@@ -12282,6 +12422,75 @@ var init_decision_prompt = __esm({
     "use strict";
     init_memory_decisions();
     encoder = new TextEncoder();
+  }
+});
+
+// packages/shared/dist/lexical.js
+var init_lexical = __esm({
+  "packages/shared/dist/lexical.js"() {
+    "use strict";
+    init_decision_prompt();
+    init_light();
+  }
+});
+
+// packages/shared/dist/thought-handoff-v2.js
+var ThoughtHandoffRequestV2Schema, ThoughtHandoffReceiptV2Schema;
+var init_thought_handoff_v2 = __esm({
+  "packages/shared/dist/thought-handoff-v2.js"() {
+    "use strict";
+    init_zod();
+    init_constants();
+    ThoughtHandoffRequestV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      idempotency_key: external_exports.string().min(1).max(160),
+      task: external_exports.string().trim().min(1).max(8192),
+      target_agent_installation_id: external_exports.string().uuid(),
+      focus_thought_id: external_exports.string().uuid().optional(),
+      context_revision_token: external_exports.string().regex(/^[0-9a-f]{64}$/)
+    }).strict();
+    ThoughtHandoffReceiptV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      kind: external_exports.literal("thought_handoff_v2"),
+      id: external_exports.string().uuid(),
+      root_thought_id: external_exports.string().uuid(),
+      project_id: external_exports.string().uuid().nullable(),
+      target_agent_installation_id: external_exports.string().uuid(),
+      target_agent_kind: external_exports.enum(AGENT_KINDS),
+      task: external_exports.string(),
+      status: external_exports.enum(["preparing", "pending", "accepted", "completed", "cancelled"]),
+      context_bundle_id: external_exports.string().regex(/^[0-9a-f]{64}$/).nullable(),
+      context_revision_token: external_exports.string(),
+      packet_markdown: external_exports.string().nullable(),
+      target_session_id: external_exports.string().nullable(),
+      created_at: external_exports.string(),
+      stale: external_exports.boolean(),
+      replayed: external_exports.boolean().optional()
+    }).passthrough();
+  }
+});
+
+// packages/shared/dist/public-experience.js
+var init_public_experience = __esm({
+  "packages/shared/dist/public-experience.js"() {
+    "use strict";
+  }
+});
+
+// packages/shared/dist/memory-transitions.js
+var init_memory_transitions = __esm({
+  "packages/shared/dist/memory-transitions.js"() {
+    "use strict";
+    init_memory_decisions();
+  }
+});
+
+// packages/shared/dist/memory-drift-consumer.js
+var init_memory_drift_consumer = __esm({
+  "packages/shared/dist/memory-drift-consumer.js"() {
+    "use strict";
+    init_memory_decisions();
+    init_memory_transitions();
   }
 });
 
@@ -25021,6 +25230,7 @@ var init_dist = __esm({
     init_decision_authority();
     init_feedback_signals();
     init_outcome_fitness();
+    init_safe_frontmatter();
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
@@ -25037,6 +25247,11 @@ var init_dist = __esm({
     init_feature_discovery();
     init_source_ingest();
     init_host_memory_registry();
+    init_light_native();
+    init_native_memory_parse();
+    init_native_plan_parse();
+    init_light_consolidate();
+    init_skill_inventory();
     init_memory_taxonomy();
     init_context_engine();
     init_context_provider();
@@ -25054,6 +25269,8 @@ var init_dist = __esm({
     init_thought_feedback();
     init_experience_harness();
     init_light();
+    init_light_provenance();
+    init_lexical();
     init_thought_handoff_v2();
     init_public_experience();
     init_memory_decisions();
@@ -25075,10 +25292,10 @@ import os from "node:os";
 import path from "node:path";
 function resolveHost() {
   const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
-  const make = HOSTS[envHost];
-  return (make ?? HOSTS["claude-code"])();
+  const make = HOSTS2[envHost];
+  return (make ?? HOSTS2["claude-code"])();
 }
-var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, CompanionHost, HOSTS;
+var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, CompanionHost, HOSTS2;
 var init_host = __esm({
   "packages/plugin-core/src/host.ts"() {
     "use strict";
@@ -25131,7 +25348,7 @@ var init_host = __esm({
         super("companion", path.join(os.homedir(), ".config", "memlin"));
       }
     };
-    HOSTS = {
+    HOSTS2 = {
       "claude-code": () => new ClaudeCodeHost(),
       cursor: () => new CursorHost(),
       codex: () => new CodexHost(),
@@ -26368,7 +26585,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.75";
+  cachedAgentVersion = "0.2.76";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26529,6 +26746,10 @@ var init_memlin_api_client = __esm({
         this.cfg = cfg;
       }
       cfg;
+      /** The configured account (the light-gate cache key when a call names none). */
+      get defaultAccountId() {
+        return this.cfg.accountId;
+      }
       // ---------- low-level ----------
       async authHeaders(includeAccount = true, override = {}) {
         const token = await this.cfg.getAccessToken();
@@ -26848,6 +27069,68 @@ var init_memlin_api_client = __esm({
           { project_id: projectId, status },
           { maxRetries: 0, requestTimeoutMs: 1500 }
         );
+      }
+      // ---------- Light native sync (B2) ----------
+      // Writes are never retried by request() (only GET is), so a reset after the
+      // server committed can't duplicate a version. Error bodies carry a stable
+      // `{error: code}`; see lightErrorCode() in light/sync-api.ts.
+      /** POST /light/documents — versioned Light write; identical content is a metadata-only merge. */
+      async lightWriteDocument(input) {
+        return this.request("POST", "/light/documents", input, { requestTimeoutMs: 2e4 });
+      }
+      /** POST /light/lease — acquire or renew the per-host sync lease. */
+      async lightAcquireLease(input) {
+        return this.request("POST", "/light/lease", input, { requestTimeoutMs: 8e3 });
+      }
+      /** DELETE /light/lease — release a lease this holder owns. */
+      async lightReleaseLease(input) {
+        return this.request("DELETE", "/light/lease", input, { requestTimeoutMs: 5e3 });
+      }
+      /** POST /light/sync with per-host agent statuses. */
+      async lightReportSync(input) {
+        return this.request("POST", "/light/sync", input, { requestTimeoutMs: 8e3 });
+      }
+      /** GET /light/suppressions — forgotten items (the same hash never reimports). */
+      async listLightSuppressions() {
+        return (await this.request(
+          "GET",
+          "/light/suppressions",
+          void 0,
+          { requestTimeoutMs: 8e3 }
+        )).suppressions;
+      }
+      /** POST /light/suppressions */
+      async lightSuppress(input) {
+        return this.request("POST", "/light/suppressions", input, { requestTimeoutMs: 8e3 });
+      }
+      /** DELETE /light/suppressions */
+      async lightUnsuppress(id) {
+        return this.request("DELETE", "/light/suppressions", { id }, { requestTimeoutMs: 8e3 });
+      }
+      /** POST /documents/<id>/status — archive / unarchive / approve (curation). */
+      async setDocumentStatus(documentId, action) {
+        return this.request(
+          "POST",
+          `/documents/${encodeURIComponent(documentId)}/status`,
+          { action },
+          { requestTimeoutMs: 8e3 }
+        );
+      }
+      /** GET /light/agents — per-host, per-device sync rows. */
+      async listLightAgents() {
+        return (await this.request(
+          "GET",
+          "/light/agents",
+          void 0,
+          { requestTimeoutMs: 8e3 }
+        )).agents;
+      }
+      /**
+       * POST /plans {document_id} — attach a `drafted` plans row to an existing
+       * plan document (a Light plan after an upgrade, D3). Creates no version.
+       */
+      async backfillPlanRow(documentId) {
+        return this.request("POST", "/plans", { document_id: documentId }, { requestTimeoutMs: 8e3 });
       }
       async lightStatus(accountId) {
         try {
@@ -28373,6 +28656,83 @@ var init_native_memory_backup = __esm({
   }
 });
 
+// packages/plugin-core/src/light-gate.ts
+function lightGateMessage(feature) {
+  const lead = `${FEATURE_LABEL[feature]} isn't part of Memlin Light.`;
+  const why = feature === "takeover" || feature === "disable_native" || feature === "ingest_native" ? " Light keeps your agents' own memory on and syncs it." : "";
+  return `${lead}${why} To save something yourself, use "Add a note" in Memlin Light.`;
+}
+function isLightGatedError(error40) {
+  return error40 instanceof LightGatedError || typeof error40 === "object" && error40 !== null && error40.code === "light_gated";
+}
+async function isLightAccount(api, accountId, opts = {}) {
+  if (!api || typeof api.lightStatus !== "function") return false;
+  const now = opts.now ?? Date.now;
+  const key = accountId || api.defaultAccountId || "";
+  const hit = cache.get(key);
+  if (hit && now() - hit.at < LIGHT_GATE_TTL_MS) return hit.light;
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const lookup = (async () => {
+    let timer;
+    try {
+      const status = await Promise.race([
+        api.lightStatus(accountId || void 0),
+        new Promise((resolve) => {
+          timer = setTimeout(
+            () => resolve("timeout"),
+            opts.timeoutMs ?? LIGHT_GATE_LOOKUP_TIMEOUT_MS
+          );
+        })
+      ]);
+      if (status === "timeout") return false;
+      const light = status?.active === true;
+      cache.set(key, { light, at: now() });
+      return light;
+    } catch {
+      return false;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  })();
+  inflight.set(key, lookup);
+  void lookup.finally(() => {
+    if (inflight.get(key) === lookup) inflight.delete(key);
+  });
+  return lookup;
+}
+async function assertNotLight(api, feature, accountId) {
+  if (await isLightAccount(api, accountId)) throw new LightGatedError(feature);
+}
+var LIGHT_GATE_TTL_MS, LIGHT_GATE_LOOKUP_TIMEOUT_MS, FEATURE_LABEL, LightGatedError, cache, inflight;
+var init_light_gate = __esm({
+  "packages/plugin-core/src/light-gate.ts"() {
+    "use strict";
+    LIGHT_GATE_TTL_MS = 5 * 6e4;
+    LIGHT_GATE_LOOKUP_TIMEOUT_MS = 3e3;
+    FEATURE_LABEL = {
+      takeover: "Moving memory into Memlin",
+      disable_native: "Turning off your agent's native memory",
+      report: "The usage report",
+      remember: "Remember",
+      plans: "Plan sync",
+      realtime: "Live sync",
+      ingest_native: "Importing native memory into Memlin"
+    };
+    LightGatedError = class extends Error {
+      constructor(feature) {
+        super(lightGateMessage(feature));
+        this.feature = feature;
+        this.name = "LightGatedError";
+      }
+      feature;
+      code = "light_gated";
+    };
+    cache = /* @__PURE__ */ new Map();
+    inflight = /* @__PURE__ */ new Map();
+  }
+});
+
 // packages/plugin-core/src/native-memory.ts
 import { promises as fs11 } from "node:fs";
 import { existsSync as existsSync4, statSync } from "node:fs";
@@ -28590,6 +28950,9 @@ function nativeMemoryNudgeLines(summary, policy) {
 }
 function buildNativeMemoryIngest(opts) {
   return async (snap) => {
+    if (await isLightAccount(opts.api, opts.accountId)) {
+      return { ok: false, reason: lightGateMessage("ingest_native") };
+    }
     try {
       const projectId = await opts.resolveProjectId();
       const result = await opts.api.ingestNativeMemory(
@@ -28679,6 +29042,7 @@ var init_native_memory = __esm({
     "use strict";
     init_dist();
     init_native_memory_backup();
+    init_light_gate();
     ARCHIVE_ROOT = ".archived";
     ARCHIVE_NAME_RE = /^(\d{4}-\d{2}-\d{2})(?:-(\d+))?$/;
     NATIVE_MEMORY_SESSION_READ_CAP_BYTES = 25e3;
@@ -29127,6 +29491,7 @@ function plansDir(host) {
 }
 async function fetchPlanPullRows(api, fetchOpts, accountId) {
   const callOpts = accountId ? { accountId } : {};
+  await assertNotLight(api, "plans", accountId);
   const list = await api.listPlans(fetchOpts, callOpts);
   const rows = [];
   for (const plan of list) {
@@ -29141,7 +29506,13 @@ async function pullPlans(api, opts = {}) {
   const fetchOpts = {};
   if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
   if (opts.since) fetchOpts.updated_after = opts.since;
-  const rows = await fetchPlanPullRows(api, fetchOpts, opts.accountId);
+  let rows;
+  try {
+    rows = await fetchPlanPullRows(api, fetchOpts, opts.accountId);
+  } catch (error40) {
+    if (isLightGatedError(error40)) return { pulled: [], unchanged: [], removed: [] };
+    throw error40;
+  }
   await fs14.mkdir(plansDir(opts.host), { recursive: true });
   const state = await readState();
   const newEntries = {};
@@ -29216,6 +29587,7 @@ async function pushPlanFile(api, file2, opts = {}) {
     };
   }
   const targetDocId = resolveTargetDocId(existing, existingBinding);
+  await assertNotLight(api, "plans", opts.accountId);
   if (targetDocId) {
     const result2 = await api.updatePlan(
       targetDocId,
@@ -29376,6 +29748,7 @@ var init_plan_sync = __esm({
     "use strict";
     init_state();
     init_host();
+    init_light_gate();
   }
 });
 
@@ -31149,6 +31522,10 @@ async function main8() {
     if (!parsed.full && !parsed.planId && cursor) {
       opts.since = cursor;
     }
+    if ((parsed.full || parsed.planId) && await isLightAccount(ctx.api, opts.accountId)) {
+      console.log(lightGateMessage("plans"));
+      return;
+    }
     const result = await pullPlans(ctx.api, opts);
     setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
     await writeState(state);
@@ -31167,6 +31544,7 @@ var init_pull_plans = __esm({
     init_project_resolver();
     init_plan_sync();
     init_state();
+    init_light_gate();
     void main8();
   }
 });
@@ -31289,6 +31667,10 @@ async function main9() {
       resolvedAccountId: resolved.account_id
     });
   }
+  if (await isLightAccount(api, accountId)) {
+    console.error(`memlin push-plan: ${lightGateMessage("plans")}`);
+    exitCli(0);
+  }
   const gitRemote = readGitRemote2(cwd);
   let result;
   try {
@@ -31321,6 +31703,7 @@ var init_push_plan = __esm({
   "packages/plugin-core/src/cli/push-plan.ts"() {
     "use strict";
     init_client();
+    init_light_gate();
     init_cli_runner();
     init_project_resolver();
     runCliMain(main9, (err2) => {
@@ -31366,6 +31749,10 @@ async function main10() {
   if (!text) {
     console.error('usage: memlin remember [--team] [--skill] [--title "<t>"] [--type <t>] <text>');
     exitCli(2);
+  }
+  if (await isLightAccount(api, config2.account_id)) {
+    console.error(lightGateMessage("remember"));
+    exitCli(1);
   }
   const cwd = runtimeCwd();
   let projectId = null;
@@ -31428,6 +31815,7 @@ var init_remember = __esm({
   "packages/plugin-core/src/cli/remember.ts"() {
     "use strict";
     init_client();
+    init_light_gate();
     init_cli_runner();
     init_project_resolver();
     runCliMain(main10, (err2) => {
@@ -31486,6 +31874,11 @@ async function main11() {
     );
     exitCli(0);
   }
+  if (await isLightAccount(ctx.api)) {
+    process.stderr.write(`memlin bind-plans: ${lightGateMessage("plans")}
+`);
+    exitCli(1);
+  }
   const cwd = runtimeCwd();
   const gitRemote = readGitRemote3(cwd);
   let resolved;
@@ -31540,6 +31933,7 @@ var init_bind_plans = __esm({
   "packages/plugin-core/src/cli/bind-plans.ts"() {
     "use strict";
     init_client();
+    init_light_gate();
     init_cli_runner();
     init_project_resolver();
     init_plan_sync();
@@ -35490,6 +35884,15 @@ async function runManageMemory(action) {
     }
     return;
   }
+  if (action === "archive" || action === "manage") {
+    const ctx = await getApi().catch(() => null);
+    if (ctx && await isLightAccount(ctx.api, ctx.config.account_id)) {
+      console.error(
+        `memlin manage-memory: ${lightGateMessage(action === "archive" ? "takeover" : "disable_native")}`
+      );
+      exitCli(1);
+    }
+  }
   if (action === "archive") {
     await runArchiveTakeover(paths);
     return;
@@ -35635,6 +36038,7 @@ var init_manage_memory = __esm({
     "use strict";
     init_plugin_install();
     init_client();
+    init_light_gate();
     init_project_resolver();
     init_native_memory();
     init_native_memory_backup();
@@ -35682,6 +36086,10 @@ async function main30() {
     exitCli(1);
   }
   const { api, config: config2 } = ctx;
+  if (await isLightAccount(api, config2.account_id)) {
+    console.error(`memlin ingest-native-memory: ${lightGateMessage("ingest_native")}`);
+    exitCli(1);
+  }
   const dirFlag = process.argv.indexOf("--dir");
   const explicitDir = dirFlag >= 0 ? process.argv[dirFlag + 1] : null;
   if (dirFlag >= 0 && !explicitDir) {
@@ -35731,6 +36139,7 @@ var init_ingest_native_memory = __esm({
   "packages/plugin-core/src/cli/ingest-native-memory.ts"() {
     "use strict";
     init_client();
+    init_light_gate();
     init_cli_runner();
     init_project_resolver();
     init_native_memory();
@@ -39438,7 +39847,7 @@ async function resolveModelCandidatesForRole(options2) {
   const endpoint = endpointFor(baseUrl);
   const cacheKey = JSON.stringify([endpoint, options2.role, providers, options2.accountId ?? null]);
   const now = Date.now();
-  const cached2 = cache.get(cacheKey);
+  const cached2 = cache2.get(cacheKey);
   if (cached2 && cached2.expiresAt > now)
     return cached2.models;
   const existing = inFlight.get(cacheKey);
@@ -39477,7 +39886,7 @@ async function resolveModelCandidatesForRole(options2) {
       }
       const ttl = options2.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS;
       if (ttl > 0)
-        cache.set(cacheKey, { expiresAt: Date.now() + ttl, models });
+        cache2.set(cacheKey, { expiresAt: Date.now() + ttl, models });
       return models;
     } finally {
       clearTimeout(timer);
@@ -39490,7 +39899,7 @@ async function resolveModelCandidatesForRole(options2) {
     inFlight.delete(cacheKey);
   }
 }
-var MODEL_ROLES, ModelResolutionError, DEFAULT_CACHE_TTL_MS, DEFAULT_TIMEOUT_MS, cache, inFlight;
+var MODEL_ROLES, ModelResolutionError, DEFAULT_CACHE_TTL_MS, DEFAULT_TIMEOUT_MS, cache2, inFlight;
 var init_model_catalog = __esm({
   "services/scanners/dist/shared/model-catalog.js"() {
     "use strict";
@@ -39515,7 +39924,7 @@ var init_model_catalog = __esm({
     };
     DEFAULT_CACHE_TTL_MS = 55e3;
     DEFAULT_TIMEOUT_MS = 5e3;
-    cache = /* @__PURE__ */ new Map();
+    cache2 = /* @__PURE__ */ new Map();
     inFlight = /* @__PURE__ */ new Map();
   }
 });
@@ -49961,19 +50370,19 @@ ${lanes.join("\n")}
           pollScheduled = host.setTimeout(pollQueue, 2e3, "pollQueue");
         }
       }
-      function createSingleWatcherPerName(cache2, useCaseSensitiveFileNames2, name, callback, createWatcher) {
+      function createSingleWatcherPerName(cache3, useCaseSensitiveFileNames2, name, callback, createWatcher) {
         const toCanonicalFileName = createGetCanonicalFileName(useCaseSensitiveFileNames2);
         const path51 = toCanonicalFileName(name);
-        const existing = cache2.get(path51);
+        const existing = cache3.get(path51);
         if (existing) {
           existing.callbacks.push(callback);
         } else {
-          cache2.set(path51, {
+          cache3.set(path51, {
             watcher: createWatcher(
               // Cant infer types correctly so lets satisfy checker
               ((param1, param2, param3) => {
                 var _a;
-                return (_a = cache2.get(path51)) == null ? void 0 : _a.callbacks.slice().forEach((cb) => cb(param1, param2, param3));
+                return (_a = cache3.get(path51)) == null ? void 0 : _a.callbacks.slice().forEach((cb) => cb(param1, param2, param3));
               })
             ),
             callbacks: [callback]
@@ -49981,10 +50390,10 @@ ${lanes.join("\n")}
         }
         return {
           close: () => {
-            const watcher = cache2.get(path51);
+            const watcher = cache3.get(path51);
             if (!watcher) return;
             if (!orderedRemoveItem(watcher.callbacks, callback) || watcher.callbacks.length) return;
-            cache2.delete(path51);
+            cache3.delete(path51);
             closeFileWatcherOf(watcher);
           }
         };
@@ -50020,7 +50429,7 @@ ${lanes.join("\n")}
         setTimeout: setTimeout2,
         clearTimeout: clearTimeout2
       }) {
-        const cache2 = /* @__PURE__ */ new Map();
+        const cache3 = /* @__PURE__ */ new Map();
         const callbackCache = createMultiMap();
         const cacheToUpdateChildWatches = /* @__PURE__ */ new Map();
         let timerToUpdateChildWatches;
@@ -50029,7 +50438,7 @@ ${lanes.join("\n")}
         return (dirName, callback, recursive, options2) => recursive ? createDirectoryWatcher(dirName, options2, callback) : watchDirectory(dirName, callback, recursive, options2);
         function createDirectoryWatcher(dirName, options2, callback, link) {
           const dirPath = toCanonicalFilePath(dirName);
-          let directoryWatcher = cache2.get(dirPath);
+          let directoryWatcher = cache3.get(dirPath);
           if (directoryWatcher) {
             directoryWatcher.refCount++;
           } else {
@@ -50040,7 +50449,7 @@ ${lanes.join("\n")}
                   var _a;
                   if (isIgnoredPath(fileName, options2)) return;
                   if (options2 == null ? void 0 : options2.synchronousWatchDirectory) {
-                    if (!((_a = cache2.get(dirPath)) == null ? void 0 : _a.targetWatcher)) invokeCallbacks(dirName, dirPath, fileName);
+                    if (!((_a = cache3.get(dirPath)) == null ? void 0 : _a.targetWatcher)) invokeCallbacks(dirName, dirPath, fileName);
                     updateChildWatches(dirName, dirPath, options2);
                   } else {
                     nonSyncUpdateChildWatches(dirName, dirPath, fileName, options2);
@@ -50055,7 +50464,7 @@ ${lanes.join("\n")}
               targetWatcher: void 0,
               links: void 0
             };
-            cache2.set(dirPath, directoryWatcher);
+            cache3.set(dirPath, directoryWatcher);
             updateChildWatches(dirName, dirPath, options2);
           }
           if (link) (directoryWatcher.links ?? (directoryWatcher.links = /* @__PURE__ */ new Set())).add(link);
@@ -50067,12 +50476,12 @@ ${lanes.join("\n")}
             dirName,
             close: () => {
               var _a;
-              const directoryWatcher2 = Debug.checkDefined(cache2.get(dirPath));
+              const directoryWatcher2 = Debug.checkDefined(cache3.get(dirPath));
               if (callbackToAdd) callbackCache.remove(dirPath, callbackToAdd);
               if (link) (_a = directoryWatcher2.links) == null ? void 0 : _a.delete(link);
               directoryWatcher2.refCount--;
               if (directoryWatcher2.refCount) return;
-              cache2.delete(dirPath);
+              cache3.delete(dirPath);
               directoryWatcher2.links = void 0;
               closeFileWatcherOf(directoryWatcher2);
               closeTargetWatcher(directoryWatcher2);
@@ -50108,7 +50517,7 @@ ${lanes.join("\n")}
               }
             }
           });
-          (_b = (_a = cache2.get(dirPath)) == null ? void 0 : _a.links) == null ? void 0 : _b.forEach((link) => {
+          (_b = (_a = cache3.get(dirPath)) == null ? void 0 : _a.links) == null ? void 0 : _b.forEach((link) => {
             const toPathInLink = (fileName2) => combinePaths(link, getRelativePathFromDirectory(dirName, fileName2, toCanonicalFilePath));
             if (invokeMap) {
               invokeCallbacks(link, toCanonicalFilePath(link), invokeMap, fileNames == null ? void 0 : fileNames.map(toPathInLink));
@@ -50118,7 +50527,7 @@ ${lanes.join("\n")}
           });
         }
         function nonSyncUpdateChildWatches(dirName, dirPath, fileName, options2) {
-          const parentWatcher = cache2.get(dirPath);
+          const parentWatcher = cache3.get(dirPath);
           if (parentWatcher && fileSystemEntryExists(
             dirName,
             1
@@ -50156,7 +50565,7 @@ ${lanes.join("\n")}
             const { value: [dirPath, { dirName, options: options2, fileNames }] } = result;
             cacheToUpdateChildWatches.delete(dirPath);
             const hasChanges = updateChildWatches(dirName, dirPath, options2);
-            if (!((_a = cache2.get(dirPath)) == null ? void 0 : _a.targetWatcher)) invokeCallbacks(dirName, dirPath, invokeMap, hasChanges ? void 0 : fileNames);
+            if (!((_a = cache3.get(dirPath)) == null ? void 0 : _a.targetWatcher)) invokeCallbacks(dirName, dirPath, invokeMap, hasChanges ? void 0 : fileNames);
           }
           sysLog(`sysLog:: invokingWatchers:: Elapsed:: ${timestamp() - start2}ms:: ${cacheToUpdateChildWatches.size}`);
           callbackCache.forEach((callbacks, rootDirName) => {
@@ -50180,7 +50589,7 @@ ${lanes.join("\n")}
           parentWatcher.childWatches = emptyArray;
           for (const childWatcher of existingChildWatches) {
             childWatcher.close();
-            removeChildWatches(cache2.get(toCanonicalFilePath(childWatcher.dirName)));
+            removeChildWatches(cache3.get(toCanonicalFilePath(childWatcher.dirName)));
           }
         }
         function closeTargetWatcher(watcher) {
@@ -50190,7 +50599,7 @@ ${lanes.join("\n")}
           }
         }
         function updateChildWatches(parentDir, parentDirPath, options2) {
-          const parentWatcher = cache2.get(parentDirPath);
+          const parentWatcher = cache3.get(parentDirPath);
           if (!parentWatcher) return false;
           const target = normalizePath(realpath(parentDir));
           let hasChanges;
@@ -64983,13 +65392,13 @@ ${lanes.join("\n")}
         function hasAnySymlinks() {
           return !!(symlinkedFiles == null ? void 0 : symlinkedFiles.size) || !!symlinkedDirectories && !!forEachEntry(symlinkedDirectories, (value) => !!value);
         }
-        function processResolution(cache2, resolution) {
+        function processResolution(cache3, resolution) {
           if (!resolution || !resolution.originalPath || !resolution.resolvedFileName) return;
           const { resolvedFileName, originalPath } = resolution;
-          cache2.setSymlinkedFile(toPath(originalPath, cwd, getCanonicalFileName), resolvedFileName);
+          cache3.setSymlinkedFile(toPath(originalPath, cwd, getCanonicalFileName), resolvedFileName);
           const [commonResolved, commonOriginal] = guessDirectorySymlink(resolvedFileName, originalPath, cwd, getCanonicalFileName) || emptyArray;
           if (commonResolved && commonOriginal) {
-            cache2.setSymlinkedDirectory(
+            cache3.setSymlinkedDirectory(
               commonOriginal,
               {
                 real: ensureTrailingDirectorySeparator(commonResolved),
@@ -89461,7 +89870,7 @@ ${lanes.join("\n")}
         Debug.assert(extensionIsTS(resolved.extension));
         return { fileName: resolved.path, packageId: resolved.packageId };
       }
-      function createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state, cache2, alternateResult) {
+      function createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state, cache3, alternateResult) {
         if (!state.resultFromCache && !state.compilerOptions.preserveSymlinks && resolved && isExternalLibraryImport && !resolved.originalPath && !isExternalModuleNameRelative(moduleName)) {
           const { resolvedFileName, originalPath } = getOriginalAndResolvedFileName(resolved.path, state.host, state.traceEnabled);
           if (originalPath) resolved = { ...resolved, path: resolvedFileName, originalPath };
@@ -89473,13 +89882,13 @@ ${lanes.join("\n")}
           affectingLocations,
           diagnostics,
           state.resultFromCache,
-          cache2,
+          cache3,
           alternateResult
         );
       }
-      function createResolvedModuleWithFailedLookupLocations(resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, resultFromCache, cache2, alternateResult) {
+      function createResolvedModuleWithFailedLookupLocations(resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, resultFromCache, cache3, alternateResult) {
         if (resultFromCache) {
-          if (!(cache2 == null ? void 0 : cache2.isReadonly)) {
+          if (!(cache3 == null ? void 0 : cache3.isReadonly)) {
             resultFromCache.failedLookupLocations = updateResolutionField(resultFromCache.failedLookupLocations, failedLookupLocations);
             resultFromCache.affectingLocations = updateResolutionField(resultFromCache.affectingLocations, affectingLocations);
             resultFromCache.resolutionDiagnostics = updateResolutionField(resultFromCache.resolutionDiagnostics, diagnostics);
@@ -89652,16 +90061,16 @@ ${lanes.join("\n")}
         const nameForLookup = endsWith(typeRoot, "/node_modules/@types") || endsWith(typeRoot, "/node_modules/@types/") ? mangleScopedPackageNameWithTrace(typeReferenceDirectiveName, moduleResolutionState) : typeReferenceDirectiveName;
         return combinePaths(typeRoot, nameForLookup);
       }
-      function resolveTypeReferenceDirective(typeReferenceDirectiveName, containingFile, options2, host, redirectedReference, cache2, resolutionMode) {
+      function resolveTypeReferenceDirective(typeReferenceDirectiveName, containingFile, options2, host, redirectedReference, cache3, resolutionMode) {
         Debug.assert(typeof typeReferenceDirectiveName === "string", "Non-string value passed to `ts.resolveTypeReferenceDirective`, likely by a wrapping package working with an outdated `resolveTypeReferenceDirectives` signature. This is probably not a problem in TS itself.");
         const traceEnabled = isTraceEnabled(options2, host);
         if (redirectedReference) {
           options2 = redirectedReference.commandLine.options;
         }
         const containingDirectory = containingFile ? getDirectoryPath(containingFile) : void 0;
-        let result = containingDirectory ? cache2 == null ? void 0 : cache2.getFromDirectoryCache(typeReferenceDirectiveName, resolutionMode, containingDirectory, redirectedReference) : void 0;
+        let result = containingDirectory ? cache3 == null ? void 0 : cache3.getFromDirectoryCache(typeReferenceDirectiveName, resolutionMode, containingDirectory, redirectedReference) : void 0;
         if (!result && containingDirectory && !isExternalModuleNameRelative(typeReferenceDirectiveName)) {
-          result = cache2 == null ? void 0 : cache2.getFromNonRelativeNameCache(typeReferenceDirectiveName, resolutionMode, containingDirectory, redirectedReference);
+          result = cache3 == null ? void 0 : cache3.getFromNonRelativeNameCache(typeReferenceDirectiveName, resolutionMode, containingDirectory, redirectedReference);
         }
         if (result) {
           if (traceEnabled) {
@@ -89709,7 +90118,7 @@ ${lanes.join("\n")}
           traceEnabled,
           failedLookupLocations,
           affectingLocations,
-          packageJsonInfoCache: cache2,
+          packageJsonInfoCache: cache3,
           features,
           conditions,
           requestContainingDirectory: containingDirectory,
@@ -89743,15 +90152,15 @@ ${lanes.join("\n")}
           affectingLocations: initializeResolutionField(affectingLocations),
           resolutionDiagnostics: initializeResolutionField(diagnostics)
         };
-        if (containingDirectory && cache2 && !cache2.isReadonly) {
-          cache2.getOrCreateCacheForDirectory(containingDirectory, redirectedReference).set(
+        if (containingDirectory && cache3 && !cache3.isReadonly) {
+          cache3.getOrCreateCacheForDirectory(containingDirectory, redirectedReference).set(
             typeReferenceDirectiveName,
             /*mode*/
             resolutionMode,
             result
           );
           if (!isExternalModuleNameRelative(typeReferenceDirectiveName)) {
-            cache2.getOrCreateCacheForNonRelativeName(typeReferenceDirectiveName, resolutionMode, redirectedReference).set(containingDirectory, result);
+            cache3.getOrCreateCacheForNonRelativeName(typeReferenceDirectiveName, resolutionMode, redirectedReference).set(containingDirectory, result);
           }
         }
         if (traceEnabled) traceResult(result);
@@ -89886,8 +90295,8 @@ ${lanes.join("\n")}
         }
         return concatenate(conditions, options2.customConditions);
       }
-      function resolvePackageNameToPackageJson(packageName, containingDirectory, options2, host, cache2) {
-        const moduleResolutionState = getTemporaryModuleResolutionState(cache2 == null ? void 0 : cache2.getPackageJsonInfoCache(), host, options2);
+      function resolvePackageNameToPackageJson(packageName, containingDirectory, options2, host, cache3) {
+        const moduleResolutionState = getTemporaryModuleResolutionState(cache3 == null ? void 0 : cache3.getPackageJsonInfoCache(), host, options2);
         return forEachAncestorDirectoryStoppingAtGlobalCache(host, containingDirectory, (ancestorDirectory) => {
           if (getBaseFileName(ancestorDirectory) !== "node_modules") {
             const nodeModulesFolder = combinePaths(ancestorDirectory, "node_modules");
@@ -90027,27 +90436,27 @@ ${lanes.join("\n")}
         }
       }
       function createPackageJsonInfoCache(currentDirectory, getCanonicalFileName) {
-        let cache2;
+        let cache3;
         return { getPackageJsonInfo: getPackageJsonInfo2, setPackageJsonInfo, clear: clear2, getInternalMap };
         function getPackageJsonInfo2(packageJsonPath) {
-          return cache2 == null ? void 0 : cache2.get(toPath(packageJsonPath, currentDirectory, getCanonicalFileName));
+          return cache3 == null ? void 0 : cache3.get(toPath(packageJsonPath, currentDirectory, getCanonicalFileName));
         }
         function setPackageJsonInfo(packageJsonPath, info2) {
-          (cache2 || (cache2 = /* @__PURE__ */ new Map())).set(toPath(packageJsonPath, currentDirectory, getCanonicalFileName), info2);
+          (cache3 || (cache3 = /* @__PURE__ */ new Map())).set(toPath(packageJsonPath, currentDirectory, getCanonicalFileName), info2);
         }
         function clear2() {
-          cache2 = void 0;
+          cache3 = void 0;
         }
         function getInternalMap() {
-          return cache2;
+          return cache3;
         }
       }
       function getOrCreateCache(cacheWithRedirects, redirectedReference, key, create) {
-        const cache2 = cacheWithRedirects.getOrCreateMapOfCacheRedirects(redirectedReference);
-        let result = cache2.get(key);
+        const cache3 = cacheWithRedirects.getOrCreateMapOfCacheRedirects(redirectedReference);
+        let result = cache3.get(key);
         if (!result) {
           result = create();
-          cache2.set(key, result);
+          cache3.set(key, result);
         }
         return result;
       }
@@ -90082,17 +90491,17 @@ ${lanes.join("\n")}
       function createModeAwareCache() {
         const underlying = /* @__PURE__ */ new Map();
         const memoizedReverseKeys = /* @__PURE__ */ new Map();
-        const cache2 = {
+        const cache3 = {
           get(specifier, mode) {
             return underlying.get(getUnderlyingCacheKey(specifier, mode));
           },
           set(specifier, mode, value) {
             underlying.set(getUnderlyingCacheKey(specifier, mode), value);
-            return cache2;
+            return cache3;
           },
           delete(specifier, mode) {
             underlying.delete(getUnderlyingCacheKey(specifier, mode));
-            return cache2;
+            return cache3;
           },
           has(specifier, mode) {
             return underlying.has(getUnderlyingCacheKey(specifier, mode));
@@ -90107,7 +90516,7 @@ ${lanes.join("\n")}
             return underlying.size;
           }
         };
-        return cache2;
+        return cache3;
         function getUnderlyingCacheKey(specifier, mode) {
           const result = createModeAwareCacheKey(specifier, mode);
           memoizedReverseKeys.set(result, [specifier, mode]);
@@ -90253,12 +90662,12 @@ ${lanes.join("\n")}
       function getOptionsForLibraryResolution(options2) {
         return { moduleResolution: 2, traceResolution: options2.traceResolution };
       }
-      function resolveLibrary(libraryName, resolveFrom, compilerOptions, host, cache2) {
-        return resolveModuleName(libraryName, resolveFrom, getOptionsForLibraryResolution(compilerOptions), host, cache2);
+      function resolveLibrary(libraryName, resolveFrom, compilerOptions, host, cache3) {
+        return resolveModuleName(libraryName, resolveFrom, getOptionsForLibraryResolution(compilerOptions), host, cache3);
       }
-      function resolveModuleNameFromCache(moduleName, containingFile, cache2, mode) {
+      function resolveModuleNameFromCache(moduleName, containingFile, cache3, mode) {
         const containingDirectory = getDirectoryPath(containingFile);
-        return cache2.getFromDirectoryCache(
+        return cache3.getFromDirectoryCache(
           moduleName,
           mode,
           containingDirectory,
@@ -90266,7 +90675,7 @@ ${lanes.join("\n")}
           void 0
         );
       }
-      function resolveModuleName(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode) {
+      function resolveModuleName(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode) {
         const traceEnabled = isTraceEnabled(compilerOptions, host);
         if (redirectedReference) {
           compilerOptions = redirectedReference.commandLine.options;
@@ -90278,7 +90687,7 @@ ${lanes.join("\n")}
           }
         }
         const containingDirectory = getDirectoryPath(containingFile);
-        let result = cache2 == null ? void 0 : cache2.getFromDirectoryCache(moduleName, resolutionMode, containingDirectory, redirectedReference);
+        let result = cache3 == null ? void 0 : cache3.getFromDirectoryCache(moduleName, resolutionMode, containingDirectory, redirectedReference);
         if (result) {
           if (traceEnabled) {
             trace(host, Diagnostics.Resolution_for_module_0_was_found_in_cache_from_location_1, moduleName, containingDirectory);
@@ -90297,27 +90706,27 @@ ${lanes.join("\n")}
           }
           switch (moduleResolution) {
             case 3:
-              result = node16ModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode);
+              result = node16ModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode);
               break;
             case 99:
-              result = nodeNextModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode);
+              result = nodeNextModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode);
               break;
             case 2:
-              result = nodeModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode ? getConditions(compilerOptions, resolutionMode) : void 0);
+              result = nodeModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode ? getConditions(compilerOptions, resolutionMode) : void 0);
               break;
             case 1:
-              result = classicNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference);
+              result = classicNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference);
               break;
             case 100:
-              result = bundlerModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode ? getConditions(compilerOptions, resolutionMode) : void 0);
+              result = bundlerModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode ? getConditions(compilerOptions, resolutionMode) : void 0);
               break;
             default:
               return Debug.fail(`Unexpected moduleResolution: ${moduleResolution}`);
           }
-          if (cache2 && !cache2.isReadonly) {
-            cache2.getOrCreateCacheForDirectory(containingDirectory, redirectedReference).set(moduleName, resolutionMode, result);
+          if (cache3 && !cache3.isReadonly) {
+            cache3.getOrCreateCacheForDirectory(containingDirectory, redirectedReference).set(moduleName, resolutionMode, result);
             if (!isExternalModuleNameRelative(moduleName)) {
-              cache2.getOrCreateCacheForNonRelativeName(moduleName, resolutionMode, redirectedReference).set(containingDirectory, result);
+              cache3.getOrCreateCacheForNonRelativeName(moduleName, resolutionMode, redirectedReference).set(containingDirectory, result);
             }
           }
         }
@@ -90464,31 +90873,31 @@ ${lanes.join("\n")}
         NodeResolutionFeatures2[NodeResolutionFeatures2["EsmMode"] = 32] = "EsmMode";
         return NodeResolutionFeatures2;
       })(NodeResolutionFeatures || {});
-      function node16ModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode) {
+      function node16ModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode) {
         return nodeNextModuleNameResolverWorker(
           30,
           moduleName,
           containingFile,
           compilerOptions,
           host,
-          cache2,
+          cache3,
           redirectedReference,
           resolutionMode
         );
       }
-      function nodeNextModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode) {
+      function nodeNextModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode) {
         return nodeNextModuleNameResolverWorker(
           94,
           moduleName,
           containingFile,
           compilerOptions,
           host,
-          cache2,
+          cache3,
           redirectedReference,
           resolutionMode
         );
       }
-      function nodeNextModuleNameResolverWorker(features, moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, resolutionMode, conditions) {
+      function nodeNextModuleNameResolverWorker(features, moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, resolutionMode, conditions) {
         const containingDirectory = getDirectoryPath(containingFile);
         const esmMode = resolutionMode === 99 ? 32 : 0;
         let extensions = compilerOptions.noDtsResolution ? 3 : 1 | 2 | 4;
@@ -90501,7 +90910,7 @@ ${lanes.join("\n")}
           containingDirectory,
           compilerOptions,
           host,
-          cache2,
+          cache3,
           extensions,
           /*isConfigLookup*/
           false,
@@ -90527,7 +90936,7 @@ ${lanes.join("\n")}
           void 0
         );
       }
-      function bundlerModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, conditions) {
+      function bundlerModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, conditions) {
         const containingDirectory = getDirectoryPath(containingFile);
         let extensions = compilerOptions.noDtsResolution ? 3 : 1 | 2 | 4;
         if (getResolveJsonModule(compilerOptions)) {
@@ -90539,7 +90948,7 @@ ${lanes.join("\n")}
           containingDirectory,
           compilerOptions,
           host,
-          cache2,
+          cache3,
           extensions,
           /*isConfigLookup*/
           false,
@@ -90547,7 +90956,7 @@ ${lanes.join("\n")}
           conditions
         );
       }
-      function nodeModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference, conditions, isConfigLookup) {
+      function nodeModuleNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference, conditions, isConfigLookup) {
         let extensions;
         if (isConfigLookup) {
           extensions = 8;
@@ -90557,7 +90966,7 @@ ${lanes.join("\n")}
         } else {
           extensions = getResolveJsonModule(compilerOptions) ? 1 | 2 | 4 | 8 : 1 | 2 | 4;
         }
-        return nodeModuleNameResolverWorker(conditions ? 94 : 0, moduleName, getDirectoryPath(containingFile), compilerOptions, host, cache2, extensions, !!isConfigLookup, redirectedReference, conditions);
+        return nodeModuleNameResolverWorker(conditions ? 94 : 0, moduleName, getDirectoryPath(containingFile), compilerOptions, host, cache3, extensions, !!isConfigLookup, redirectedReference, conditions);
       }
       function nodeNextJsonConfigResolver(moduleName, containingFile, host) {
         return nodeModuleNameResolverWorker(
@@ -90580,7 +90989,7 @@ ${lanes.join("\n")}
           void 0
         );
       }
-      function nodeModuleNameResolverWorker(features, moduleName, containingDirectory, compilerOptions, host, cache2, extensions, isConfigLookup, redirectedReference, conditions) {
+      function nodeModuleNameResolverWorker(features, moduleName, containingDirectory, compilerOptions, host, cache3, extensions, isConfigLookup, redirectedReference, conditions) {
         var _a, _b, _c, _d, _e;
         const traceEnabled = isTraceEnabled(compilerOptions, host);
         const failedLookupLocations = [];
@@ -90598,7 +91007,7 @@ ${lanes.join("\n")}
           traceEnabled,
           failedLookupLocations,
           affectingLocations,
-          packageJsonInfoCache: cache2,
+          packageJsonInfoCache: cache3,
           features,
           conditions: conditions ?? emptyArray,
           requestContainingDirectory: containingDirectory,
@@ -90660,7 +91069,7 @@ ${lanes.join("\n")}
           affectingLocations,
           diagnostics,
           state,
-          cache2,
+          cache3,
           alternateResult
         );
         function tryResolve(extensions2, state2) {
@@ -90678,13 +91087,13 @@ ${lanes.join("\n")}
           }
           if (!isExternalModuleNameRelative(moduleName)) {
             if (features & 2 && startsWith(moduleName, "#")) {
-              const resolved3 = loadModuleFromImports(extensions2, moduleName, containingDirectory, state2, cache2, redirectedReference);
+              const resolved3 = loadModuleFromImports(extensions2, moduleName, containingDirectory, state2, cache3, redirectedReference);
               if (resolved3) {
                 return resolved3.value && { value: { resolved: resolved3.value, isExternalLibraryImport: false } };
               }
             }
             if (features & 4) {
-              const resolved3 = loadModuleFromSelfNameReference(extensions2, moduleName, containingDirectory, state2, cache2, redirectedReference);
+              const resolved3 = loadModuleFromSelfNameReference(extensions2, moduleName, containingDirectory, state2, cache3, redirectedReference);
               if (resolved3) {
                 return resolved3.value && { value: { resolved: resolved3.value, isExternalLibraryImport: false } };
               }
@@ -90698,7 +91107,7 @@ ${lanes.join("\n")}
             if (traceEnabled) {
               trace(host, Diagnostics.Loading_module_0_from_node_modules_folder_target_file_types_Colon_1, moduleName, formatExtensions(extensions2));
             }
-            let resolved2 = loadModuleFromNearestNodeModulesDirectory(extensions2, moduleName, containingDirectory, state2, cache2, redirectedReference);
+            let resolved2 = loadModuleFromNearestNodeModulesDirectory(extensions2, moduleName, containingDirectory, state2, cache3, redirectedReference);
             if (extensions2 & 4) {
               resolved2 ?? (resolved2 = resolveFromTypeRoot(moduleName, state2));
             }
@@ -90970,14 +91379,14 @@ ${lanes.join("\n")}
         const packageInfo = considerPackageJson ? getPackageJsonInfo(candidate, onlyRecordFailures, state) : void 0;
         return withPackageId(packageInfo, loadNodeModuleFromDirectoryWorker(extensions, candidate, onlyRecordFailures, state, packageInfo), state);
       }
-      function getEntrypointsFromPackageJsonInfo(packageJsonInfo, options2, host, cache2, resolveJs) {
+      function getEntrypointsFromPackageJsonInfo(packageJsonInfo, options2, host, cache3, resolveJs) {
         if (!resolveJs && packageJsonInfo.contents.resolvedEntrypoints !== void 0) {
           return packageJsonInfo.contents.resolvedEntrypoints;
         }
         let entrypoints;
         const extensions = 1 | 4 | (resolveJs ? 2 : 0);
         const features = getNodeResolutionFeatures(options2);
-        const loadPackageJsonMainState = getTemporaryModuleResolutionState(cache2 == null ? void 0 : cache2.getPackageJsonInfoCache(), host, options2);
+        const loadPackageJsonMainState = getTemporaryModuleResolutionState(cache3 == null ? void 0 : cache3.getPackageJsonInfoCache(), host, options2);
         loadPackageJsonMainState.conditions = getConditions(options2);
         loadPackageJsonMainState.requestContainingDirectory = packageJsonInfo.packageDirectory;
         const mainResolution = loadNodeModuleFromDirectoryWorker(
@@ -91279,7 +91688,7 @@ ${lanes.join("\n")}
       function noKeyStartsWithDot(obj) {
         return !some(getOwnKeys(obj), (k) => startsWith(k, "."));
       }
-      function loadModuleFromSelfNameReference(extensions, moduleName, directory, state, cache2, redirectedReference) {
+      function loadModuleFromSelfNameReference(extensions, moduleName, directory, state, cache3, redirectedReference) {
         var _a, _b;
         const directoryPath = getNormalizedAbsolutePath(directory, (_b = (_a = state.host).getCurrentDirectory) == null ? void 0 : _b.call(_a));
         const scope = getPackageScopeForPath(directoryPath, state);
@@ -91297,13 +91706,13 @@ ${lanes.join("\n")}
         const trailingParts = parts.slice(nameParts.length);
         const subpath = !length(trailingParts) ? "." : `.${directorySeparator}${trailingParts.join(directorySeparator)}`;
         if (getAllowJSCompilerOption(state.compilerOptions) && !pathContainsNodeModules(directory)) {
-          return loadModuleFromExports(scope, extensions, subpath, state, cache2, redirectedReference);
+          return loadModuleFromExports(scope, extensions, subpath, state, cache3, redirectedReference);
         }
         const priorityExtensions = extensions & (1 | 4);
         const secondaryExtensions = extensions & ~(1 | 4);
-        return loadModuleFromExports(scope, priorityExtensions, subpath, state, cache2, redirectedReference) || loadModuleFromExports(scope, secondaryExtensions, subpath, state, cache2, redirectedReference);
+        return loadModuleFromExports(scope, priorityExtensions, subpath, state, cache3, redirectedReference) || loadModuleFromExports(scope, secondaryExtensions, subpath, state, cache3, redirectedReference);
       }
-      function loadModuleFromExports(scope, extensions, subpath, state, cache2, redirectedReference) {
+      function loadModuleFromExports(scope, extensions, subpath, state, cache3, redirectedReference) {
         if (!scope.contents.packageJsonContent.exports) {
           return void 0;
         }
@@ -91318,7 +91727,7 @@ ${lanes.join("\n")}
             const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(
               extensions,
               state,
-              cache2,
+              cache3,
               redirectedReference,
               subpath,
               scope,
@@ -91346,7 +91755,7 @@ ${lanes.join("\n")}
           const result = loadModuleFromExportsOrImports(
             extensions,
             state,
-            cache2,
+            cache3,
             redirectedReference,
             subpath,
             scope.contents.packageJsonContent.exports,
@@ -91366,7 +91775,7 @@ ${lanes.join("\n")}
           void 0
         );
       }
-      function loadModuleFromImports(extensions, moduleName, directory, state, cache2, redirectedReference) {
+      function loadModuleFromImports(extensions, moduleName, directory, state, cache3, redirectedReference) {
         var _a, _b;
         if (moduleName === "#" || startsWith(moduleName, "#/") && !(state.features & 64)) {
           if (state.traceEnabled) {
@@ -91400,7 +91809,7 @@ ${lanes.join("\n")}
         const result = loadModuleFromExportsOrImports(
           extensions,
           state,
-          cache2,
+          cache3,
           redirectedReference,
           moduleName,
           scope.contents.packageJsonContent.imports,
@@ -91432,8 +91841,8 @@ ${lanes.join("\n")}
         if (b.length > a.length) return 1;
         return 0;
       }
-      function loadModuleFromExportsOrImports(extensions, state, cache2, redirectedReference, moduleName, lookupTable, scope, isImports) {
-        const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(extensions, state, cache2, redirectedReference, moduleName, scope, isImports);
+      function loadModuleFromExportsOrImports(extensions, state, cache3, redirectedReference, moduleName, lookupTable, scope, isImports) {
+        const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(extensions, state, cache3, redirectedReference, moduleName, scope, isImports);
         if (!endsWith(moduleName, directorySeparator) && !moduleName.includes("*") && hasProperty(lookupTable, moduleName)) {
           const target = lookupTable[moduleName];
           return loadModuleFromTargetExportOrImport(
@@ -91491,7 +91900,7 @@ ${lanes.join("\n")}
         const firstStar = patternKey.indexOf("*");
         return firstStar !== -1 && firstStar === patternKey.lastIndexOf("*");
       }
-      function getLoadModuleFromTargetExportOrImport(extensions, state, cache2, redirectedReference, moduleName, scope, isImports) {
+      function getLoadModuleFromTargetExportOrImport(extensions, state, cache3, redirectedReference, moduleName, scope, isImports) {
         return loadModuleFromTargetExportOrImport;
         function loadModuleFromTargetExportOrImport(target, subpath, pattern, key) {
           var _a, _b;
@@ -91516,7 +91925,7 @@ ${lanes.join("\n")}
                   scope.packageDirectory + "/",
                   state.compilerOptions,
                   state.host,
-                  cache2,
+                  cache3,
                   extensions,
                   /*isConfigLookup*/
                   false,
@@ -91732,7 +92141,7 @@ ${lanes.join("\n")}
         if (!range) return false;
         return range.test(version2);
       }
-      function loadModuleFromNearestNodeModulesDirectory(extensions, moduleName, directory, state, cache2, redirectedReference) {
+      function loadModuleFromNearestNodeModulesDirectory(extensions, moduleName, directory, state, cache3, redirectedReference) {
         return loadModuleFromNearestNodeModulesDirectoryWorker(
           extensions,
           moduleName,
@@ -91740,7 +92149,7 @@ ${lanes.join("\n")}
           state,
           /*typesScopeOnly*/
           false,
-          cache2,
+          cache3,
           redirectedReference
         );
       }
@@ -91758,7 +92167,7 @@ ${lanes.join("\n")}
           void 0
         );
       }
-      function loadModuleFromNearestNodeModulesDirectoryWorker(extensions, moduleName, directory, state, typesScopeOnly, cache2, redirectedReference) {
+      function loadModuleFromNearestNodeModulesDirectoryWorker(extensions, moduleName, directory, state, typesScopeOnly, cache3, redirectedReference) {
         const mode = state.features === 0 ? void 0 : state.features & 32 || state.conditions.includes("import") ? 99 : 1;
         const priorityExtensions = extensions & (1 | 4);
         const secondaryExtensions = extensions & ~(1 | 4);
@@ -91777,11 +92186,11 @@ ${lanes.join("\n")}
             normalizeSlashes(directory),
             (ancestorDirectory) => {
               if (getBaseFileName(ancestorDirectory) !== "node_modules") {
-                const resolutionFromCache = tryFindNonRelativeModuleNameInCache(cache2, moduleName, mode, ancestorDirectory, redirectedReference, state);
+                const resolutionFromCache = tryFindNonRelativeModuleNameInCache(cache3, moduleName, mode, ancestorDirectory, redirectedReference, state);
                 if (resolutionFromCache) {
                   return resolutionFromCache;
                 }
-                return toSearchResult(loadModuleFromImmediateNodeModulesDirectory(extensions2, moduleName, ancestorDirectory, state, typesScopeOnly, cache2, redirectedReference));
+                return toSearchResult(loadModuleFromImmediateNodeModulesDirectory(extensions2, moduleName, ancestorDirectory, state, typesScopeOnly, cache3, redirectedReference));
               }
             }
           );
@@ -91796,14 +92205,14 @@ ${lanes.join("\n")}
           if (ancestorDirectory === globalCache) return false;
         }) || void 0;
       }
-      function loadModuleFromImmediateNodeModulesDirectory(extensions, moduleName, directory, state, typesScopeOnly, cache2, redirectedReference) {
+      function loadModuleFromImmediateNodeModulesDirectory(extensions, moduleName, directory, state, typesScopeOnly, cache3, redirectedReference) {
         const nodeModulesFolder = combinePaths(directory, "node_modules");
         const nodeModulesFolderExists = directoryProbablyExists(nodeModulesFolder, state.host);
         if (!nodeModulesFolderExists && state.traceEnabled) {
           trace(state.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, nodeModulesFolder);
         }
         if (!typesScopeOnly) {
-          const packageResult = loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesFolder, nodeModulesFolderExists, state, cache2, redirectedReference);
+          const packageResult = loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesFolder, nodeModulesFolderExists, state, cache3, redirectedReference);
           if (packageResult) {
             return packageResult;
           }
@@ -91817,10 +92226,10 @@ ${lanes.join("\n")}
             }
             nodeModulesAtTypesExists = false;
           }
-          return loadModuleFromSpecificNodeModulesDirectory(4, mangleScopedPackageNameWithTrace(moduleName, state), nodeModulesAtTypes2, nodeModulesAtTypesExists, state, cache2, redirectedReference);
+          return loadModuleFromSpecificNodeModulesDirectory(4, mangleScopedPackageNameWithTrace(moduleName, state), nodeModulesAtTypes2, nodeModulesAtTypesExists, state, cache3, redirectedReference);
         }
       }
-      function loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesDirectory, nodeModulesDirectoryExists, state, cache2, redirectedReference) {
+      function loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesDirectory, nodeModulesDirectoryExists, state, cache3, redirectedReference) {
         var _a, _b;
         const candidate = normalizePath(combinePaths(nodeModulesDirectory, moduleName));
         const { packageName, rest } = parsePackageName(moduleName);
@@ -91861,7 +92270,7 @@ ${lanes.join("\n")}
           state.resolvedPackageDirectory = true;
         }
         if (packageInfo && packageInfo.contents.packageJsonContent.exports && state.features & 8) {
-          return (_b = loadModuleFromExports(packageInfo, extensions, combinePaths(".", rest), state, cache2, redirectedReference)) == null ? void 0 : _b.value;
+          return (_b = loadModuleFromExports(packageInfo, extensions, combinePaths(".", rest), state, cache3, redirectedReference)) == null ? void 0 : _b.value;
         }
         const versionPaths = rest !== "" && packageInfo ? getVersionPathsOfPackageJsonInfo(packageInfo, state) : void 0;
         if (versionPaths) {
@@ -91933,8 +92342,8 @@ ${lanes.join("\n")}
       function unmangleScopedPackageName(typesPackageName) {
         return typesPackageName.includes(mangledScopedPackageSeparator) ? "@" + typesPackageName.replace(mangledScopedPackageSeparator, directorySeparator) : typesPackageName;
       }
-      function tryFindNonRelativeModuleNameInCache(cache2, moduleName, mode, containingDirectory, redirectedReference, state) {
-        const result = cache2 && cache2.getFromNonRelativeNameCache(moduleName, mode, containingDirectory, redirectedReference);
+      function tryFindNonRelativeModuleNameInCache(cache3, moduleName, mode, containingDirectory, redirectedReference, state) {
+        const result = cache3 && cache3.getFromNonRelativeNameCache(moduleName, mode, containingDirectory, redirectedReference);
         if (result) {
           if (state.traceEnabled) {
             trace(state.host, Diagnostics.Resolution_for_module_0_was_found_in_cache_from_location_1, moduleName, containingDirectory);
@@ -91951,7 +92360,7 @@ ${lanes.join("\n")}
           };
         }
       }
-      function classicNameResolver(moduleName, containingFile, compilerOptions, host, cache2, redirectedReference) {
+      function classicNameResolver(moduleName, containingFile, compilerOptions, host, cache3, redirectedReference) {
         const traceEnabled = isTraceEnabled(compilerOptions, host);
         const failedLookupLocations = [];
         const affectingLocations = [];
@@ -91963,7 +92372,7 @@ ${lanes.join("\n")}
           traceEnabled,
           failedLookupLocations,
           affectingLocations,
-          packageJsonInfoCache: cache2,
+          packageJsonInfoCache: cache3,
           features: 0,
           conditions: [],
           requestContainingDirectory: containingDirectory,
@@ -91984,7 +92393,7 @@ ${lanes.join("\n")}
           affectingLocations,
           diagnostics,
           state,
-          cache2
+          cache3
         );
         function tryResolve(extensions) {
           const resolvedUsingSettings = tryLoadModuleUsingOptionalResolutionSettings(extensions, moduleName, containingDirectory, loadModuleFromFileNoPackageId, state);
@@ -91997,7 +92406,7 @@ ${lanes.join("\n")}
               containingDirectory,
               (directory) => {
                 const resolutionFromCache = tryFindNonRelativeModuleNameInCache(
-                  cache2,
+                  cache3,
                   moduleName,
                   /*mode*/
                   void 0,
@@ -95765,9 +96174,9 @@ ${lanes.join("\n")}
         if (!moduleSourceFile) {
           return emptyArray;
         }
-        const cache2 = (_a = host.getModuleSpecifierCache) == null ? void 0 : _a.call(host);
-        const cached2 = cache2 == null ? void 0 : cache2.get(importingSourceFile.path, moduleSourceFile.path, userPreferences, options2);
-        return [cached2 == null ? void 0 : cached2.kind, cached2 == null ? void 0 : cached2.moduleSpecifiers, moduleSourceFile, cached2 == null ? void 0 : cached2.modulePaths, cache2];
+        const cache3 = (_a = host.getModuleSpecifierCache) == null ? void 0 : _a.call(host);
+        const cached2 = cache3 == null ? void 0 : cache3.get(importingSourceFile.path, moduleSourceFile.path, userPreferences, options2);
+        return [cached2 == null ? void 0 : cached2.kind, cached2 == null ? void 0 : cached2.moduleSpecifiers, moduleSourceFile, cached2 == null ? void 0 : cached2.modulePaths, cache3];
       }
       function getModuleSpecifiers(moduleSymbol, checker, compilerOptions, importingSourceFile, host, userPreferences, options2 = {}) {
         return getModuleSpecifiersWithCacheInfo(
@@ -95792,7 +96201,7 @@ ${lanes.join("\n")}
             computedWithoutCache
           };
         }
-        let [kind, specifiers, moduleSourceFile, modulePaths, cache2] = tryGetModuleSpecifiersFromCacheWorker(
+        let [kind, specifiers, moduleSourceFile, modulePaths, cache3] = tryGetModuleSpecifiersFromCacheWorker(
           moduleSymbol,
           importingSourceFile,
           host,
@@ -95812,7 +96221,7 @@ ${lanes.join("\n")}
           options2,
           forAutoImport
         );
-        cache2 == null ? void 0 : cache2.set(importingSourceFile.path, moduleSourceFile.path, userPreferences, options2, result.kind, modulePaths, result.moduleSpecifiers);
+        cache3 == null ? void 0 : cache3.set(importingSourceFile.path, moduleSourceFile.path, userPreferences, options2, result.kind, modulePaths, result.moduleSpecifiers);
         return result;
       }
       function getLocalModuleSpecifierBetweenFileNames(importingFile, targetFileName, compilerOptions, host, preferences, options2 = {}) {
@@ -96044,14 +96453,14 @@ ${lanes.join("\n")}
         var _a;
         const importingFilePath = toPath(info2.importingSourceFileName, host.getCurrentDirectory(), hostGetCanonicalFileName(host));
         const importedFilePath = toPath(importedFileName, host.getCurrentDirectory(), hostGetCanonicalFileName(host));
-        const cache2 = (_a = host.getModuleSpecifierCache) == null ? void 0 : _a.call(host);
-        if (cache2) {
-          const cached2 = cache2.get(importingFilePath, importedFilePath, preferences, options2);
+        const cache3 = (_a = host.getModuleSpecifierCache) == null ? void 0 : _a.call(host);
+        if (cache3) {
+          const cached2 = cache3.get(importingFilePath, importedFilePath, preferences, options2);
           if (cached2 == null ? void 0 : cached2.modulePaths) return cached2.modulePaths;
         }
         const modulePaths = getAllModulePathsWorker(info2, importedFileName, host, compilerOptions, options2);
-        if (cache2) {
-          cache2.setModulePaths(importingFilePath, importedFilePath, preferences, options2, modulePaths);
+        if (cache3) {
+          cache3.setModulePaths(importingFilePath, importedFilePath, preferences, options2, modulePaths);
         }
         return modulePaths;
       }
@@ -96068,11 +96477,11 @@ ${lanes.join("\n")}
       }
       function getAllModulePathsWorker(info2, importedFileName, host, compilerOptions, options2) {
         var _a, _b;
-        const cache2 = (_a = host.getModuleResolutionCache) == null ? void 0 : _a.call(host);
+        const cache3 = (_a = host.getModuleResolutionCache) == null ? void 0 : _a.call(host);
         const links = (_b = host.getSymlinkCache) == null ? void 0 : _b.call(host);
-        if (cache2 && links && host.readFile && !pathContainsNodeModules(info2.importingSourceFileName)) {
+        if (cache3 && links && host.readFile && !pathContainsNodeModules(info2.importingSourceFileName)) {
           Debug.type(host);
-          const state = getTemporaryModuleResolutionState(cache2.getPackageJsonInfoCache(), host, {});
+          const state = getTemporaryModuleResolutionState(cache3.getPackageJsonInfoCache(), host, {});
           const packageJson = getPackageScopeForPath(getDirectoryPath(info2.importingSourceFileName), state);
           if (packageJson) {
             const toResolve = getAllRuntimeDependencies(packageJson.contents.packageJsonContent);
@@ -96082,7 +96491,7 @@ ${lanes.join("\n")}
                 combinePaths(packageJson.packageDirectory, "package.json"),
                 compilerOptions,
                 host,
-                cache2,
+                cache3,
                 /*redirectedReference*/
                 void 0,
                 options2.overrideImportMode
@@ -100872,11 +101281,11 @@ ${lanes.join("\n")}
             return void 0;
           }
           const links = getSymbolLinks(symbol2);
-          const cache2 = links.accessibleChainCache || (links.accessibleChainCache = /* @__PURE__ */ new Map());
+          const cache3 = links.accessibleChainCache || (links.accessibleChainCache = /* @__PURE__ */ new Map());
           const firstRelevantLocation = forEachSymbolTableInScope(enclosingDeclaration, (_, __, ___, node) => node);
           const key = `${useOnlyExternalAliasing ? 0 : 1}|${firstRelevantLocation ? getNodeId(firstRelevantLocation) : 0}|${meaning}`;
-          if (cache2.has(key)) {
-            return cache2.get(key);
+          if (cache3.has(key)) {
+            return cache3.get(key);
           }
           const id = getSymbolId(symbol2);
           let visitedSymbolTables = visitedSymbolTablesMap.get(id);
@@ -100884,7 +101293,7 @@ ${lanes.join("\n")}
             visitedSymbolTablesMap.set(id, visitedSymbolTables = []);
           }
           const result = forEachSymbolTableInScope(enclosingDeclaration, getAccessibleSymbolChainFromSymbolTable);
-          cache2.set(key, result);
+          cache3.set(key, result);
           return result;
           function getAccessibleSymbolChainFromSymbolTable(symbols, ignoreQualification, isLocalNameLookup) {
             if (!pushIfUnique(visitedSymbolTables, symbols)) {
@@ -113978,21 +114387,21 @@ ${lanes.join("\n")}
           }
         }
         function getSimplifiedIndexedAccessType(type, writing) {
-          const cache2 = writing ? "simplifiedForWriting" : "simplifiedForReading";
-          if (type[cache2]) {
-            return type[cache2] === circularConstraintType ? type : type[cache2];
+          const cache3 = writing ? "simplifiedForWriting" : "simplifiedForReading";
+          if (type[cache3]) {
+            return type[cache3] === circularConstraintType ? type : type[cache3];
           }
-          type[cache2] = circularConstraintType;
+          type[cache3] = circularConstraintType;
           const objectType2 = getSimplifiedType(type.objectType, writing);
           const indexType = getSimplifiedType(type.indexType, writing);
           const distributedOverIndex = distributeObjectOverIndexType(objectType2, indexType, writing);
           if (distributedOverIndex) {
-            return type[cache2] = distributedOverIndex;
+            return type[cache3] = distributedOverIndex;
           }
           if (!(indexType.flags & 132644864)) {
             const distributedOverObject = distributeIndexOverObjectType(objectType2, indexType, writing);
             if (distributedOverObject) {
-              return type[cache2] = distributedOverObject;
+              return type[cache3] = distributedOverObject;
             }
           }
           if (isGenericTupleType(objectType2) && indexType.flags & 67648) {
@@ -114004,15 +114413,15 @@ ${lanes.join("\n")}
               writing
             );
             if (elementType) {
-              return type[cache2] = elementType;
+              return type[cache3] = elementType;
             }
           }
           if (isGenericMappedType(objectType2)) {
             if (getMappedTypeNameTypeKind(objectType2) !== 2) {
-              return type[cache2] = mapType2(substituteIndexedMappedType(objectType2, type.indexType), (t) => getSimplifiedType(t, writing));
+              return type[cache3] = mapType2(substituteIndexedMappedType(objectType2, type.indexType), (t) => getSimplifiedType(t, writing));
             }
           }
-          return type[cache2] = type;
+          return type[cache3] = type;
         }
         function getSimplifiedConditionalType(type, writing) {
           const checkType = type.checkType;
@@ -122653,12 +123062,12 @@ ${lanes.join("\n")}
           }
           function getTypeAtFlowLoopLabel(flow) {
             const id = getFlowNodeId(flow);
-            const cache2 = flowLoopCaches[id] || (flowLoopCaches[id] = /* @__PURE__ */ new Map());
+            const cache3 = flowLoopCaches[id] || (flowLoopCaches[id] = /* @__PURE__ */ new Map());
             const key2 = getOrSetCacheKey();
             if (!key2) {
               return declaredType;
             }
-            const cached2 = cache2.get(key2);
+            const cached2 = cache3.get(key2);
             if (cached2) {
               return cached2;
             }
@@ -122692,7 +123101,7 @@ ${lanes.join("\n")}
                 flowType = getTypeAtFlowNode(antecedent);
                 flowTypeCache = saveFlowTypeCache;
                 flowLoopCount--;
-                const cached22 = cache2.get(key2);
+                const cached22 = cache3.get(key2);
                 if (cached22) {
                   return cached22;
                 }
@@ -122718,7 +123127,7 @@ ${lanes.join("\n")}
                 true
               );
             }
-            cache2.set(key2, result);
+            cache3.set(key2, result);
             return result;
           }
           function getUnionOrEvolvingArrayType(types, subtypeReduction) {
@@ -127748,12 +128157,12 @@ ${lanes.join("\n")}
         }
         function reportNonexistentProperty(propNode, containingType, isUncheckedJS) {
           const links = getNodeLinks(propNode);
-          const cache2 = links.nonExistentPropCheckCache || (links.nonExistentPropCheckCache = /* @__PURE__ */ new Set());
+          const cache3 = links.nonExistentPropCheckCache || (links.nonExistentPropCheckCache = /* @__PURE__ */ new Set());
           const key = `${getTypeId(containingType)}|${isUncheckedJS}`;
-          if (cache2.has(key)) {
+          if (cache3.has(key)) {
             return;
           }
-          cache2.add(key);
+          cache3.add(key);
           let errorInfo;
           let relatedInfo;
           if (!isPrivateIdentifier(propNode) && containingType.flags & 134217728 && !(containingType.flags & 12713980)) {
@@ -133823,8 +134232,8 @@ ${lanes.join("\n")}
             /* TypeOnly */
           );
           if (flowInvocationCount !== startInvocationCount) {
-            const cache2 = flowTypeCache || (flowTypeCache = []);
-            cache2[getNodeId(node)] = type;
+            const cache3 = flowTypeCache || (flowTypeCache = []);
+            cache3[getNodeId(node)] = type;
             setNodeFlags(
               node,
               node.flags | 268435456
@@ -176584,8 +176993,8 @@ ${lanes.join("\n")}
         }
         function generateNameCached(node, privateName, flags2, prefix, suffix) {
           const nodeId = getNodeId(node);
-          const cache2 = privateName ? nodeIdToGeneratedPrivateName : nodeIdToGeneratedName;
-          return cache2[nodeId] || (cache2[nodeId] = generateNameForNode(node, privateName, flags2 ?? 0, formatGeneratedNamePart(prefix, generateName), formatGeneratedNamePart(suffix)));
+          const cache3 = privateName ? nodeIdToGeneratedPrivateName : nodeIdToGeneratedName;
+          return cache3[nodeId] || (cache3[nodeId] = generateNameForNode(node, privateName, flags2 ?? 0, formatGeneratedNamePart(prefix, generateName), formatGeneratedNamePart(suffix)));
         }
         function isUniqueName(name, privateName) {
           return isFileLevelUniqueNameInCurrentFile(name, privateName) && !isReservedName(name, privateName) && !generatedNames.has(name);
@@ -178391,7 +178800,7 @@ ${lanes.join("\n")}
         getName: getModuleResolutionName,
         getMode: (entry, file2, compilerOptions) => getModeForUsageLocation(file2, entry, compilerOptions)
       };
-      function createModuleResolutionLoader(containingFile, redirectedReference, options2, host, cache2) {
+      function createModuleResolutionLoader(containingFile, redirectedReference, options2, host, cache3) {
         return {
           nameAndMode: moduleResolutionNameAndModeGetter,
           resolve: (moduleName, resolutionMode) => resolveModuleName(
@@ -178399,7 +178808,7 @@ ${lanes.join("\n")}
             containingFile,
             options2,
             host,
-            cache2,
+            cache3,
             redirectedReference,
             resolutionMode
           )
@@ -178412,7 +178821,7 @@ ${lanes.join("\n")}
         getName: getTypeReferenceResolutionName,
         getMode: (entry, file2, compilerOptions) => getModeForFileReference(entry, file2 && getDefaultResolutionModeForFileWorker(file2, compilerOptions))
       };
-      function createTypeReferenceResolutionLoader(containingFile, redirectedReference, options2, host, cache2) {
+      function createTypeReferenceResolutionLoader(containingFile, redirectedReference, options2, host, cache3) {
         return {
           nameAndMode: typeReferenceResolutionNameAndModeGetter,
           resolve: (typeRef, resoluionMode) => resolveTypeReferenceDirective(
@@ -178421,7 +178830,7 @@ ${lanes.join("\n")}
             options2,
             host,
             redirectedReference,
-            cache2,
+            cache3,
             resoluionMode
           )
         };
@@ -178429,15 +178838,15 @@ ${lanes.join("\n")}
       function loadWithModeAwareCache(entries, containingFile, redirectedReference, options2, containingSourceFile, host, resolutionCache, createLoader) {
         if (entries.length === 0) return emptyArray;
         const resolutions = [];
-        const cache2 = /* @__PURE__ */ new Map();
+        const cache3 = /* @__PURE__ */ new Map();
         const loader = createLoader(containingFile, redirectedReference, options2, host, resolutionCache);
         for (const entry of entries) {
           const name = loader.nameAndMode.getName(entry);
           const mode = loader.nameAndMode.getMode(entry, containingSourceFile, (redirectedReference == null ? void 0 : redirectedReference.commandLine.options) || options2);
           const key = createModeAwareCacheKey(name, mode);
-          let result = cache2.get(key);
+          let result = cache3.get(key);
           if (!result) {
-            cache2.set(key, result = loader.resolve(name, mode));
+            cache3.set(key, result = loader.resolve(name, mode));
           }
           resolutions.push(result);
         }
@@ -185056,9 +185465,9 @@ ${lanes.join("\n")}
             /* Recursive */
           );
         }
-        function removeResolutionsOfFileFromCache(cache2, filePath, getResolutionWithResolvedFileName) {
+        function removeResolutionsOfFileFromCache(cache3, filePath, getResolutionWithResolvedFileName) {
           var _a;
-          const resolutions = cache2.get(filePath);
+          const resolutions = cache3.get(filePath);
           if (resolutions) {
             if (!((_a = resolutionHost.skipWatchingFailedLookups) == null ? void 0 : _a.call(resolutionHost, filePath))) {
               resolutions.forEach(
@@ -185069,7 +185478,7 @@ ${lanes.join("\n")}
                 )
               );
             }
-            cache2.delete(filePath);
+            cache3.delete(filePath);
           }
         }
         function removeResolutionsFromProjectReferenceRedirects(filePath) {
@@ -187089,14 +187498,14 @@ ${lanes.join("\n")}
       }
       function disableCache(state) {
         if (!state.cache) return;
-        const { cache: cache2, host, compilerHost, extendedConfigCache, moduleResolutionCache, typeReferenceDirectiveResolutionCache, libraryResolutionCache } = state;
-        host.readFile = cache2.originalReadFile;
-        host.fileExists = cache2.originalFileExists;
-        host.directoryExists = cache2.originalDirectoryExists;
-        host.createDirectory = cache2.originalCreateDirectory;
-        host.writeFile = cache2.originalWriteFile;
-        compilerHost.getSourceFile = cache2.originalGetSourceFile;
-        state.readFileWithCache = cache2.originalReadFileWithCache;
+        const { cache: cache3, host, compilerHost, extendedConfigCache, moduleResolutionCache, typeReferenceDirectiveResolutionCache, libraryResolutionCache } = state;
+        host.readFile = cache3.originalReadFile;
+        host.fileExists = cache3.originalFileExists;
+        host.directoryExists = cache3.originalDirectoryExists;
+        host.createDirectory = cache3.originalCreateDirectory;
+        host.writeFile = cache3.originalWriteFile;
+        compilerHost.getSourceFile = cache3.originalGetSourceFile;
+        state.readFileWithCache = cache3.originalReadFileWithCache;
         extendedConfigCache.clear();
         moduleResolutionCache == null ? void 0 : moduleResolutionCache.clear();
         typeReferenceDirectiveResolutionCache == null ? void 0 : typeReferenceDirectiveResolutionCache.clear();
@@ -194477,7 +194886,7 @@ ${lanes.join("\n")}
         const symbols = /* @__PURE__ */ new Map();
         const packages = /* @__PURE__ */ new Map();
         let usableByFileName;
-        const cache2 = {
+        const cache3 = {
           isUsableByFile: (importingFile) => importingFile === usableByFileName,
           isEmpty: () => !exportInfo.size,
           clear: () => {
@@ -194487,7 +194896,7 @@ ${lanes.join("\n")}
           },
           add: (importingFile, symbol2, symbolTableKey, moduleSymbol, moduleFile, exportKind, isFromPackageJson, checker) => {
             if (importingFile !== usableByFileName) {
-              cache2.clear();
+              cache3.clear();
               usableByFileName = importingFile;
             }
             let packageName;
@@ -194575,7 +194984,7 @@ ${lanes.join("\n")}
             // Changes elsewhere in the file can change the *type* of an export in a module augmentation,
             // but type info is gathered in getCompletionEntryDetails, which doesn't use the cache.
             !arrayIsEqualTo(oldSourceFile.moduleAugmentations, newSourceFile.moduleAugmentations) || !ambientModuleDeclarationsAreEqual(oldSourceFile, newSourceFile)) {
-              cache2.clear();
+              cache3.clear();
               return true;
             }
             usableByFileName = newSourceFile.path;
@@ -194583,9 +194992,9 @@ ${lanes.join("\n")}
           }
         };
         if (Debug.isDebugging) {
-          Object.defineProperty(cache2, "__cache", { value: exportInfo });
+          Object.defineProperty(cache3, "__cache", { value: exportInfo });
         }
-        return cache2;
+        return cache3;
         function rehydrateCachedInfo(info2) {
           if (info2.symbol && info2.moduleSymbol) return info2;
           const { id, exportKind, targetFlags, isFromPackageJson, moduleFileName } = info2;
@@ -194803,7 +195212,7 @@ ${lanes.join("\n")}
         var _a, _b, _c, _d, _e;
         const start2 = timestamp();
         (_a = host.getPackageJsonAutoImportProvider) == null ? void 0 : _a.call(host);
-        const cache2 = ((_b = host.getCachedExportInfoMap) == null ? void 0 : _b.call(host)) || createCacheableExportInfoMap({
+        const cache3 = ((_b = host.getCachedExportInfoMap) == null ? void 0 : _b.call(host)) || createCacheableExportInfoMap({
           getCurrentProgram: () => program,
           getPackageJsonAutoImportProvider: () => {
             var _a2;
@@ -194814,9 +195223,9 @@ ${lanes.join("\n")}
             return (_a2 = host.getGlobalTypingsCacheLocation) == null ? void 0 : _a2.call(host);
           }
         });
-        if (cache2.isUsableByFile(importingFile.path)) {
+        if (cache3.isUsableByFile(importingFile.path)) {
           (_c = host.log) == null ? void 0 : _c.call(host, "getExportInfoMap: cache hit");
-          return cache2;
+          return cache3;
         }
         (_d = host.log) == null ? void 0 : _d.call(host, "getExportInfoMap: cache miss or empty; calculating new results");
         let moduleCount = 0;
@@ -194833,7 +195242,7 @@ ${lanes.join("\n")}
               const checker = program2.getTypeChecker();
               const defaultInfo = getDefaultLikeExportInfo(moduleSymbol, checker);
               if (defaultInfo && isImportableSymbol(defaultInfo.symbol, checker)) {
-                cache2.add(
+                cache3.add(
                   importingFile.path,
                   defaultInfo.symbol,
                   defaultInfo.exportKind === 1 ? "default" : "export=",
@@ -194846,7 +195255,7 @@ ${lanes.join("\n")}
               }
               checker.forEachExportAndPropertyOfModule(moduleSymbol, (exported, key) => {
                 if (exported !== (defaultInfo == null ? void 0 : defaultInfo.symbol) && isImportableSymbol(exported, checker) && addToSeen(seenExports, key)) {
-                  cache2.add(
+                  cache3.add(
                     importingFile.path,
                     exported,
                     key,
@@ -194861,11 +195270,11 @@ ${lanes.join("\n")}
             }
           );
         } catch (err2) {
-          cache2.clear();
+          cache3.clear();
           throw err2;
         }
         (_e = host.log) == null ? void 0 : _e.call(host, `getExportInfoMap: done in ${timestamp() - start2} ms`);
-        return cache2;
+        return cache3;
       }
       function getDefaultLikeExportInfo(moduleSymbol, checker) {
         const exportEquals = checker.resolveExternalModuleSymbol(moduleSymbol);
@@ -220206,8 +220615,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
       function completionEntryDataIsResolved(data) {
         return !!(data == null ? void 0 : data.moduleSpecifier);
       }
-      function continuePreviousIncompleteResponse(cache2, file2, location, program, host, preferences, cancellationToken, position) {
-        const previousResponse = cache2.get();
+      function continuePreviousIncompleteResponse(cache3, file2, location, program, host, preferences, cancellationToken, position) {
+        const previousResponse = cache3.get();
         if (!previousResponse) return void 0;
         const touchNode = getTouchingPropertyName(file2, position);
         const lowerCaseTokenText = location.text.toLowerCase();
@@ -244686,9 +245095,9 @@ ${options2.prefix}` : "\n" : options2.prefix
         // TODO: GH#18217
       };
       var noopConfigFileWatcher = { close: noop };
-      function getConfigFileNameFromCache(info2, cache2) {
-        if (!cache2) return void 0;
-        const configFileForOpenFile = cache2.get(info2.path);
+      function getConfigFileNameFromCache(info2, cache3) {
+        if (!cache3) return void 0;
+        const configFileForOpenFile = cache3.get(info2.path);
         if (configFileForOpenFile === void 0) return void 0;
         if (!isAncestorConfigFileInfo(info2)) {
           return isString(configFileForOpenFile) || !configFileForOpenFile ? configFileForOpenFile : (
@@ -248499,12 +248908,12 @@ Dynamic files must always be opened with service's current directory or service 
       }
       function createModuleSpecifierCache(host) {
         let containedNodeModulesWatchers;
-        let cache2;
+        let cache3;
         let currentKey;
         const result = {
           get(fromFileName, toFileName2, preferences, options2) {
-            if (!cache2 || currentKey !== key(fromFileName, preferences, options2)) return void 0;
-            return cache2.get(toFileName2);
+            if (!cache3 || currentKey !== key(fromFileName, preferences, options2)) return void 0;
+            return cache3.get(toFileName2);
           },
           set(fromFileName, toFileName2, preferences, options2, kind, modulePaths, moduleSpecifiers2) {
             ensureCache(fromFileName, preferences, options2).set(toFileName2, createInfo(
@@ -248571,25 +248980,25 @@ Dynamic files must always be opened with service's current directory or service 
           },
           clear() {
             containedNodeModulesWatchers == null ? void 0 : containedNodeModulesWatchers.forEach(closeFileWatcher);
-            cache2 == null ? void 0 : cache2.clear();
+            cache3 == null ? void 0 : cache3.clear();
             containedNodeModulesWatchers == null ? void 0 : containedNodeModulesWatchers.clear();
             currentKey = void 0;
           },
           count() {
-            return cache2 ? cache2.size : 0;
+            return cache3 ? cache3.size : 0;
           }
         };
         if (Debug.isDebugging) {
-          Object.defineProperty(result, "__cache", { get: () => cache2 });
+          Object.defineProperty(result, "__cache", { get: () => cache3 });
         }
         return result;
         function ensureCache(fromFileName, preferences, options2) {
           const newKey = key(fromFileName, preferences, options2);
-          if (cache2 && currentKey !== newKey) {
+          if (cache3 && currentKey !== newKey) {
             result.clear();
           }
           currentKey = newKey;
-          return cache2 || (cache2 = /* @__PURE__ */ new Map());
+          return cache3 || (cache3 = /* @__PURE__ */ new Map());
         }
         function key(fromFileName, preferences, options2) {
           return `${fromFileName},${preferences.importModuleSpecifierEnding},${preferences.importModuleSpecifierPreference},${options2.overrideImportMode}`;
@@ -252828,9 +253237,9 @@ Additional information: BADCLIENT: Bad error code, ${badCode} not found in range
       _ScriptVersionCache.maxVersions = 8;
       var ScriptVersionCache = _ScriptVersionCache;
       var LineIndexSnapshot = class _LineIndexSnapshot {
-        constructor(version22, cache2, index, changesSincePreviousVersion = emptyArray2) {
+        constructor(version22, cache3, index, changesSincePreviousVersion = emptyArray2) {
           this.version = version22;
-          this.cache = cache2;
+          this.cache = cache3;
           this.index = index;
           this.changesSincePreviousVersion = changesSincePreviousVersion;
         }
@@ -259250,9 +259659,9 @@ ${nodeLocation}` : message;
       return ts__namespace.createLanguageServiceSourceFile(filePath, scriptSnapshot, optionsOrScriptTarget ?? ts__namespace.ScriptTarget.Latest, version2, setParentNodes, scriptKind);
     }
     function createDocumentCache(files) {
-      const cache2 = new InternalDocumentCache();
-      cache2._addFiles(files);
-      return cache2;
+      const cache3 = new InternalDocumentCache();
+      cache3._addFiles(files);
+      return cache3;
     }
     var FileSystemDocumentCache = class {
       #documentCache;
