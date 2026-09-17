@@ -3412,7 +3412,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs10 = __require("fs");
+    var fs11 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -3496,7 +3496,7 @@ var require_gray_matter = __commonJS({
       return stringify(file2, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs10.readFileSync(filepath, "utf8");
+      const str2 = fs11.readFileSync(filepath, "utf8");
       const file2 = matter3(str2, options2);
       file2.path = filepath;
       return file2;
@@ -4735,8 +4735,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path13, errorMaps, issueData } = params;
-  const fullPath = [...path13, ...issueData.path || []];
+  const { data, path: path14, errorMaps, issueData } = params;
+  const fullPath = [...path14, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4852,11 +4852,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path13, key) {
+  constructor(parent, value, path14, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path13;
+    this._path = path14;
     this._key = key;
   }
   get path() {
@@ -9337,12 +9337,16 @@ var MODEL_PRICES = {
   "text-embedding-3-small": { inputUsdPerMTok: 0.02, outputUsdPerMTok: 0 },
   "gpt-4.1-mini": { inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.6 }
 };
+var SAVINGS_BASELINE_MODEL_ID = "claude-sonnet-4-6";
 
 // packages/shared/dist/usage-stats.js
-var SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
-var SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+var SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].inputUsdPerMTok;
+var SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].outputUsdPerMTok;
 var OUTPUT_MULTIPLIER = 0.3;
-function estCostUsd(inputTokens) {
+function estCostUsd(inputTokens, usdPerMTok) {
+  if (usdPerMTok !== void 0 && Number.isFinite(usdPerMTok) && usdPerMTok >= 0) {
+    return (Number(inputTokens) || 0) / 1e6 * usdPerMTok;
+  }
   const inputCostUsd = inputTokens / 1e6 * SONNET_INPUT_USD_PER_MTOK;
   const outputCostUsd = inputTokens * OUTPUT_MULTIPLIER / 1e6 * SONNET_OUTPUT_USD_PER_MTOK;
   return inputCostUsd + outputCostUsd;
@@ -9628,19 +9632,19 @@ var ContextManifestV1Schema = external_exports.object({
       location: `linked_contexts.${index}`
     }))
   ];
-  references.forEach(({ ref, path: path13, location }) => {
+  references.forEach(({ ref, path: path14, location }) => {
     const identity = contextReferenceIdentityKey(ref);
     const prior = seen.get(identity);
     if (prior && prior.revision !== ref.revision) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path13,
+        path: path14,
         message: `context ${identity} has conflicting revisions in ${prior.location} and ${location}`
       });
     } else if (prior && location.startsWith("linked_contexts.")) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path13,
+        path: path14,
         message: `duplicate linked context ${identity}`
       });
     }
@@ -9954,11 +9958,11 @@ var ContextBundleV1Schema = external_exports.object({
         path: ["coverage", coverageIndex, "omitted_contexts", index, "context_ref"]
       }))
     ];
-    for (const { ref, path: path13 } of references) {
+    for (const { ref, path: path14 } of references) {
       if (!contextKeys.has(contextReferenceKey(ref))) {
         ctx.addIssue({
           code: external_exports.ZodIssueCode.custom,
-          path: path13,
+          path: path14,
           message: "provider coverage is outside the exact manifest contexts"
         });
       }
@@ -13151,10 +13155,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path13) {
-  if (!path13)
+function getElementAtPath(obj, path14) {
+  if (!path14)
     return obj;
-  return path13.reduce((acc, key) => acc?.[key], obj);
+  return path14.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -13474,11 +13478,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path13, issues) {
+function prefixIssues(path14, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path13);
+    iss.path.unshift(path14);
     return iss;
   });
 }
@@ -13615,7 +13619,7 @@ function treeifyError(error40, _mapper) {
     return issue2.message;
   };
   const result = { errors: [] };
-  const processError = (error41, path13 = []) => {
+  const processError = (error41, path14 = []) => {
     var _a, _b;
     for (const issue2 of error41.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -13625,7 +13629,7 @@ function treeifyError(error40, _mapper) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path13, ...issue2.path];
+        const fullpath = [...path14, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -13655,9 +13659,9 @@ function treeifyError(error40, _mapper) {
   processError(error40);
   return result;
 }
-function toDotPath(path13) {
+function toDotPath(path14) {
   const segs = [];
-  for (const seg of path13) {
+  for (const seg of path14) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -24315,10 +24319,10 @@ function validateFlowDefinitionSemantics(flow) {
       ],
       ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, path: `stages.${stageIndex}.bypass_target` }]
     ];
-    targets.forEach(({ target, path: path13 }) => {
+    targets.forEach(({ target, path: path14 }) => {
       if (!isReservedTarget(target) && !stageById.has(target)) {
         issues.push({
-          path: path13,
+          path: path14,
           code: "missing_transition_target",
           message: `transition target ${JSON.stringify(target)} does not exist`
         });
@@ -24348,7 +24352,7 @@ function validateFlowDefinitionSemantics(flow) {
   const visiting = /* @__PURE__ */ new Set();
   const visited = /* @__PURE__ */ new Set();
   let hasReachableEnd = false;
-  const visit = (stageId, path13, pathBounds) => {
+  const visit = (stageId, path14, pathBounds) => {
     reachable.add(stageId);
     if (visited.has(stageId)) return;
     visiting.add(stageId);
@@ -24364,7 +24368,7 @@ function validateFlowDefinitionSemantics(flow) {
         ...stage.default_transition === null ? [] : [{ target: stage.default_transition, bounded: false }],
         ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, bounded: false }]
       ];
-      const currentPath = [...path13, stageId];
+      const currentPath = [...path14, stageId];
       for (const edge of edges) {
         const { target } = edge;
         if (target === "$end") {
@@ -24472,18 +24476,18 @@ var FlowPackManifestBaseSchema = external_exports2.object({
   evals: external_exports2.array(ManifestEvalSchema).max(256),
   model_roles: external_exports2.array(ManifestModelRoleSchema).max(64)
 }).strict();
-function validateRelativePackPath(path13) {
-  if (path13.startsWith("/") || path13.startsWith("\\")) return "path must be relative";
-  if (/^[A-Za-z]:/.test(path13) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path13)) {
+function validateRelativePackPath(path14) {
+  if (path14.startsWith("/") || path14.startsWith("\\")) return "path must be relative";
+  if (/^[A-Za-z]:/.test(path14) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path14)) {
     return "drive-qualified paths and URI schemes are not allowed";
   }
-  if (/[\u0000-\u001f\u007f]/.test(path13)) return "control characters are not allowed";
-  if (/%(?:2e|2f|5c)/i.test(path13)) return "encoded path traversal is not allowed";
-  if (path13.includes("\\")) return "path must use forward slashes";
-  if (path13.split("/").some((segment) => segment === ".." || segment === ".")) {
+  if (/[\u0000-\u001f\u007f]/.test(path14)) return "control characters are not allowed";
+  if (/%(?:2e|2f|5c)/i.test(path14)) return "encoded path traversal is not allowed";
+  if (path14.includes("\\")) return "path must use forward slashes";
+  if (path14.split("/").some((segment) => segment === ".." || segment === ".")) {
     return "path traversal and dot segments are not allowed";
   }
-  if (path13.split("/").some((segment) => segment.length === 0)) {
+  if (path14.split("/").some((segment) => segment.length === 0)) {
     return "path cannot contain empty segments";
   }
   return null;
@@ -24530,22 +24534,22 @@ function validateFlowPackManifestSemantics(manifest) {
       issues
     );
     role.independence.compare_against_roles.forEach((comparedRole, comparedIndex) => {
-      const path13 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
+      const path14 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
       if (comparedRole === role.id) {
         issues.push({
-          path: path13,
+          path: path14,
           code: "self_referential_model_independence",
           message: "a model role cannot require independence from itself"
         });
       } else if (!modelRolesById.has(comparedRole)) {
         issues.push({
-          path: path13,
+          path: path14,
           code: "missing_independence_model_role",
           message: `independence policy references undeclared model role ${JSON.stringify(comparedRole)}`
         });
       } else if (modelRolesById.get(comparedRole)?.independence !== null) {
         issues.push({
-          path: path13,
+          path: path14,
           code: "independence_reference_not_author",
           message: `independence policy must compare against an author role; ${JSON.stringify(comparedRole)} declares its own independence policy`
         });
@@ -24623,6 +24627,11 @@ var FlowPackManifestSchema = FlowPackManifestBaseSchema.superRefine((value, ctx)
     });
   }
 });
+
+// packages/shared/dist/needs-you-engine.js
+var NEEDS_YOU_HORIZON_DAYS = 14;
+var HORIZON_MS = NEEDS_YOU_HORIZON_DAYS * 24 * 60 * 60 * 1e3;
+var STALLED_GOAL_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 
 // packages/plugin-core/dist/light-worker.js
 import { spawn } from "node:child_process";
@@ -25095,7 +25104,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.74";
+  cachedAgentVersion = "0.2.75";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26851,11 +26860,11 @@ function attributeAppliedItems(agentMessage, replay) {
   const titleIds = /* @__PURE__ */ new Map();
   const titleVersionIds = /* @__PURE__ */ new Map();
   for (const candidate of candidates) {
-    const path13 = candidate.path ? normalizeReference(candidate.path.replace(/^\.\//, "")) : "";
+    const path14 = candidate.path ? normalizeReference(candidate.path.replace(/^\.\//, "")) : "";
     const title = normalizeReference(candidate.title);
-    addReferenceKey(pathIds, path13, candidate.id);
-    if (path13) {
-      addReferenceKey(pathVersionIds, `${path13}\0${candidate.version_number}`, candidate.id);
+    addReferenceKey(pathIds, path14, candidate.id);
+    if (path14) {
+      addReferenceKey(pathVersionIds, `${path14}\0${candidate.version_number}`, candidate.id);
     }
     addReferenceKey(titleIds, title, candidate.id);
     if (title) {
@@ -26864,14 +26873,14 @@ function attributeAppliedItems(agentMessage, replay) {
   }
   const referenced = [];
   for (const candidate of candidates) {
-    const path13 = candidate.path ? normalizeReference(candidate.path.replace(/^\.\//, "")) : "";
+    const path14 = candidate.path ? normalizeReference(candidate.path.replace(/^\.\//, "")) : "";
     const title = normalizeReference(candidate.title);
-    const pathPositions = unnegatedReferencePositions(message, path13);
-    const pathVersionKey = `${path13}\0${candidate.version_number}`;
-    const pathIsUnique = pathIds.get(path13)?.size === 1;
+    const pathPositions = unnegatedReferencePositions(message, path14);
+    const pathVersionKey = `${path14}\0${candidate.version_number}`;
+    const pathIsUnique = pathIds.get(path14)?.size === 1;
     const pathVersionIsUnique = pathVersionIds.get(pathVersionKey)?.size === 1;
     const pathMatch = pathPositions.length > 0 && (pathIsUnique || pathVersionIsUnique && pathPositions.some(
-      (position) => versionMentionNear(message, position, path13.length, candidate.version_number)
+      (position) => versionMentionNear(message, position, path14.length, candidate.version_number)
     ));
     const titlePositions = unnegatedReferencePositions(message, title);
     const titleVersionKey = `${title}\0${candidate.version_number}`;
@@ -26924,6 +26933,8 @@ var LOCK_WAIT_MS = 2e3;
 var LOCK_RETRY_MS = 50;
 async function acquireStateLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
+  await fs8.mkdir(path12.dirname(LOCK_DIR), { recursive: true }).catch(() => {
+  });
   for (; ; ) {
     try {
       await fs8.mkdir(LOCK_DIR);
@@ -26958,6 +26969,9 @@ async function updateState(mutate) {
   } finally {
     if (locked) await releaseStateLock();
   }
+}
+function hash(content) {
+  return crypto5.createHash("sha256").update(content).digest("hex");
 }
 function getLastResolveForSession(state, sessionId) {
   if (sessionId) {
@@ -27755,7 +27769,7 @@ async function maybeUpsertWorkingMemory(ctx, payload, routing) {
     log("working memory: skipped \u2014 no resolve or exchange yet");
     return;
   }
-  const path13 = workingMemoryPath(sessionId);
+  const path14 = workingMemoryPath(sessionId);
   const callOpts = { accountId: routing.accountId };
   let documentId = state.working_memory_ids?.[sessionId] ?? null;
   if (!documentId) {
@@ -27764,7 +27778,7 @@ async function maybeUpsertWorkingMemory(ctx, payload, routing) {
         ctx.api.listDocuments(
           {
             kinds: ["memory"],
-            path: path13,
+            path: path14,
             ...routing.projectId ? { project_id: routing.projectId } : {}
           },
           callOpts
@@ -27772,7 +27786,7 @@ async function maybeUpsertWorkingMemory(ctx, payload, routing) {
         TIMEOUT_MS,
         []
       );
-      const hit = docs.find((d) => d.path === path13);
+      const hit = docs.find((d) => d.path === path14);
       if (hit) documentId = hit.id;
     } catch (err) {
       log(
@@ -27792,7 +27806,7 @@ async function maybeUpsertWorkingMemory(ctx, payload, routing) {
         scope: routing.projectId ? "project" : "team",
         kind: "memory",
         title: `Working memory \u2014 ${sessionId.slice(0, 12)}`,
-        path: path13,
+        path: path14,
         content,
         commit_message: "session working memory",
         project_id: routing.projectId,
@@ -27835,7 +27849,7 @@ async function maybeUpsertWorkingMemory(ctx, payload, routing) {
       Object.entries(next.working_memory_hashes).filter(([k]) => keep.has(k))
     );
     await writeState(next);
-    log(`working memory: upserted ${path13} (v${result.version_number})`);
+    log(`working memory: upserted ${path14} (v${result.version_number})`);
   } catch (err) {
     log(`working memory failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -27880,6 +27894,207 @@ async function runStopHandler(payload, opts = {}) {
   }
 }
 
+// packages/plugin-core/dist/plan-sync.js
+import { promises as fs10 } from "node:fs";
+import path13 from "node:path";
+function homeBase(host) {
+  return (host ?? resolveHost()).homeDir();
+}
+function resolveTargetDocId(stateEntry, binding) {
+  return stateEntry?.document_id || binding?.documentId || void 0;
+}
+async function pushPlanFile(api, file2, opts = {}) {
+  const raw = await fs10.readFile(file2, "utf8");
+  const { title, body, binding: existingBinding } = parsePlanFile(raw);
+  if (!body.trim()) {
+    throw new Error("plan body is empty");
+  }
+  const relPath = path13.relative(homeBase(opts.host), file2);
+  const state = await readState();
+  const existing = state.documents[relPath];
+  if (existing?.document_id && existing.content_hash === hash(raw)) {
+    return {
+      document_id: existing.document_id,
+      version_number: existing.version_number,
+      created: false,
+      unchanged: true
+    };
+  }
+  const targetDocId = resolveTargetDocId(existing, existingBinding);
+  if (targetDocId) {
+    const result2 = await api.updatePlan(
+      targetDocId,
+      {
+        body,
+        title,
+        commit_message: "edit from claude-code"
+      },
+      opts.accountId ? { accountId: opts.accountId } : {}
+    );
+    await stampPlanFile(file2, {
+      documentId: result2.document_id,
+      projectId: existingBinding?.projectId ?? null
+    });
+    const stampedUpdate = await syncedHash(file2, raw, { title, body });
+    await updateState((s) => {
+      s.documents[relPath] = {
+        document_id: result2.document_id,
+        version_id: existing?.version_id ?? "",
+        version_number: result2.version_number,
+        content_hash: stampedUpdate,
+        last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+        scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
+        kind: "plan"
+      };
+    });
+    return {
+      document_id: result2.document_id,
+      version_number: result2.version_number,
+      created: false
+    };
+  }
+  const result = await api.pushPlan(
+    {
+      title,
+      body,
+      cwd: opts.cwd ?? null,
+      git_remote: opts.gitRemote ?? null
+    },
+    opts.accountId ? { accountId: opts.accountId } : {}
+  );
+  await updateState((s) => {
+    s.documents[relPath] = {
+      document_id: result.document_id,
+      version_id: "",
+      version_number: result.version_number,
+      content_hash: hash(raw),
+      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+      scope: result.project_id ? "project" : "personal",
+      kind: "plan"
+    };
+  });
+  await stampPlanFile(file2, {
+    documentId: result.document_id,
+    projectId: result.project_id
+  });
+  const stamped = await syncedHash(file2, raw, { title, body });
+  await updateState((s) => {
+    const entry = s.documents[relPath];
+    if (entry) entry.content_hash = stamped;
+  });
+  return {
+    document_id: result.document_id,
+    version_number: result.version_number,
+    created: true
+  };
+}
+async function syncedHash(file2, pushedRaw, pushed) {
+  const current = await fs10.readFile(file2, "utf8").catch(() => null);
+  if (current === null) return hash(pushedRaw);
+  const parsed = parsePlanFile(current);
+  return parsed.title === pushed.title && parsed.body === pushed.body ? hash(current) : hash(pushedRaw);
+}
+var DEFAULT_PLAN_SETTLE_MS = 9e4;
+var PLAN_PUSH_CLAIM_TTL_MS = 12e4;
+var PLAN_PUSH_MAX_ATTEMPTS = 5;
+function planSettleMs() {
+  const raw = Number(process.env.MEMLIN_PLAN_SETTLE_MS);
+  return Number.isFinite(raw) && raw >= 0 && process.env.MEMLIN_PLAN_SETTLE_MS?.trim() ? raw : DEFAULT_PLAN_SETTLE_MS;
+}
+async function flushPlanPushes(api, opts = {}) {
+  const now = opts.now ?? Date.now();
+  const settleMs = opts.settleMs ?? planSettleMs();
+  const out = {
+    pushed: [],
+    unchanged: [],
+    deferred: [],
+    failed: []
+  };
+  const claimed = [];
+  await updateState((s) => {
+    for (const [file2, entry] of Object.entries(s.plan_push_queue ?? {})) {
+      if (entry.claimed_at && now - entry.claimed_at < PLAN_PUSH_CLAIM_TTL_MS) continue;
+      const due = opts.all || opts.sessionId !== void 0 && entry.session_id === (opts.sessionId ?? null) || now - entry.last_edit_at >= settleMs;
+      if (!due) {
+        out.deferred.push(path13.basename(file2));
+        continue;
+      }
+      entry.claimed_at = now;
+      claimed.push([file2, { ...entry }]);
+    }
+  });
+  for (const [file2, entry] of claimed) {
+    const name = path13.basename(file2);
+    let outcome = "done";
+    try {
+      const result = await pushPlanFile(api, file2, {
+        ...entry.cwd ? { cwd: entry.cwd } : {},
+        gitRemote: entry.git_remote,
+        ...opts.host ? { host: opts.host } : {},
+        ...opts.accountId ? { accountId: opts.accountId } : {}
+      });
+      if (result.unchanged) out.unchanged.push(name);
+      else out.pushed.push(`${name} (${result.created ? "new" : "v" + result.version_number})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const gone = err?.code === "ENOENT" || message === "plan body is empty";
+      out.failed.push(`${name}: ${message}`);
+      if (!gone) outcome = "retry";
+    }
+    await updateState((s) => {
+      const current = s.plan_push_queue?.[file2];
+      if (!current) return;
+      if (current.last_edit_at !== entry.last_edit_at) {
+        delete current.claimed_at;
+        return;
+      }
+      if (outcome === "retry" && (current.attempts ?? 0) + 1 < PLAN_PUSH_MAX_ATTEMPTS) {
+        current.attempts = (current.attempts ?? 0) + 1;
+        delete current.claimed_at;
+        return;
+      }
+      delete s.plan_push_queue[file2];
+    });
+  }
+  return out;
+}
+async function stampPlanFile(file2, binding) {
+  let raw;
+  try {
+    raw = await fs10.readFile(file2, "utf8");
+  } catch {
+    return;
+  }
+  const parsed = parsePlanFile(raw);
+  const stampLine = `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`;
+  const bodyNoStamp = parsed.body.replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "");
+  const composed = [
+    `# ${parsed.title}`,
+    "",
+    parsed.status ? `<!-- memlin-plan-status: ${parsed.status} -->` : null,
+    stampLine,
+    "",
+    bodyNoStamp.trim(),
+    ""
+  ].filter((l) => l !== null).join("\n");
+  await fs10.writeFile(file2, composed, "utf8");
+}
+function parsePlanFile(raw) {
+  const firstNl = raw.indexOf("\n");
+  const first = firstNl === -1 ? raw : raw.slice(0, firstNl);
+  const title = first.replace(/^#\s+/, "").trim() || "(untitled plan)";
+  const rest = firstNl === -1 ? "" : raw.slice(firstNl + 1).trim();
+  const statusMatch = rest.match(/<!--\s*memlin-plan-status:\s*([a-z_]+)\s*-->/);
+  const status = statusMatch ? statusMatch[1] ?? null : null;
+  const bindMatch = rest.match(/<!--\s*memlin-binding:\s*doc=([0-9a-f-]+)\s+project=(\S+)\s*-->/i);
+  const binding = bindMatch ? {
+    documentId: bindMatch[1],
+    projectId: bindMatch[2] === "none" ? null : bindMatch[2] ?? null
+  } : null;
+  const body = rest.replace(/<!--\s*memlin-plan-status:[^>]*-->\s*\n?/g, "").replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "").trim();
+  return { title, body, status, binding };
+}
+
 // apps/cli-plugin/src/hooks/stop.ts
 function readStdinJson() {
   return new Promise((resolve) => {
@@ -27902,6 +28117,19 @@ function readStdinJson() {
 async function main() {
   const payload = await readStdinJson() ?? {};
   await runStopHandler(payload, { urgentDecisionHost: "claude-code" });
+  await flushSessionPlans(payload);
+}
+async function flushSessionPlans(payload) {
+  try {
+    const ctx = await getApi({ cwd: payload.cwd ?? process.cwd() });
+    if (!ctx) return;
+    const sessionId = payload.session_id ?? sessionIdFromTranscriptPath(payload.transcript_path) ?? null;
+    const result = await flushPlanPushes(ctx.api, { sessionId });
+    if (result.pushed.length > 0) log(`stop: pushed plan(s) ${result.pushed.join(", ")}`);
+    if (result.failed.length > 0) log(`stop: plan push failed: ${result.failed.join("; ")}`);
+  } catch (err) {
+    log(`stop: plan flush failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
 void main();
 /*! Bundled license information:

@@ -34,6 +34,17 @@
         ]
       }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PLUGIN_ROOT}/dist/hooks/session-end.js"]
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "hooks": [

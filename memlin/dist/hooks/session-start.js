@@ -9193,7 +9193,7 @@ var init_prompt_linter = __esm({
 });
 
 // packages/shared/dist/model-prices.js
-var MODEL_PRICES;
+var MODEL_PRICES, SAVINGS_BASELINE_MODEL_ID;
 var init_model_prices = __esm({
   "packages/shared/dist/model-prices.js"() {
     "use strict";
@@ -9241,11 +9241,15 @@ var init_model_prices = __esm({
       "text-embedding-3-small": { inputUsdPerMTok: 0.02, outputUsdPerMTok: 0 },
       "gpt-4.1-mini": { inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.6 }
     };
+    SAVINGS_BASELINE_MODEL_ID = "claude-sonnet-4-6";
   }
 });
 
 // packages/shared/dist/usage-stats.js
-function estCostUsd(inputTokens) {
+function estCostUsd(inputTokens, usdPerMTok) {
+  if (usdPerMTok !== void 0 && Number.isFinite(usdPerMTok) && usdPerMTok >= 0) {
+    return (Number(inputTokens) || 0) / 1e6 * usdPerMTok;
+  }
   const inputCostUsd = inputTokens / 1e6 * SONNET_INPUT_USD_PER_MTOK;
   const outputCostUsd = inputTokens * OUTPUT_MULTIPLIER / 1e6 * SONNET_OUTPUT_USD_PER_MTOK;
   return inputCostUsd + outputCostUsd;
@@ -9255,8 +9259,8 @@ var init_usage_stats = __esm({
   "packages/shared/dist/usage-stats.js"() {
     "use strict";
     init_model_prices();
-    SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
-    SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+    SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].inputUsdPerMTok;
+    SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].outputUsdPerMTok;
     OUTPUT_MULTIPLIER = 0.3;
     SONNET_BLENDED_USD_PER_MTOK = SONNET_INPUT_USD_PER_MTOK + OUTPUT_MULTIPLIER * SONNET_OUTPUT_USD_PER_MTOK;
     SAVINGS_USD_PER_TOKEN = estCostUsd(1);
@@ -9288,6 +9292,13 @@ var init_model_price_parser = __esm({
 // packages/shared/dist/model-price-promotion.js
 var init_model_price_promotion = __esm({
   "packages/shared/dist/model-price-promotion.js"() {
+    "use strict";
+  }
+});
+
+// packages/shared/dist/model-lifecycle-parser.js
+var init_model_lifecycle_parser = __esm({
+  "packages/shared/dist/model-lifecycle-parser.js"() {
     "use strict";
   }
 });
@@ -25336,6 +25347,21 @@ var init_needs_you_groups = __esm({
   }
 });
 
+// packages/shared/dist/needs-you-engine.js
+var NEEDS_YOU_HORIZON_DAYS, HORIZON_MS, STALLED_GOAL_AGE_MS;
+var init_needs_you_engine = __esm({
+  "packages/shared/dist/needs-you-engine.js"() {
+    "use strict";
+    init_relative_time();
+    init_memory_decisions();
+    init_goal_criteria();
+    init_needs_you_groups();
+    NEEDS_YOU_HORIZON_DAYS = 14;
+    HORIZON_MS = NEEDS_YOU_HORIZON_DAYS * 24 * 60 * 60 * 1e3;
+    STALLED_GOAL_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25373,6 +25399,7 @@ var init_dist = __esm({
     init_model_prices();
     init_model_price_parser();
     init_model_price_promotion();
+    init_model_lifecycle_parser();
     init_credit_math();
     init_ai_pricing();
     init_memlin_commands();
@@ -25409,6 +25436,7 @@ var init_dist = __esm({
     init_beta_trial();
     init_project_flow_contracts();
     init_needs_you_groups();
+    init_needs_you_engine();
   }
 });
 
@@ -25901,7 +25929,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.74";
+  cachedAgentVersion = "0.2.75";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -27227,6 +27255,8 @@ async function writeState(state) {
 }
 async function acquireStateLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
+  await fs6.mkdir(path9.dirname(LOCK_DIR), { recursive: true }).catch(() => {
+  });
   for (; ; ) {
     try {
       await fs6.mkdir(LOCK_DIR);
@@ -27282,9 +27312,13 @@ var init_state = __esm({
 // packages/plugin-core/dist/plan-sync.js
 var plan_sync_exports = {};
 __export(plan_sync_exports, {
+  DEFAULT_PLAN_SETTLE_MS: () => DEFAULT_PLAN_SETTLE_MS,
+  enqueuePlanPush: () => enqueuePlanPush,
   fetchPlanPullRows: () => fetchPlanPullRows,
+  flushPlanPushes: () => flushPlanPushes,
   getLastPlanPullCursor: () => getLastPlanPullCursor,
   listUnboundPlans: () => listUnboundPlans,
+  planSettleMs: () => planSettleMs,
   pullPlans: () => pullPlans,
   pushPlanFile: () => pushPlanFile,
   reconcileKnownPlans: () => reconcileKnownPlans,
@@ -27342,6 +27376,10 @@ async function pullPlans(api, opts = {}) {
       unchanged.push(localPath);
       continue;
     }
+    if (state.plan_push_queue?.[path14.resolve(full)]) {
+      unchanged.push(localPath);
+      continue;
+    }
     await fs10.writeFile(full, fileContent, "utf8");
     pulled.push(localPath);
     newEntries[localPath] = {
@@ -27378,6 +27416,14 @@ async function pushPlanFile(api, file2, opts = {}) {
   const relPath = path14.relative(homeBase(opts.host), file2);
   const state = await readState();
   const existing = state.documents[relPath];
+  if (existing?.document_id && existing.content_hash === hash(raw)) {
+    return {
+      document_id: existing.document_id,
+      version_number: existing.version_number,
+      created: false,
+      unchanged: true
+    };
+  }
   const targetDocId = resolveTargetDocId(existing, existingBinding);
   if (targetDocId) {
     const result2 = await api.updatePlan(
@@ -27393,13 +27439,13 @@ async function pushPlanFile(api, file2, opts = {}) {
       documentId: result2.document_id,
       projectId: existingBinding?.projectId ?? null
     });
-    const stampedUpdate = await fs10.readFile(file2, "utf8").catch(() => raw);
+    const stampedUpdate = await syncedHash(file2, raw, { title, body });
     await updateState((s) => {
       s.documents[relPath] = {
         document_id: result2.document_id,
         version_id: existing?.version_id ?? "",
         version_number: result2.version_number,
-        content_hash: hash(stampedUpdate),
+        content_hash: stampedUpdate,
         last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
         scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
         kind: "plan"
@@ -27435,10 +27481,10 @@ async function pushPlanFile(api, file2, opts = {}) {
     documentId: result.document_id,
     projectId: result.project_id
   });
-  const stamped = await fs10.readFile(file2, "utf8").catch(() => raw);
+  const stamped = await syncedHash(file2, raw, { title, body });
   await updateState((s) => {
     const entry = s.documents[relPath];
-    if (entry) entry.content_hash = hash(stamped);
+    if (entry) entry.content_hash = stamped;
   });
   return {
     document_id: result.document_id,
@@ -27446,24 +27492,34 @@ async function pushPlanFile(api, file2, opts = {}) {
     created: true
   };
 }
+async function syncedHash(file2, pushedRaw, pushed) {
+  const current = await fs10.readFile(file2, "utf8").catch(() => null);
+  if (current === null) return hash(pushedRaw);
+  const parsed = parsePlanFile(current);
+  return parsed.title === pushed.title && parsed.body === pushed.body ? hash(current) : hash(pushedRaw);
+}
 async function reconcileKnownPlans(api, opts = {}) {
   const pushed = [];
   const skipped = [];
   const failed = [];
+  const deferred = [];
+  const now = opts.now ?? Date.now();
   let entries;
   try {
     entries = await fs10.readdir(plansDir(opts.host));
   } catch {
-    return { pushed, skipped, failed };
+    return { pushed, skipped, failed, deferred };
   }
   const state = await readState();
   for (const f of entries) {
     if (!f.endsWith(".md")) continue;
     const abs = path14.join(plansDir(opts.host), f);
     let raw;
+    let mtimeMs;
     try {
       const st = await fs10.stat(abs);
       if (!st.isFile() || st.size === 0) continue;
+      mtimeMs = st.mtimeMs;
       raw = await fs10.readFile(abs, "utf8");
     } catch {
       continue;
@@ -27480,14 +27536,96 @@ async function reconcileKnownPlans(api, opts = {}) {
       skipped.push(f);
       continue;
     }
+    if (opts.settleMs && now - mtimeMs < opts.settleMs) {
+      deferred.push(f);
+      continue;
+    }
     try {
       const result = await pushPlanFile(api, abs, opts);
-      pushed.push(`${f} (v${result.version_number})`);
+      if (result.unchanged) skipped.push(f);
+      else pushed.push(`${f} (v${result.version_number})`);
     } catch (err) {
       failed.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
-  return { pushed, skipped, failed };
+  return { pushed, skipped, failed, deferred };
+}
+function planSettleMs() {
+  const raw = Number(process.env.MEMLIN_PLAN_SETTLE_MS);
+  return Number.isFinite(raw) && raw >= 0 && process.env.MEMLIN_PLAN_SETTLE_MS?.trim() ? raw : DEFAULT_PLAN_SETTLE_MS;
+}
+async function enqueuePlanPush(file2, opts = {}) {
+  const now = opts.now ?? Date.now();
+  const key = path14.resolve(file2);
+  await updateState((s) => {
+    const queue = s.plan_push_queue ??= {};
+    const prior = queue[key];
+    queue[key] = {
+      cwd: opts.cwd ?? prior?.cwd ?? null,
+      git_remote: opts.gitRemote ?? prior?.git_remote ?? null,
+      session_id: opts.sessionId ?? prior?.session_id ?? null,
+      first_edit_at: prior?.first_edit_at ?? now,
+      last_edit_at: now,
+      ...prior?.attempts ? { attempts: prior.attempts } : {}
+    };
+  });
+}
+async function flushPlanPushes(api, opts = {}) {
+  const now = opts.now ?? Date.now();
+  const settleMs = opts.settleMs ?? planSettleMs();
+  const out = {
+    pushed: [],
+    unchanged: [],
+    deferred: [],
+    failed: []
+  };
+  const claimed = [];
+  await updateState((s) => {
+    for (const [file2, entry] of Object.entries(s.plan_push_queue ?? {})) {
+      if (entry.claimed_at && now - entry.claimed_at < PLAN_PUSH_CLAIM_TTL_MS) continue;
+      const due = opts.all || opts.sessionId !== void 0 && entry.session_id === (opts.sessionId ?? null) || now - entry.last_edit_at >= settleMs;
+      if (!due) {
+        out.deferred.push(path14.basename(file2));
+        continue;
+      }
+      entry.claimed_at = now;
+      claimed.push([file2, { ...entry }]);
+    }
+  });
+  for (const [file2, entry] of claimed) {
+    const name = path14.basename(file2);
+    let outcome = "done";
+    try {
+      const result = await pushPlanFile(api, file2, {
+        ...entry.cwd ? { cwd: entry.cwd } : {},
+        gitRemote: entry.git_remote,
+        ...opts.host ? { host: opts.host } : {},
+        ...opts.accountId ? { accountId: opts.accountId } : {}
+      });
+      if (result.unchanged) out.unchanged.push(name);
+      else out.pushed.push(`${name} (${result.created ? "new" : "v" + result.version_number})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const gone = err?.code === "ENOENT" || message === "plan body is empty";
+      out.failed.push(`${name}: ${message}`);
+      if (!gone) outcome = "retry";
+    }
+    await updateState((s) => {
+      const current = s.plan_push_queue?.[file2];
+      if (!current) return;
+      if (current.last_edit_at !== entry.last_edit_at) {
+        delete current.claimed_at;
+        return;
+      }
+      if (outcome === "retry" && (current.attempts ?? 0) + 1 < PLAN_PUSH_MAX_ATTEMPTS) {
+        current.attempts = (current.attempts ?? 0) + 1;
+        delete current.claimed_at;
+        return;
+      }
+      delete s.plan_push_queue[file2];
+    });
+  }
+  return out;
 }
 async function listUnboundPlans(host) {
   const out = [];
@@ -27571,11 +27709,15 @@ function getLastPlanPullCursor(state) {
 function setLastPlanPullCursor(state, at) {
   state.last_plan_pull_at = at;
 }
+var DEFAULT_PLAN_SETTLE_MS, PLAN_PUSH_CLAIM_TTL_MS, PLAN_PUSH_MAX_ATTEMPTS;
 var init_plan_sync = __esm({
   "packages/plugin-core/dist/plan-sync.js"() {
     "use strict";
     init_state();
     init_host();
+    DEFAULT_PLAN_SETTLE_MS = 9e4;
+    PLAN_PUSH_CLAIM_TTL_MS = 12e4;
+    PLAN_PUSH_MAX_ATTEMPTS = 5;
   }
 });
 
@@ -28789,10 +28931,11 @@ async function main() {
       setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
       await writeState(state);
       reconcile = await reconcileKnownPlans(ctx.api, {
-        cwd: process.cwd()
+        cwd: process.cwd(),
+        settleMs: planSettleMs()
       }).catch((err) => {
         log(`plan reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
-        return { pushed: [], skipped: [], failed: [] };
+        return { pushed: [], skipped: [], failed: [], deferred: [] };
       });
     }
     const parts = [];

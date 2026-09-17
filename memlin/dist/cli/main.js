@@ -8749,7 +8749,7 @@ var init_prompt_linter = __esm({
 });
 
 // packages/shared/dist/model-prices.js
-var MODEL_PRICES;
+var MODEL_PRICES, SAVINGS_BASELINE_MODEL_ID;
 var init_model_prices = __esm({
   "packages/shared/dist/model-prices.js"() {
     "use strict";
@@ -8797,11 +8797,15 @@ var init_model_prices = __esm({
       "text-embedding-3-small": { inputUsdPerMTok: 0.02, outputUsdPerMTok: 0 },
       "gpt-4.1-mini": { inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.6 }
     };
+    SAVINGS_BASELINE_MODEL_ID = "claude-sonnet-4-6";
   }
 });
 
 // packages/shared/dist/usage-stats.js
-function estCostUsd(inputTokens) {
+function estCostUsd(inputTokens, usdPerMTok) {
+  if (usdPerMTok !== void 0 && Number.isFinite(usdPerMTok) && usdPerMTok >= 0) {
+    return (Number(inputTokens) || 0) / 1e6 * usdPerMTok;
+  }
   const inputCostUsd = inputTokens / 1e6 * SONNET_INPUT_USD_PER_MTOK;
   const outputCostUsd = inputTokens * OUTPUT_MULTIPLIER / 1e6 * SONNET_OUTPUT_USD_PER_MTOK;
   return inputCostUsd + outputCostUsd;
@@ -8811,8 +8815,8 @@ var init_usage_stats = __esm({
   "packages/shared/dist/usage-stats.js"() {
     "use strict";
     init_model_prices();
-    SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
-    SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+    SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].inputUsdPerMTok;
+    SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].outputUsdPerMTok;
     OUTPUT_MULTIPLIER = 0.3;
     SONNET_BLENDED_USD_PER_MTOK = SONNET_INPUT_USD_PER_MTOK + OUTPUT_MULTIPLIER * SONNET_OUTPUT_USD_PER_MTOK;
     SAVINGS_USD_PER_TOKEN = estCostUsd(1);
@@ -8844,6 +8848,13 @@ var init_model_price_parser = __esm({
 // packages/shared/dist/model-price-promotion.js
 var init_model_price_promotion = __esm({
   "packages/shared/dist/model-price-promotion.js"() {
+    "use strict";
+  }
+});
+
+// packages/shared/dist/model-lifecycle-parser.js
+var init_model_lifecycle_parser = __esm({
+  "packages/shared/dist/model-lifecycle-parser.js"() {
     "use strict";
   }
 });
@@ -24966,6 +24977,21 @@ var init_needs_you_groups = __esm({
   }
 });
 
+// packages/shared/dist/needs-you-engine.js
+var NEEDS_YOU_HORIZON_DAYS, HORIZON_MS, STALLED_GOAL_AGE_MS;
+var init_needs_you_engine = __esm({
+  "packages/shared/dist/needs-you-engine.js"() {
+    "use strict";
+    init_relative_time();
+    init_memory_decisions();
+    init_goal_criteria();
+    init_needs_you_groups();
+    NEEDS_YOU_HORIZON_DAYS = 14;
+    HORIZON_MS = NEEDS_YOU_HORIZON_DAYS * 24 * 60 * 60 * 1e3;
+    STALLED_GOAL_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25003,6 +25029,7 @@ var init_dist = __esm({
     init_model_prices();
     init_model_price_parser();
     init_model_price_promotion();
+    init_model_lifecycle_parser();
     init_credit_math();
     init_ai_pricing();
     init_memlin_commands();
@@ -25039,6 +25066,7 @@ var init_dist = __esm({
     init_beta_trial();
     init_project_flow_contracts();
     init_needs_you_groups();
+    init_needs_you_engine();
   }
 });
 
@@ -26340,7 +26368,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.74";
+  cachedAgentVersion = "0.2.75";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -28881,6 +28909,8 @@ async function writeState(state) {
 }
 async function acquireStateLock() {
   const deadline = Date.now() + LOCK_WAIT_MS;
+  await fs12.mkdir(path14.dirname(LOCK_DIR), { recursive: true }).catch(() => {
+  });
   for (; ; ) {
     try {
       await fs12.mkdir(LOCK_DIR);
@@ -29137,6 +29167,10 @@ async function pullPlans(api, opts = {}) {
       unchanged.push(localPath);
       continue;
     }
+    if (state.plan_push_queue?.[path16.resolve(full)]) {
+      unchanged.push(localPath);
+      continue;
+    }
     await fs14.writeFile(full, fileContent, "utf8");
     pulled.push(localPath);
     newEntries[localPath] = {
@@ -29173,6 +29207,14 @@ async function pushPlanFile(api, file2, opts = {}) {
   const relPath = path16.relative(homeBase(opts.host), file2);
   const state = await readState();
   const existing = state.documents[relPath];
+  if (existing?.document_id && existing.content_hash === hash(raw)) {
+    return {
+      document_id: existing.document_id,
+      version_number: existing.version_number,
+      created: false,
+      unchanged: true
+    };
+  }
   const targetDocId = resolveTargetDocId(existing, existingBinding);
   if (targetDocId) {
     const result2 = await api.updatePlan(
@@ -29188,13 +29230,13 @@ async function pushPlanFile(api, file2, opts = {}) {
       documentId: result2.document_id,
       projectId: existingBinding?.projectId ?? null
     });
-    const stampedUpdate = await fs14.readFile(file2, "utf8").catch(() => raw);
+    const stampedUpdate = await syncedHash(file2, raw, { title, body: body2 });
     await updateState((s) => {
       s.documents[relPath] = {
         document_id: result2.document_id,
         version_id: existing?.version_id ?? "",
         version_number: result2.version_number,
-        content_hash: hash(stampedUpdate),
+        content_hash: stampedUpdate,
         last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
         scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
         kind: "plan"
@@ -29230,16 +29272,22 @@ async function pushPlanFile(api, file2, opts = {}) {
     documentId: result.document_id,
     projectId: result.project_id
   });
-  const stamped = await fs14.readFile(file2, "utf8").catch(() => raw);
+  const stamped = await syncedHash(file2, raw, { title, body: body2 });
   await updateState((s) => {
     const entry = s.documents[relPath];
-    if (entry) entry.content_hash = hash(stamped);
+    if (entry) entry.content_hash = stamped;
   });
   return {
     document_id: result.document_id,
     version_number: result.version_number,
     created: true
   };
+}
+async function syncedHash(file2, pushedRaw, pushed) {
+  const current = await fs14.readFile(file2, "utf8").catch(() => null);
+  if (current === null) return hash(pushedRaw);
+  const parsed = parsePlanFile(current);
+  return parsed.title === pushed.title && parsed.body === pushed.body ? hash(current) : hash(pushedRaw);
 }
 async function listUnboundPlans(host) {
   const out2 = [];

@@ -9105,12 +9105,16 @@ var MODEL_PRICES = {
   "text-embedding-3-small": { inputUsdPerMTok: 0.02, outputUsdPerMTok: 0 },
   "gpt-4.1-mini": { inputUsdPerMTok: 0.4, outputUsdPerMTok: 1.6 }
 };
+var SAVINGS_BASELINE_MODEL_ID = "claude-sonnet-4-6";
 
 // packages/shared/dist/usage-stats.js
-var SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].inputUsdPerMTok;
-var SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES["claude-sonnet-4-6"].outputUsdPerMTok;
+var SONNET_INPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].inputUsdPerMTok;
+var SONNET_OUTPUT_USD_PER_MTOK = MODEL_PRICES[SAVINGS_BASELINE_MODEL_ID].outputUsdPerMTok;
 var OUTPUT_MULTIPLIER = 0.3;
-function estCostUsd(inputTokens) {
+function estCostUsd(inputTokens, usdPerMTok) {
+  if (usdPerMTok !== void 0 && Number.isFinite(usdPerMTok) && usdPerMTok >= 0) {
+    return (Number(inputTokens) || 0) / 1e6 * usdPerMTok;
+  }
   const inputCostUsd = inputTokens / 1e6 * SONNET_INPUT_USD_PER_MTOK;
   const outputCostUsd = inputTokens * OUTPUT_MULTIPLIER / 1e6 * SONNET_OUTPUT_USD_PER_MTOK;
   return inputCostUsd + outputCostUsd;
@@ -24113,6 +24117,11 @@ var FlowPackManifestSchema = FlowPackManifestBaseSchema.superRefine((value, ctx)
   }
 });
 
+// packages/shared/dist/needs-you-engine.js
+var NEEDS_YOU_HORIZON_DAYS = 14;
+var HORIZON_MS = NEEDS_YOU_HORIZON_DAYS * 24 * 60 * 60 * 1e3;
+var STALLED_GOAL_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+
 // packages/plugin-core/src/project-resolver.ts
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -25196,7 +25205,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.74";
+  cachedAgentVersion = "0.2.75";
   return cachedAgentVersion;
 }
 function agentCapabilities() {

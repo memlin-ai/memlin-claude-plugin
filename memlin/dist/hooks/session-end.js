@@ -41,7 +41,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/plugin-core/src/atomic-rename.ts
+// packages/plugin-core/dist/atomic-rename.js
 import { promises as fs } from "node:fs";
 import path from "node:path";
 async function renameWithRetry(from, to, rename) {
@@ -72,7 +72,7 @@ async function atomicRename(from, to, dependencies = {}) {
 }
 var RETRYABLE_CODES, MAX_ATTEMPTS, BASE_DELAY_MS, MAX_DELAY_MS, renameQueues;
 var init_atomic_rename = __esm({
-  "packages/plugin-core/src/atomic-rename.ts"() {
+  "packages/plugin-core/dist/atomic-rename.js"() {
     "use strict";
     RETRYABLE_CODES = /* @__PURE__ */ new Set(["EPERM", "EACCES", "EBUSY"]);
     MAX_ATTEMPTS = 10;
@@ -82,7 +82,7 @@ var init_atomic_rename = __esm({
   }
 });
 
-// packages/plugin-core/src/auth-refusal.ts
+// packages/plugin-core/dist/auth-refusal.js
 import crypto from "node:crypto";
 import { promises as fs2 } from "node:fs";
 import os from "node:os";
@@ -182,7 +182,7 @@ function accountIdsChanged(before, after) {
 }
 var AUTH_REFUSAL_MESSAGES, AUTH_REFUSAL_TTL_MS;
 var init_auth_refusal = __esm({
-  "packages/plugin-core/src/auth-refusal.ts"() {
+  "packages/plugin-core/dist/auth-refusal.js"() {
     "use strict";
     init_atomic_rename();
     AUTH_REFUSAL_MESSAGES = {
@@ -193,7 +193,7 @@ var init_auth_refusal = __esm({
   }
 });
 
-// packages/plugin-core/src/companion-client.ts
+// packages/plugin-core/dist/companion-client.js
 var companion_client_exports = {};
 __export(companion_client_exports, {
   CODEX_ADDITIONAL_CONTEXT_MAX_BYTES: () => CODEX_ADDITIONAL_CONTEXT_MAX_BYTES,
@@ -403,7 +403,7 @@ function resetCompanionClientCache() {
 }
 var COMPANION_PROTOCOL, MIN_COMPANION_PROTOCOL, MAX_COMPANION_PROTOCOL, NO_COMPANION_ENV, IS_COMPANION_ENV, COMPANION_SOCKET_ENV, CODEX_HOOK_RESOLVE_PROFILE, CODEX_ADDITIONAL_CONTEXT_MAX_BYTES, CONNECT_TIMEOUT_MS, DEFAULT_CALL_TIMEOUT_MS, CALL_TIMEOUTS, socketDeadUntil, SOCKET_DEAD_TTL_MS, USE_COMPANION_ENV;
 var init_companion_client = __esm({
-  "packages/plugin-core/src/companion-client.ts"() {
+  "packages/plugin-core/dist/companion-client.js"() {
     "use strict";
     COMPANION_PROTOCOL = 1;
     MIN_COMPANION_PROTOCOL = 1;
@@ -3807,7 +3807,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs6 = __require("fs");
+    var fs8 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -3891,7 +3891,7 @@ var require_gray_matter = __commonJS({
       return stringify(file2, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs6.readFileSync(filepath, "utf8");
+      const str2 = fs8.readFileSync(filepath, "utf8");
       const file2 = matter3(str2, options2);
       file2.path = filepath;
       return file2;
@@ -3919,7 +3919,7 @@ var require_gray_matter = __commonJS({
   }
 });
 
-// packages/plugin-core/src/workspace-binding.ts
+// packages/plugin-core/dist/workspace-binding.js
 var workspace_binding_exports = {};
 __export(workspace_binding_exports, {
   WORKSPACE_BINDING_FILE: () => WORKSPACE_BINDING_FILE,
@@ -4212,7 +4212,7 @@ function isFileNotFound(error40) {
 }
 var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE, GIT_POINTER_MAX_BYTES;
 var init_workspace_binding = __esm({
-  "packages/plugin-core/src/workspace-binding.ts"() {
+  "packages/plugin-core/dist/workspace-binding.js"() {
     "use strict";
     init_atomic_rename();
     init_auth_refusal();
@@ -4222,20 +4222,20 @@ var init_workspace_binding = __esm({
   }
 });
 
-// packages/plugin-core/src/client.ts
+// packages/plugin-core/dist/client.js
 import { promises as fs5 } from "node:fs";
 import path7 from "node:path";
 import os6 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
-// packages/plugin-core/src/auth.ts
+// packages/plugin-core/dist/auth.js
 init_atomic_rename();
 import { promises as fs3 } from "node:fs";
 import path4 from "node:path";
 import os3 from "node:os";
 import { randomUUID } from "node:crypto";
 
-// packages/plugin-core/src/backend-error.ts
+// packages/plugin-core/dist/backend-error.js
 var MemlinApiError = class extends Error {
   constructor(message, status, code) {
     super(message);
@@ -4264,7 +4264,7 @@ function describeOpaqueBody(status, text) {
   return `HTTP ${status}: ${singleLine(trimmed)}`;
 }
 
-// packages/plugin-core/src/auth.ts
+// packages/plugin-core/dist/auth.js
 init_auth_refusal();
 var MEMLIN_PROD_AUTH0_DOMAIN = "memlin.us.auth0.com";
 var MEMLIN_PROD_AUTH0_CLIENT_ID = "fyYMQ4Cxc6Nu5juVwL8Ihqq4fgAFecG9";
@@ -4466,7 +4466,7 @@ function decodeJwtPayload(jwt2) {
   return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
 }
 
-// packages/plugin-core/src/client.ts
+// packages/plugin-core/dist/client.js
 init_atomic_rename();
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/external.js
@@ -4947,8 +4947,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path8, errorMaps, issueData } = params;
-  const fullPath = [...path8, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -5064,11 +5064,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path8, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path8;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -9418,19 +9418,19 @@ var ContextManifestV1Schema = external_exports.object({
       location: `linked_contexts.${index}`
     }))
   ];
-  references.forEach(({ ref, path: path8, location }) => {
+  references.forEach(({ ref, path: path10, location }) => {
     const identity = contextReferenceIdentityKey(ref);
     const prior = seen.get(identity);
     if (prior && prior.revision !== ref.revision) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path8,
+        path: path10,
         message: `context ${identity} has conflicting revisions in ${prior.location} and ${location}`
       });
     } else if (prior && location.startsWith("linked_contexts.")) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path8,
+        path: path10,
         message: `duplicate linked context ${identity}`
       });
     }
@@ -9744,11 +9744,11 @@ var ContextBundleV1Schema = external_exports.object({
         path: ["coverage", coverageIndex, "omitted_contexts", index, "context_ref"]
       }))
     ];
-    for (const { ref, path: path8 } of references) {
+    for (const { ref, path: path10 } of references) {
       if (!contextKeys.has(contextReferenceKey(ref))) {
         ctx.addIssue({
           code: external_exports.ZodIssueCode.custom,
-          path: path8,
+          path: path10,
           message: "provider coverage is outside the exact manifest contexts"
         });
       }
@@ -12659,10 +12659,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path8) {
-  if (!path8)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path8.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12982,11 +12982,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path8, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path8);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -13123,7 +13123,7 @@ function treeifyError(error40, _mapper) {
     return issue2.message;
   };
   const result = { errors: [] };
-  const processError = (error41, path8 = []) => {
+  const processError = (error41, path10 = []) => {
     var _a, _b;
     for (const issue2 of error41.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -13133,7 +13133,7 @@ function treeifyError(error40, _mapper) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path8, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -13163,9 +13163,9 @@ function treeifyError(error40, _mapper) {
   processError(error40);
   return result;
 }
-function toDotPath(path8) {
+function toDotPath(path10) {
   const segs = [];
-  for (const seg of path8) {
+  for (const seg of path10) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -23823,10 +23823,10 @@ function validateFlowDefinitionSemantics(flow) {
       ],
       ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, path: `stages.${stageIndex}.bypass_target` }]
     ];
-    targets.forEach(({ target, path: path8 }) => {
+    targets.forEach(({ target, path: path10 }) => {
       if (!isReservedTarget(target) && !stageById.has(target)) {
         issues.push({
-          path: path8,
+          path: path10,
           code: "missing_transition_target",
           message: `transition target ${JSON.stringify(target)} does not exist`
         });
@@ -23856,7 +23856,7 @@ function validateFlowDefinitionSemantics(flow) {
   const visiting = /* @__PURE__ */ new Set();
   const visited = /* @__PURE__ */ new Set();
   let hasReachableEnd = false;
-  const visit = (stageId, path8, pathBounds) => {
+  const visit = (stageId, path10, pathBounds) => {
     reachable.add(stageId);
     if (visited.has(stageId)) return;
     visiting.add(stageId);
@@ -23872,7 +23872,7 @@ function validateFlowDefinitionSemantics(flow) {
         ...stage.default_transition === null ? [] : [{ target: stage.default_transition, bounded: false }],
         ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, bounded: false }]
       ];
-      const currentPath = [...path8, stageId];
+      const currentPath = [...path10, stageId];
       for (const edge of edges) {
         const { target } = edge;
         if (target === "$end") {
@@ -23980,18 +23980,18 @@ var FlowPackManifestBaseSchema = external_exports2.object({
   evals: external_exports2.array(ManifestEvalSchema).max(256),
   model_roles: external_exports2.array(ManifestModelRoleSchema).max(64)
 }).strict();
-function validateRelativePackPath(path8) {
-  if (path8.startsWith("/") || path8.startsWith("\\")) return "path must be relative";
-  if (/^[A-Za-z]:/.test(path8) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path8)) {
+function validateRelativePackPath(path10) {
+  if (path10.startsWith("/") || path10.startsWith("\\")) return "path must be relative";
+  if (/^[A-Za-z]:/.test(path10) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path10)) {
     return "drive-qualified paths and URI schemes are not allowed";
   }
-  if (/[\u0000-\u001f\u007f]/.test(path8)) return "control characters are not allowed";
-  if (/%(?:2e|2f|5c)/i.test(path8)) return "encoded path traversal is not allowed";
-  if (path8.includes("\\")) return "path must use forward slashes";
-  if (path8.split("/").some((segment) => segment === ".." || segment === ".")) {
+  if (/[\u0000-\u001f\u007f]/.test(path10)) return "control characters are not allowed";
+  if (/%(?:2e|2f|5c)/i.test(path10)) return "encoded path traversal is not allowed";
+  if (path10.includes("\\")) return "path must use forward slashes";
+  if (path10.split("/").some((segment) => segment === ".." || segment === ".")) {
     return "path traversal and dot segments are not allowed";
   }
-  if (path8.split("/").some((segment) => segment.length === 0)) {
+  if (path10.split("/").some((segment) => segment.length === 0)) {
     return "path cannot contain empty segments";
   }
   return null;
@@ -24038,22 +24038,22 @@ function validateFlowPackManifestSemantics(manifest) {
       issues
     );
     role.independence.compare_against_roles.forEach((comparedRole, comparedIndex) => {
-      const path8 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
+      const path10 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
       if (comparedRole === role.id) {
         issues.push({
-          path: path8,
+          path: path10,
           code: "self_referential_model_independence",
           message: "a model role cannot require independence from itself"
         });
       } else if (!modelRolesById.has(comparedRole)) {
         issues.push({
-          path: path8,
+          path: path10,
           code: "missing_independence_model_role",
           message: `independence policy references undeclared model role ${JSON.stringify(comparedRole)}`
         });
       } else if (modelRolesById.get(comparedRole)?.independence !== null) {
         issues.push({
-          path: path8,
+          path: path10,
           code: "independence_reference_not_author",
           message: `independence policy must compare against an author role; ${JSON.stringify(comparedRole)} declares its own independence policy`
         });
@@ -24137,7 +24137,7 @@ var NEEDS_YOU_HORIZON_DAYS = 14;
 var HORIZON_MS = NEEDS_YOU_HORIZON_DAYS * 24 * 60 * 60 * 1e3;
 var STALLED_GOAL_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 
-// packages/plugin-core/src/memlin-api-client.ts
+// packages/plugin-core/dist/memlin-api-client.js
 init_auth_refusal();
 import { readFileSync } from "node:fs";
 import crypto3 from "node:crypto";
@@ -24145,7 +24145,7 @@ import os5 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// packages/plugin-core/src/runtime-shared.ts
+// packages/plugin-core/dist/runtime-shared.js
 var AGENT_KIND_HEADER = "Memlin-Agent-Kind";
 var AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
 var AGENT_VERSION_HEADER = "Memlin-Agent-Version";
@@ -24172,26 +24172,8 @@ var AGENT_EXPECTED_CAPABILITIES = {
   // of its own.
   companion: ["cli", "sync", "realtime", "resolve"]
 };
-async function closeHttpSockets() {
-  try {
-    const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
-    if (dispatcher && typeof dispatcher.close === "function") {
-      let timer;
-      await Promise.race([
-        dispatcher.close(),
-        new Promise((resolve) => {
-          timer = setTimeout(resolve, 250);
-          timer.unref?.();
-        })
-      ]).finally(() => {
-        if (timer !== void 0) clearTimeout(timer);
-      });
-    }
-  } catch {
-  }
-}
 
-// packages/plugin-core/src/host.ts
+// packages/plugin-core/dist/host.js
 import os4 from "node:os";
 import path5 from "node:path";
 var BaseHost = class {
@@ -24258,7 +24240,7 @@ function resolveHost() {
   return (make ?? HOSTS["claude-code"])();
 }
 
-// packages/plugin-core/src/memlin-api-client.ts
+// packages/plugin-core/dist/memlin-api-client.js
 var DEFAULT_API_URL = "https://memlin.ai/api/v1";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os5.hostname() || "unknown";
@@ -25413,7 +25395,7 @@ function resolveApiUrl() {
   return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
 }
 
-// packages/plugin-core/src/client.ts
+// packages/plugin-core/dist/client.js
 init_workspace_binding();
 init_auth_refusal();
 function globalConfigFilePath() {
@@ -25493,251 +25475,312 @@ function applyWorkspaceOverlay(config2, overlay) {
     workspaceAccountName: overlay.binding.account_name ?? null
   };
 }
-
-// packages/plugin-core/src/cli/cli-runner.ts
-var WATCHDOG_MS = 2e3;
-var CliExit = class extends Error {
-  constructor(code) {
-    super(`CliExit(${code})`);
-    this.code = code;
-    this.name = "CliExit";
+function log(msg) {
+  if (process.env.MEMLIN_DEBUG) {
+    process.stderr.write(`[memlin] ${msg}
+`);
   }
-  code;
-};
-function exitCli(code) {
-  throw new CliExit(code);
-}
-function scheduleProcessExit(code) {
-  process.exitCode = code;
-  void closeHttpSockets();
-  setTimeout(() => process.exit(), WATCHDOG_MS).unref();
-}
-function runCliMain(main2, onError) {
-  main2().then(
-    (code) => scheduleProcessExit(typeof code === "number" ? code : 0),
-    (err) => {
-      if (err instanceof CliExit) {
-        scheduleProcessExit(err.code);
-        return;
-      }
-      let code;
-      try {
-        code = onError(err);
-      } catch (handlerErr) {
-        if (handlerErr instanceof CliExit) {
-          scheduleProcessExit(handlerErr.code);
-          return;
-        }
-        console.error("cli error handler failed:", handlerErr);
-        code = 1;
-      }
-      scheduleProcessExit(code);
-    }
-  );
 }
 
-// packages/plugin-core/src/cli/args.ts
-function parseSlashArgs(raw) {
-  const tokens = [];
-  let cur = "";
-  let inSingle = false;
-  let inDouble = false;
-  let started = false;
-  let i = 0;
-  const flush = () => {
-    if (started) {
-      tokens.push(cur);
-      cur = "";
-      started = false;
-    }
-  };
-  while (i < raw.length) {
-    const ch = raw[i];
-    if (inSingle) {
-      if (ch === "'") {
-        inSingle = false;
-      } else {
-        cur += ch;
-      }
-      i++;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === "\\" && i + 1 < raw.length) {
-        const next = raw[i + 1];
-        if (next === '"' || next === "\\") {
-          cur += next;
-          i += 2;
+// packages/plugin-core/dist/plan-sync.js
+import { promises as fs7 } from "node:fs";
+import path9 from "node:path";
+
+// packages/plugin-core/dist/state.js
+init_atomic_rename();
+import { promises as fs6 } from "node:fs";
+import path8 from "node:path";
+import os7 from "node:os";
+import crypto4 from "node:crypto";
+var STATE_FILE = path8.join(os7.homedir(), ".config", "memlin", "state.json");
+var EMPTY = { documents: {} };
+async function readState() {
+  try {
+    const raw = await fs6.readFile(STATE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return { ...EMPTY };
+  }
+}
+async function writeState(state) {
+  await fs6.mkdir(path8.dirname(STATE_FILE), { recursive: true });
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+  await fs6.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
+  await atomicRename(tmp, STATE_FILE);
+}
+var LOCK_DIR = `${STATE_FILE}.lock`;
+var LOCK_STALE_MS = 2e3;
+var LOCK_WAIT_MS = 2e3;
+var LOCK_RETRY_MS = 50;
+async function acquireStateLock() {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  await fs6.mkdir(path8.dirname(LOCK_DIR), { recursive: true }).catch(() => {
+  });
+  for (; ; ) {
+    try {
+      await fs6.mkdir(LOCK_DIR);
+      return true;
+    } catch {
+      try {
+        const stat = await fs6.stat(LOCK_DIR);
+        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+          await fs6.rmdir(LOCK_DIR).catch(() => {
+          });
           continue;
         }
-        cur += ch;
-        i++;
+      } catch {
         continue;
       }
-      if (ch === '"') {
-        inDouble = false;
-        i++;
+      if (Date.now() >= deadline) return false;
+      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
+    }
+  }
+}
+async function releaseStateLock() {
+  await fs6.rmdir(LOCK_DIR).catch(() => {
+  });
+}
+async function updateState(mutate) {
+  const locked = await acquireStateLock();
+  try {
+    const state = await readState();
+    await mutate(state);
+    await writeState(state);
+    return state;
+  } finally {
+    if (locked) await releaseStateLock();
+  }
+}
+function hash(content) {
+  return crypto4.createHash("sha256").update(content).digest("hex");
+}
+
+// packages/plugin-core/dist/plan-sync.js
+function homeBase(host) {
+  return (host ?? resolveHost()).homeDir();
+}
+function resolveTargetDocId(stateEntry, binding) {
+  return stateEntry?.document_id || binding?.documentId || void 0;
+}
+async function pushPlanFile(api, file2, opts = {}) {
+  const raw = await fs7.readFile(file2, "utf8");
+  const { title, body, binding: existingBinding } = parsePlanFile(raw);
+  if (!body.trim()) {
+    throw new Error("plan body is empty");
+  }
+  const relPath = path9.relative(homeBase(opts.host), file2);
+  const state = await readState();
+  const existing = state.documents[relPath];
+  if (existing?.document_id && existing.content_hash === hash(raw)) {
+    return {
+      document_id: existing.document_id,
+      version_number: existing.version_number,
+      created: false,
+      unchanged: true
+    };
+  }
+  const targetDocId = resolveTargetDocId(existing, existingBinding);
+  if (targetDocId) {
+    const result2 = await api.updatePlan(
+      targetDocId,
+      {
+        body,
+        title,
+        commit_message: "edit from claude-code"
+      },
+      opts.accountId ? { accountId: opts.accountId } : {}
+    );
+    await stampPlanFile(file2, {
+      documentId: result2.document_id,
+      projectId: existingBinding?.projectId ?? null
+    });
+    const stampedUpdate = await syncedHash(file2, raw, { title, body });
+    await updateState((s) => {
+      s.documents[relPath] = {
+        document_id: result2.document_id,
+        version_id: existing?.version_id ?? "",
+        version_number: result2.version_number,
+        content_hash: stampedUpdate,
+        last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+        scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
+        kind: "plan"
+      };
+    });
+    return {
+      document_id: result2.document_id,
+      version_number: result2.version_number,
+      created: false
+    };
+  }
+  const result = await api.pushPlan(
+    {
+      title,
+      body,
+      cwd: opts.cwd ?? null,
+      git_remote: opts.gitRemote ?? null
+    },
+    opts.accountId ? { accountId: opts.accountId } : {}
+  );
+  await updateState((s) => {
+    s.documents[relPath] = {
+      document_id: result.document_id,
+      version_id: "",
+      version_number: result.version_number,
+      content_hash: hash(raw),
+      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
+      scope: result.project_id ? "project" : "personal",
+      kind: "plan"
+    };
+  });
+  await stampPlanFile(file2, {
+    documentId: result.document_id,
+    projectId: result.project_id
+  });
+  const stamped = await syncedHash(file2, raw, { title, body });
+  await updateState((s) => {
+    const entry = s.documents[relPath];
+    if (entry) entry.content_hash = stamped;
+  });
+  return {
+    document_id: result.document_id,
+    version_number: result.version_number,
+    created: true
+  };
+}
+async function syncedHash(file2, pushedRaw, pushed) {
+  const current = await fs7.readFile(file2, "utf8").catch(() => null);
+  if (current === null) return hash(pushedRaw);
+  const parsed = parsePlanFile(current);
+  return parsed.title === pushed.title && parsed.body === pushed.body ? hash(current) : hash(pushedRaw);
+}
+var DEFAULT_PLAN_SETTLE_MS = 9e4;
+var PLAN_PUSH_CLAIM_TTL_MS = 12e4;
+var PLAN_PUSH_MAX_ATTEMPTS = 5;
+function planSettleMs() {
+  const raw = Number(process.env.MEMLIN_PLAN_SETTLE_MS);
+  return Number.isFinite(raw) && raw >= 0 && process.env.MEMLIN_PLAN_SETTLE_MS?.trim() ? raw : DEFAULT_PLAN_SETTLE_MS;
+}
+async function flushPlanPushes(api, opts = {}) {
+  const now = opts.now ?? Date.now();
+  const settleMs = opts.settleMs ?? planSettleMs();
+  const out = {
+    pushed: [],
+    unchanged: [],
+    deferred: [],
+    failed: []
+  };
+  const claimed = [];
+  await updateState((s) => {
+    for (const [file2, entry] of Object.entries(s.plan_push_queue ?? {})) {
+      if (entry.claimed_at && now - entry.claimed_at < PLAN_PUSH_CLAIM_TTL_MS) continue;
+      const due = opts.all || opts.sessionId !== void 0 && entry.session_id === (opts.sessionId ?? null) || now - entry.last_edit_at >= settleMs;
+      if (!due) {
+        out.deferred.push(path9.basename(file2));
         continue;
       }
-      cur += ch;
-      i++;
-      continue;
+      entry.claimed_at = now;
+      claimed.push([file2, { ...entry }]);
     }
-    if (ch === "'") {
-      inSingle = true;
-      started = true;
-      i++;
-      continue;
+  });
+  for (const [file2, entry] of claimed) {
+    const name = path9.basename(file2);
+    let outcome = "done";
+    try {
+      const result = await pushPlanFile(api, file2, {
+        ...entry.cwd ? { cwd: entry.cwd } : {},
+        gitRemote: entry.git_remote,
+        ...opts.host ? { host: opts.host } : {},
+        ...opts.accountId ? { accountId: opts.accountId } : {}
+      });
+      if (result.unchanged) out.unchanged.push(name);
+      else out.pushed.push(`${name} (${result.created ? "new" : "v" + result.version_number})`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const gone = err?.code === "ENOENT" || message === "plan body is empty";
+      out.failed.push(`${name}: ${message}`);
+      if (!gone) outcome = "retry";
     }
-    if (ch === '"') {
-      inDouble = true;
-      started = true;
-      i++;
-      continue;
-    }
-    if (ch === " " || ch === "	" || ch === "\n") {
-      flush();
-      i++;
-      continue;
-    }
-    cur += ch;
-    started = true;
-    i++;
+    await updateState((s) => {
+      const current = s.plan_push_queue?.[file2];
+      if (!current) return;
+      if (current.last_edit_at !== entry.last_edit_at) {
+        delete current.claimed_at;
+        return;
+      }
+      if (outcome === "retry" && (current.attempts ?? 0) + 1 < PLAN_PUSH_MAX_ATTEMPTS) {
+        current.attempts = (current.attempts ?? 0) + 1;
+        delete current.claimed_at;
+        return;
+      }
+      delete s.plan_push_queue[file2];
+    });
   }
-  flush();
-  return tokens;
+  return out;
 }
-function argvAsSlashArgs() {
-  const raw = process.argv.slice(2).join(" ").trim();
-  return parseSlashArgs(raw);
-}
-
-// packages/plugin-core/src/cli/features.ts
-function matchFeature(features, needle) {
-  const exact = features.find((f) => f.id === needle);
-  if (exact) return exact;
-  const matches = features.filter((f) => f.id.startsWith(needle));
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) return { error: `no feature matches "${needle}"` };
-  return { error: `"${needle}" is ambiguous \u2014 matches ${matches.length} features` };
-}
-async function main() {
-  const ctx = await getApi();
-  if (!ctx) {
-    process.stderr.write("not signed in \u2014 run memlin login first\n");
-    exitCli(1);
-  }
-  const args = argvAsSlashArgs();
-  const action = args[0];
-  const pinnedProject = ctx.config.project_id ?? null;
-  if (!action || action === "list") {
-    const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
-    if (features.length === 0) {
-      process.stdout.write('No features yet. Create one: memlin features create "<title>"\n');
-      return;
-    }
-    process.stdout.write(`${features.length} feature${features.length === 1 ? "" : "s"}:
-
-`);
-    for (const f of features) {
-      process.stdout.write(`  ${f.id.slice(0, 8)}  ${f.title}  [${f.status}]
-`);
-    }
-    process.stdout.write('\nUse: memlin features create "<title>" | add <feature-id> <kind> <id>\n');
+async function stampPlanFile(file2, binding) {
+  let raw;
+  try {
+    raw = await fs7.readFile(file2, "utf8");
+  } catch {
     return;
   }
-  if (action === "create") {
-    let projectId = pinnedProject ?? process.env.MEMLIN_PROJECT_ID ?? null;
-    let summary = null;
-    const titleParts = [];
-    for (let i = 1; i < args.length; i++) {
-      const a = args[i];
-      if (a === "--summary" && i + 1 < args.length) {
-        summary = args[++i] ?? null;
-        continue;
-      }
-      if (a === "--project" && i + 1 < args.length) {
-        projectId = args[++i] ?? null;
-        continue;
-      }
-      if (a?.startsWith("--")) {
-        process.stderr.write(`unknown flag: ${a}
-`);
-        exitCli(1);
-      }
-      titleParts.push(a ?? "");
-    }
-    if (!projectId) {
-      process.stderr.write(
-        "memlin features create: no project pinned \u2014 run `memlin add-project` first, pass --project <uuid>, or set MEMLIN_PROJECT_ID.\n"
-      );
-      exitCli(2);
-    }
-    const title = titleParts.join(" ").trim();
-    if (!title) {
-      process.stderr.write('usage: memlin features create "<title>" [--summary S] [--project P]\n');
-      exitCli(1);
-    }
-    try {
-      const result = await ctx.api.createFeature({
-        project_id: projectId,
-        title,
-        summary
-      });
-      process.stdout.write(`\u2713 created feature ${result.id.slice(0, 8)} \u2014 ${title}
-`);
-      process.stdout.write(`  add work to it: memlin features add ${result.id.slice(0, 8)} <kind> <id>
-`);
-      return;
-    } catch (err) {
-      process.stderr.write(
-        `memlin features create failed: ${err instanceof Error ? err.message : String(err)}
-`
-      );
-      exitCli(1);
-    }
-  }
-  if (action === "add") {
-    const needle = args[1];
-    const kind = args[2];
-    const itemId = args[3];
-    if (!needle || !kind || !itemId) {
-      process.stderr.write("usage: memlin features add <feature-id> <kind> <entity-id>\n");
-      exitCli(1);
-    }
-    const { features } = await ctx.api.listFeatures({ project_id: pinnedProject });
-    const match = matchFeature(features, needle);
-    if ("error" in match) {
-      process.stderr.write(`${match.error}
-`);
-      exitCli(2);
-    }
-    try {
-      await ctx.api.addFeatureMember(match.id, { kind, id: itemId });
-      process.stdout.write(
-        `\u2713 added ${kind} ${itemId.slice(0, 8)} to feature ${match.id.slice(0, 8)} (${match.title})
-`
-      );
-      return;
-    } catch (err) {
-      process.stderr.write(
-        `memlin features add failed: ${err instanceof Error ? err.message : String(err)}
-`
-      );
-      exitCli(1);
-    }
-  }
-  process.stderr.write(
-    'usage: memlin features [list] | create "<title>" [--summary S] [--project P] | add <feature-id> <kind> <id>\n'
-  );
-  return 1;
+  const parsed = parsePlanFile(raw);
+  const stampLine = `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`;
+  const bodyNoStamp = parsed.body.replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "");
+  const composed = [
+    `# ${parsed.title}`,
+    "",
+    parsed.status ? `<!-- memlin-plan-status: ${parsed.status} -->` : null,
+    stampLine,
+    "",
+    bodyNoStamp.trim(),
+    ""
+  ].filter((l) => l !== null).join("\n");
+  await fs7.writeFile(file2, composed, "utf8");
 }
-runCliMain(main, (err) => {
-  process.stderr.write(
-    `memlin features failed: ${err instanceof Error ? err.message : String(err)}
-`
-  );
-  return 1;
+function parsePlanFile(raw) {
+  const firstNl = raw.indexOf("\n");
+  const first = firstNl === -1 ? raw : raw.slice(0, firstNl);
+  const title = first.replace(/^#\s+/, "").trim() || "(untitled plan)";
+  const rest = firstNl === -1 ? "" : raw.slice(firstNl + 1).trim();
+  const statusMatch = rest.match(/<!--\s*memlin-plan-status:\s*([a-z_]+)\s*-->/);
+  const status = statusMatch ? statusMatch[1] ?? null : null;
+  const bindMatch = rest.match(/<!--\s*memlin-binding:\s*doc=([0-9a-f-]+)\s+project=(\S+)\s*-->/i);
+  const binding = bindMatch ? {
+    documentId: bindMatch[1],
+    projectId: bindMatch[2] === "none" ? null : bindMatch[2] ?? null
+  } : null;
+  const body = rest.replace(/<!--\s*memlin-plan-status:[^>]*-->\s*\n?/g, "").replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "").trim();
+  return { title, body, status, binding };
+}
+
+// packages/plugin-core/dist/transcript.js
+function sessionIdFromTranscriptPath(p) {
+  const stem = p?.split(/[\\/]/).pop()?.replace(/\.jsonl$/, "");
+  return stem || null;
+}
+
+// apps/cli-plugin/src/hooks/session-end.ts
+async function readStdin() {
+  let data = "";
+  for await (const chunk of process.stdin) data += chunk;
+  try {
+    return data.trim() ? JSON.parse(data) : {};
+  } catch {
+    return {};
+  }
+}
+async function main() {
+  const payload = await readStdin();
+  const ctx = await getApi({ cwd: payload.cwd ?? process.cwd() });
+  if (!ctx) return;
+  const sessionId = payload.session_id ?? sessionIdFromTranscriptPath(payload.transcript_path) ?? null;
+  const result = await flushPlanPushes(ctx.api, { sessionId });
+  if (result.pushed.length > 0) log(`session-end: pushed plan(s) ${result.pushed.join(", ")}`);
+  if (result.failed.length > 0) log(`session-end: plan push failed: ${result.failed.join("; ")}`);
+}
+void main().catch((err) => {
+  log(`session-end: plan flush failed: ${err instanceof Error ? err.message : String(err)}`);
 });
 /*! Bundled license information:
 
