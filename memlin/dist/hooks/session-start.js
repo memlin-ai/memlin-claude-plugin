@@ -4849,7 +4849,13 @@ var init_zod = __esm({
 });
 
 // packages/shared/dist/constants.js
-var DOCUMENT_KINDS, DOCUMENT_SCOPES, DOCUMENT_STATUSES, MEMORY_TYPES, AGENT_KINDS, MEMBER_ROLES, ACCOUNT_TIERS, FREE_TIER_METERS, METERED_EVENT_TYPES;
+function featureLabel(projectKind, nounOverride) {
+  if (nounOverride === "highlight") return FEATURE_LABELS.highlight;
+  if (nounOverride === "feature") return FEATURE_LABELS.code;
+  if (nounOverride === "workstream") return FEATURE_LABELS.general;
+  return projectKind === "general" ? FEATURE_LABELS.general : FEATURE_LABELS.code;
+}
+var DOCUMENT_KINDS, DOCUMENT_SCOPES, DOCUMENT_STATUSES, FEATURE_LABELS, MEMORY_TYPES, AGENT_KINDS, MEMBER_ROLES, ACCOUNT_TIERS, FREE_TIER_METERS, METERED_EVENT_TYPES;
 var init_constants = __esm({
   "packages/shared/dist/constants.js"() {
     "use strict";
@@ -4870,6 +4876,8 @@ var init_constants = __esm({
       // (CORPUS_KINDS), and the default export all use explicit kind allow-lists
       // that exclude 'file'. A file enters the core only via an explicit
       // "Promote to Memory" (which writes a separate kind='memory' doc).
+      // Role-marked living docs have one explicit delivery path: a checked feature
+      // pointer/direct read or opt-in CLI copy, never semantic retrieval.
       "file",
       // A personal-first checklist / list (the people-processed "To-dos" tier). Its
       // body is a GFM task list. Like 'file', it's ISOLATED from the resolver/
@@ -4890,6 +4898,11 @@ var init_constants = __esm({
     ];
     DOCUMENT_SCOPES = ["personal", "project", "team"];
     DOCUMENT_STATUSES = ["draft", "in_review", "approved", "archived"];
+    FEATURE_LABELS = {
+      code: { singular: "Feature", plural: "Features" },
+      general: { singular: "Workstream", plural: "Workstreams" },
+      highlight: { singular: "Highlight", plural: "Highlights" }
+    };
     MEMORY_TYPES = [
       "correction",
       "preference",
@@ -9339,30 +9352,43 @@ var init_memlin_contract = __esm({
 });
 
 // packages/shared/dist/feature-discovery.js
+function featureDiscoverySystem({
+  projectKind = "code",
+  noun
+} = {}) {
+  const label = featureLabel(projectKind, noun);
+  const inventory = projectKind === "general" ? [
+    "You read a project\u2019s shared thoughts, topics, decisions, goals and plans.",
+    `Group them into ${label.plural.toUpperCase()}: cohesive areas of work the team organizes around.`,
+    "Examples include customer research, event planning, hiring and quarterly priorities."
+  ] : [
+    "You read the inventory of a software project: components, recent pull requests, decisions, goals and plans.",
+    `Group them into ${label.plural.toUpperCase()}: cohesive capabilities the team organizes around.`,
+    "Examples include authentication, billing and capture."
+  ];
+  return [
+    `You are Memlin\u2019s ${label.singular.toLowerCase()} mapper.`,
+    ...inventory,
+    "",
+    "Rules:",
+    `- Propose between 4 and 15 ${label.plural.toLowerCase()}. Fewer is better than padding with noise.`,
+    "- Each group is a cohesive area of work, not one item or a restatement of the whole project.",
+    "- Members must be drawn ONLY from the provided item ids. Never invent ids.",
+    "- Omit items that do not clearly belong to any group.",
+    "- Do NOT duplicate or restate existing or previously rejected groups; propose only missing work.",
+    "- Use short, exact names the team would use in conversation.",
+    "",
+    "Return ONLY a JSON object of the form:",
+    '{ "features": [ { "name": string, "summary": string, "members": string[] } ] }',
+    "Each members entry is an id from the inventory. No prose outside the JSON."
+  ].join("\n");
+}
 var FEATURE_DISCOVERY_SYSTEM;
 var init_feature_discovery = __esm({
   "packages/shared/dist/feature-discovery.js"() {
     "use strict";
-    FEATURE_DISCOVERY_SYSTEM = [
-      "You are Memlin's feature mapper. You read the inventory of a software project \u2014",
-      "its components (subsystems), recent pull requests, and plans \u2014 and group them",
-      "into a short list of FEATURES: the real units of work a team organizes around",
-      '(e.g. "Authentication & sessions", "Billing & credits", "Capture pipeline").',
-      "",
-      "Rules:",
-      "- Propose between 4 and 15 features. Fewer is better than padding with noise.",
-      "- A feature is a cohesive capability or workstream, NOT a single file, a layer",
-      '  ("frontend"), or a restatement of the whole project.',
-      "- Each feature's members must be drawn ONLY from the provided item ids. Never",
-      "  invent ids. Omit items that do not clearly belong to any feature.",
-      "- Do NOT duplicate or restate the existing features listed; only propose what is",
-      "  genuinely missing.",
-      "- Name features the way the team would say them out loud: short, exact nouns.",
-      "",
-      "Return ONLY a JSON object of the form:",
-      '{ "features": [ { "name": string, "summary": string, "members": string[] } ] }',
-      "where each members entry is an id from the inventory. No prose outside the JSON."
-    ].join("\n");
+    init_constants();
+    FEATURE_DISCOVERY_SYSTEM = featureDiscoverySystem();
   }
 });
 
@@ -12283,6 +12309,7 @@ var init_experience_harness = __esm({
       root_thought_id: external_exports.string().uuid(),
       root_revision_token: external_exports.string().min(1).max(2048),
       context: ContextManifestV1Schema,
+      harness: external_exports.object({ output_mode: external_exports.enum(["inline", "resource"]) }).strict().optional(),
       nodes: external_exports.array(
         external_exports.object({
           id: external_exports.string().uuid(),
@@ -12307,7 +12334,12 @@ var init_experience_harness = __esm({
       root_revision_token: external_exports.string().min(1).max(2048),
       harness_id: external_exports.string().uuid().nullable().default(null),
       expected_revision: external_exports.number().int().positive().nullable().default(null),
-      definition: ExperienceHarnessManifestV2Schema.pick({ context: true, nodes: true, edges: true })
+      definition: ExperienceHarnessManifestV2Schema.pick({
+        context: true,
+        nodes: true,
+        edges: true,
+        harness: true
+      })
     }).strict().refine(
       (input) => input.harness_id === null === (input.expected_revision === null),
       "Existing harness requires its current revision"
@@ -25590,6 +25622,228 @@ var init_research_collection = __esm({
   }
 });
 
+// packages/shared/dist/feature-tracking.js
+var FEATURE_TRACKING_MODES, FEATURE_NOUNS, FEATURE_CONTEXT_MODES, FeatureTrackingPolicySchema;
+var init_feature_tracking = __esm({
+  "packages/shared/dist/feature-tracking.js"() {
+    "use strict";
+    init_zod();
+    init_entitlements();
+    FEATURE_TRACKING_MODES = ["off", "suggest", "assist", "auto"];
+    FEATURE_NOUNS = ["feature", "workstream", "highlight"];
+    FEATURE_CONTEXT_MODES = ["always", "auto", "off"];
+    FeatureTrackingPolicySchema = external_exports.object({
+      mode: external_exports.enum(FEATURE_TRACKING_MODES),
+      source: external_exports.enum(["light", "project", "account"]),
+      noun: external_exports.enum(FEATURE_NOUNS),
+      project_kind: external_exports.enum(["code", "general"]).nullable(),
+      context_mode: external_exports.enum(FEATURE_CONTEXT_MODES)
+    });
+  }
+});
+
+// packages/shared/dist/feature-system-contracts.js
+var RESOURCE_ATTACHMENT_ROLES;
+var init_feature_system_contracts = __esm({
+  "packages/shared/dist/feature-system-contracts.js"() {
+    "use strict";
+    RESOURCE_ATTACHMENT_ROLES = [
+      "report",
+      "screenshot",
+      "log",
+      "output",
+      "reference"
+    ];
+  }
+});
+
+// packages/shared/dist/files.js
+var FileProvenanceSchema, FileUploadPreparedResponseV1Schema, FileUploadDeduplicatedResponseV1Schema, FileUploadPrepareResponseV1Schema, FileUploadFinalizeResponseV1Schema, FileAttachmentHostSchema, FileAttachmentInputSchema, FileAttachmentReceiptSchema, FileDetachInputSchema, ResourcePublicLinkWriteSchema, ResourcePublicLinksSchema, ResourcePublicMaterialSchema;
+var init_files = __esm({
+  "packages/shared/dist/files.js"() {
+    "use strict";
+    init_zod();
+    init_thought_runtime();
+    init_feature_system_contracts();
+    FileProvenanceSchema = external_exports.object({
+      client: external_exports.enum(["web", "cli", "mcp", "api"]).default("api"),
+      agent_kind: external_exports.string().max(100).optional(),
+      agent_installation_id: external_exports.string().max(200).optional(),
+      session_id: external_exports.string().max(200).optional()
+    }).strict();
+    FileUploadPreparedResponseV1Schema = external_exports.object({
+      receipt: ResourceUploadReceiptV2Schema,
+      upload_url: external_exports.string().url().nullable(),
+      upload_headers: external_exports.object({ "content-type": external_exports.string(), "x-upsert": external_exports.literal("false") }).strict()
+    }).strict();
+    FileUploadDeduplicatedResponseV1Schema = external_exports.object({
+      version: external_exports.literal(1),
+      state: external_exports.literal("completed"),
+      deduplicated: external_exports.literal(true),
+      resource_id: external_exports.string().uuid(),
+      version_id: external_exports.string().uuid(),
+      sha256: external_exports.string().regex(/^[0-9a-f]{64}$/),
+      document_id: external_exports.string().uuid().optional()
+    }).strict();
+    FileUploadPrepareResponseV1Schema = external_exports.union([
+      FileUploadPreparedResponseV1Schema,
+      FileUploadDeduplicatedResponseV1Schema
+    ]);
+    FileUploadFinalizeResponseV1Schema = external_exports.object({
+      resource_id: external_exports.string().uuid(),
+      version_id: external_exports.string().uuid(),
+      sha256: external_exports.string().regex(/^[0-9a-f]{64}$/),
+      idempotent_replay: external_exports.boolean(),
+      document_id: external_exports.string().uuid().optional()
+    }).strict();
+    FileAttachmentHostSchema = external_exports.object({
+      kind: external_exports.enum(["feature", "project_work_item", "flow_stage_run", "thought"]),
+      id: external_exports.string().uuid()
+    }).strict();
+    FileAttachmentInputSchema = external_exports.object({
+      host: FileAttachmentHostSchema,
+      pinned_version_id: external_exports.string().uuid().optional(),
+      role: external_exports.enum(RESOURCE_ATTACHMENT_ROLES).default("reference"),
+      caption: external_exports.string().max(500).optional(),
+      provenance: FileProvenanceSchema.default({})
+    }).strict();
+    FileAttachmentReceiptSchema = external_exports.object({
+      attachment_id: external_exports.string().uuid(),
+      resource_id: external_exports.string().uuid(),
+      version_id: external_exports.string().uuid()
+    }).strict();
+    FileDetachInputSchema = external_exports.object({
+      attachment_id: external_exports.string().uuid(),
+      host: FileAttachmentHostSchema
+    }).strict();
+    ResourcePublicLinkWriteSchema = external_exports.discriminatedUnion("action", [
+      external_exports.object({
+        action: external_exports.literal("create"),
+        expires_in_days: external_exports.union([external_exports.literal(1), external_exports.literal(7), external_exports.literal(30)]).default(7),
+        pinned_version_id: external_exports.string().uuid().nullable().optional(),
+        embedded_resource_ids: external_exports.array(external_exports.string().uuid()).max(50).default([]),
+        embedded_resource_versions: external_exports.record(external_exports.string().uuid(), external_exports.string().uuid()).optional()
+      }).strict(),
+      external_exports.object({ action: external_exports.literal("revoke"), id: external_exports.string().uuid() }).strict()
+    ]);
+    ResourcePublicLinksSchema = external_exports.object({
+      version: external_exports.literal(1),
+      resource_id: external_exports.string().uuid(),
+      token: external_exports.string().nullable(),
+      links: external_exports.array(
+        external_exports.object({
+          id: external_exports.string().uuid(),
+          created_at: external_exports.string(),
+          expires_at: external_exports.string(),
+          revoked_at: external_exports.string().nullable(),
+          pinned_version_id: external_exports.string().uuid().nullable(),
+          embedded_resource_ids: external_exports.array(external_exports.string().uuid()).max(50),
+          embedded_resource_versions: external_exports.record(external_exports.string().uuid(), external_exports.string().uuid())
+        })
+      )
+    });
+    ResourcePublicMaterialSchema = external_exports.object({
+      resource: external_exports.object({
+        id: external_exports.string().uuid(),
+        title: external_exports.string(),
+        kind: external_exports.string(),
+        mime_type: external_exports.string(),
+        byte_size: external_exports.number().nonnegative()
+      }),
+      version_id: external_exports.string().uuid(),
+      content: external_exports.string().max(1048576).nullable(),
+      storage_locator: external_exports.object({
+        bucket: external_exports.literal("thought-resource-originals"),
+        path: external_exports.string().min(1).max(1024),
+        original_filename: external_exports.string().nullable()
+      }).nullable(),
+      embedded_resource_ids: external_exports.array(external_exports.string().uuid()).max(50).optional(),
+      expires_at: external_exports.string().optional()
+    });
+  }
+});
+
+// packages/shared/dist/feature-doc.js
+var FeatureDocNarrativeSchema;
+var init_feature_doc = __esm({
+  "packages/shared/dist/feature-doc.js"() {
+    "use strict";
+    init_files();
+    init_zod();
+    init_constants();
+    init_context_engine();
+    init_brand_guidelines_frontmatter();
+    init_redact();
+    init_sensitive_topics();
+    FeatureDocNarrativeSchema = external_exports.object({
+      overview: external_exports.string().max(1200),
+      why: external_exports.string().max(1200),
+      how_it_works: external_exports.string().max(1200)
+    }).strict();
+  }
+});
+
+// packages/shared/dist/file-formats.js
+var KIND_MAX_BYTES;
+var init_file_formats = __esm({
+  "packages/shared/dist/file-formats.js"() {
+    "use strict";
+    KIND_MAX_BYTES = {
+      image: 10 * 1024 * 1024,
+      text: 5 * 1024 * 1024,
+      markdown: 5 * 1024 * 1024,
+      dataset: 5 * 1024 * 1024,
+      pdf: 25 * 1024 * 1024,
+      document: 25 * 1024 * 1024,
+      audio: 25 * 1024 * 1024,
+      video: 25 * 1024 * 1024
+    };
+  }
+});
+
+// packages/shared/dist/feature-binding.js
+function featureBranch(branch) {
+  const value = branch?.trim().replace(/^(refs\/heads\/|refs\/remotes\/[^/]+\/|origin\/)/i, "");
+  return value && !["main", "master", "develop", "trunk", "head"].includes(value.toLowerCase()) ? value : null;
+}
+var FeatureCaptureFieldsSchema;
+var init_feature_binding = __esm({
+  "packages/shared/dist/feature-binding.js"() {
+    "use strict";
+    init_zod();
+    init_feature_tracking();
+    FeatureCaptureFieldsSchema = external_exports.object({
+      session_id: external_exports.string().trim().min(1).max(256).nullish(),
+      git_branch: external_exports.string().trim().min(1).max(300).nullish(),
+      feature_id: external_exports.string().uuid().nullish()
+    });
+  }
+});
+
+// packages/shared/dist/feature-work.js
+var Receipt;
+var init_feature_work = __esm({
+  "packages/shared/dist/feature-work.js"() {
+    "use strict";
+    init_zod();
+    init_feature_tracking();
+    Receipt = external_exports.object({
+      scanned: external_exports.number().int().nonnegative().max(200),
+      linked: external_exports.number().int().nonnegative().max(200),
+      suggestions: external_exports.array(
+        external_exports.object({
+          work_item_id: external_exports.string().uuid(),
+          feature_id: external_exports.string().uuid(),
+          method: external_exports.enum(["binding", "handoff", "embedding"]),
+          confidence: external_exports.number().min(0).max(1)
+        })
+      ).max(200),
+      next_cursor: external_exports.string().uuid().nullable(),
+      reason: external_exports.string().optional()
+    });
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25674,6 +25928,13 @@ var init_dist = __esm({
     init_needs_you_groups();
     init_needs_you_engine();
     init_research_collection();
+    init_feature_tracking();
+    init_feature_system_contracts();
+    init_feature_doc();
+    init_file_formats();
+    init_files();
+    init_feature_binding();
+    init_feature_work();
   }
 });
 
@@ -26166,7 +26427,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.80";
+  cachedAgentVersion = "0.2.83";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26761,8 +27022,8 @@ var init_memlin_api_client = __esm({
         return this.request("POST", "/workspace-contract/sync", input);
       }
       /** GET /documents/{id} — fetch one doc with body + metadata. */
-      async getDocument(documentId) {
-        return this.request("GET", `/documents/${encodeURIComponent(documentId)}`);
+      async getDocument(documentId, opts = {}) {
+        return this.request("GET", `/documents/${encodeURIComponent(documentId)}`, void 0, opts);
       }
       /** POST /documents/{id}/contract-verification — H12. Record a contract
        *  check. Used by `memlin diff --record`. */
@@ -26821,10 +27082,11 @@ var init_memlin_api_client = __esm({
         return this.request("POST", `/insights/${encodeURIComponent(insightId)}/resolve`, { action });
       }
       /** POST /inbox/{id} — accept or reject a proposal, optionally with the reviewer's reason. */
-      async resolveProposal(proposalId, action, note) {
+      async resolveProposal(proposalId, action, note, feature) {
         return this.request("POST", `/inbox/${encodeURIComponent(proposalId)}`, {
           action,
-          ...note?.trim() ? { note: note.trim() } : {}
+          ...note?.trim() ? { note: note.trim() } : {},
+          ...feature !== void 0 ? { feature } : {}
         });
       }
       async listHandoffs(opts = {}, callOpts = {}) {
@@ -26855,17 +27117,115 @@ var init_memlin_api_client = __esm({
       async createHandoff(input) {
         return this.request("POST", "/handoffs", input);
       }
+      /** Save agent files through the same Library upload contract used by the web app. */
+      /** Exact-version Library metadata; storage locators remain private. */
+      async getFile(resourceId, opts = {}) {
+        const query = opts.versionId ? `?version_id=${encodeURIComponent(opts.versionId)}` : "";
+        return this.request("GET", `/files/${encodeURIComponent(resourceId)}${query}`, void 0, opts);
+      }
+      /** Current permission check for one immutable original; signed URLs are transient. */
+      async getFileContent(resourceId, opts) {
+        return this.request(
+          "GET",
+          `/files/${encodeURIComponent(resourceId)}/content?version_id=${encodeURIComponent(opts.versionId)}`,
+          void 0,
+          opts
+        );
+      }
+      async prepareFileUpload(input, opts = {}) {
+        return FileUploadPrepareResponseV1Schema.parse(
+          await this.request("POST", "/files/uploads", input, { ...opts, requestTimeoutMs: 6e4 })
+        );
+      }
+      async finalizeFileUpload(uploadId, opts = {}) {
+        return FileUploadFinalizeResponseV1Schema.parse(
+          await this.request(
+            "POST",
+            `/files/uploads/${encodeURIComponent(uploadId)}/finalize`,
+            {},
+            { ...opts, requestTimeoutMs: 6e4 }
+          )
+        );
+      }
+      async attachFile(resourceId, input, opts = {}) {
+        return FileAttachmentReceiptSchema.parse(
+          await this.request(
+            "POST",
+            `/files/${encodeURIComponent(resourceId)}/attachments`,
+            FileAttachmentInputSchema.parse(input),
+            opts
+          )
+        );
+      }
+      async detachFile(resourceId, input, opts = {}) {
+        const result = await this.request(
+          "DELETE",
+          `/files/${encodeURIComponent(resourceId)}/attachments`,
+          FileDetachInputSchema.parse(input),
+          opts
+        );
+        if (typeof result.detached !== "boolean") throw new Error("Invalid file detach response");
+        return result;
+      }
       async listFeatures(opts = {}) {
         const qs = new URLSearchParams();
         if (opts.project_id) qs.set("project_id", opts.project_id);
-        const suffix = qs.toString() ? `?${qs.toString()}` : "";
-        return this.request("GET", `/features${suffix}`);
+        if (opts.status) qs.set("status", opts.status);
+        if (opts.q) qs.set("q", opts.q);
+        if (opts.limit) qs.set("limit", String(opts.limit));
+        if (opts.include) qs.set("include", opts.include);
+        if (opts.cursor) qs.set("cursor", opts.cursor);
+        return this.request("GET", `/features${qs.size ? `?${qs}` : ""}`, void 0, {
+          accountId: opts.accountId
+        });
       }
-      async createFeature(input) {
-        return this.request("POST", "/features", input);
+      async createFeature(input, opts = {}) {
+        return this.request("POST", "/features", input, opts);
       }
-      async addFeatureMember(featureId, source) {
-        return this.request("POST", `/features/${featureId}/members`, { source });
+      async addFeatureMember(featureId, source, opts = {}) {
+        return this.request(
+          "POST",
+          `/features/${encodeURIComponent(featureId)}/members`,
+          { source },
+          opts
+        );
+      }
+      async setFeatureBinding(input, opts = {}) {
+        return this.request(
+          input.feature_id === null ? "DELETE" : "PUT",
+          "/features/binding",
+          input,
+          opts
+        );
+      }
+      async getFeatureBinding(input, opts = {}) {
+        const query = new URLSearchParams(input);
+        const result = await this.request("GET", `/features/binding?${query}`, void 0, opts);
+        const value = result;
+        if (!value || typeof value !== "object" || !("binding" in value) || value.auto_link !== void 0 && typeof value.auto_link !== "boolean")
+          throw Error("Feature binding response is invalid.");
+        if (value.binding === null) return { binding: null, auto_link: value.auto_link === true };
+        const binding = FeatureCaptureFieldsSchema.pick({ feature_id: true }).parse(value.binding);
+        if (!binding.feature_id || typeof value.binding?.via !== "string")
+          throw Error("Feature binding response is invalid.");
+        return {
+          binding: { feature_id: binding.feature_id, via: value.binding.via },
+          auto_link: value.auto_link === true
+        };
+      }
+      async getFeature(featureId, opts = {}) {
+        return this.request("GET", `/features/${encodeURIComponent(featureId)}`, void 0, opts);
+      }
+      async updateFeature(featureId, input, opts = {}) {
+        return this.request("PATCH", `/features/${encodeURIComponent(featureId)}`, input, opts);
+      }
+      async removeFeatureMember(featureId, linkId, opts = {}) {
+        return this.request(
+          "DELETE",
+          `/features/${encodeURIComponent(featureId)}/members?link_id=${encodeURIComponent(linkId)}`,
+          void 0,
+          opts
+        );
       }
       /** POST /documents/search — semantic + text. */
       async search(query, opts = {}) {
@@ -27623,17 +27983,246 @@ async function updateState(mutate) {
 function hash(content) {
   return crypto4.createHash("sha256").update(content).digest("hex");
 }
-var STATE_FILE, EMPTY, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
+var STATE_FILE, MAX_LAST_RESOLVE_SESSIONS, EMPTY, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
 var init_state = __esm({
   "packages/plugin-core/dist/state.js"() {
     "use strict";
     init_atomic_rename();
     STATE_FILE = path9.join(os7.homedir(), ".config", "memlin", "state.json");
+    MAX_LAST_RESOLVE_SESSIONS = 32;
     EMPTY = { documents: {} };
     LOCK_DIR = `${STATE_FILE}.lock`;
     LOCK_STALE_MS = 2e3;
     LOCK_WAIT_MS = 2e3;
     LOCK_RETRY_MS = 50;
+  }
+});
+
+// packages/plugin-core/dist/project-resolver.js
+import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2, lstatSync } from "node:fs";
+import path11 from "node:path";
+function allowAccountMismatch(env = process.env) {
+  const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
+  return v === "1" || v === "true" || v === "yes";
+}
+function accountBindingHazard(r, opts = {}) {
+  if (!r.hasGitRemote || !r.project_id) return "none";
+  if (r.reason === "local-path") return opts.allowMismatch ? "warn" : "block";
+  if (r.reason === "config") return "warn";
+  return "none";
+}
+function formatAccountMismatchWarning(input) {
+  if (input.hazard === "none") return null;
+  const acct = input.accountName ? `"${input.accountName}"` : "this account";
+  const proj = input.projectName ? `"${input.projectName}"` : "a project";
+  const head = input.hazard === "block" ? "Memlin: account-binding mismatch \u2014 capture paused." : "Memlin: account-binding check.";
+  return [
+    head,
+    `  This repo has a git remote, but it resolved to ${proj} under ${acct} via ${input.reason} \u2014`,
+    `  that project does not own your git remote, so you may be recording to the wrong org.`,
+    "  Fix: run `memlin login` to refresh your accounts, then `memlin add-project`",
+    "  (or `memlin link <correct-org>`)." + (input.hazard === "block" ? ` To record here anyway, set ${ALLOW_ACCOUNT_MISMATCH_ENV}=1.` : "")
+  ].join("\n");
+}
+async function resolveProject(api, cwd, configProjectId) {
+  const absCwd = path11.resolve(cwd);
+  const remotes = detectGitRemotes(cwd);
+  const hasGitRemote = remotes.length > 0;
+  let serverFailure;
+  try {
+    const result = await api.resolveProject({
+      // Primary remote (back-compat with the single-remote server path).
+      git_remote: remotes[0] ?? null,
+      // All detected remotes — for the workspace-root-of-repos case, this is
+      // every sibling repo so the server resolves to the owning project.
+      git_remotes: remotes,
+      cwd: absCwd
+    });
+    if (result.project_id) {
+      return {
+        project_id: result.project_id,
+        project_name: result.name,
+        account_id: result.account_id,
+        reason: result.reason === "none" ? "config" : result.reason,
+        hasGitRemote,
+        enforce_done_deployed: result.enforce_done_deployed
+      };
+    }
+  } catch (e) {
+    serverFailure = summarizeBackendFailure(e) ?? void 0;
+  }
+  if (configProjectId) {
+    const localBinding = await findWorkspaceBinding(absCwd).catch(() => null);
+    if (localBinding?.binding.project_id === configProjectId) {
+      return {
+        project_id: configProjectId,
+        project_name: null,
+        account_id: null,
+        reason: "config",
+        hasGitRemote,
+        server_failure: serverFailure
+      };
+    }
+  }
+  return {
+    project_id: null,
+    project_name: null,
+    account_id: null,
+    reason: "none",
+    hasGitRemote,
+    server_failure: serverFailure
+  };
+}
+function readGitRemote(cwd) {
+  const read = (file2) => {
+    const stat = lstatSync(file2);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024)
+      throw new Error("Unsupported Git metadata");
+    return readFileSync2(file2, "utf8");
+  };
+  try {
+    let root = path11.resolve(cwd);
+    for (; ; ) {
+      const marker = path11.join(root, ".git");
+      if (existsSync2(marker)) {
+        const info = lstatSync(marker);
+        if (info.isSymbolicLink()) return null;
+        let directory = marker;
+        if (info.isFile()) {
+          const match = /^gitdir:\s*(.+)$/m.exec(read(marker));
+          if (!match) return null;
+          directory = path11.resolve(root, match[1].trim());
+        }
+        const common2 = path11.join(directory, "commondir");
+        if (existsSync2(common2)) directory = path11.resolve(directory, read(common2).trim());
+        let origin = false;
+        for (const line of read(path11.join(directory, "config")).split(/\r?\n/)) {
+          if (/^\s*\[/.test(line)) origin = /^\s*\[remote\s+"origin"\]\s*(?:[#;].*)?$/.test(line);
+          else if (origin) {
+            const match = /^\s*url\s*=\s*(.*?)\s*$/.exec(line);
+            if (match) return normalizeGitRemote(match[1].replace(/^"(.*)"$/, "$1"));
+          }
+        }
+        return null;
+      }
+      const parent = path11.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
+  } catch {
+    return null;
+  }
+}
+function detectGitRemotes(cwd) {
+  const enclosing = readGitRemote(cwd);
+  if (enclosing) return [enclosing];
+  const out = [];
+  try {
+    let scanned = 0;
+    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
+      if (scanned >= MAX_WORKSPACE_SCAN) break;
+      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
+        continue;
+      }
+      scanned++;
+      const child = path11.join(cwd, entry.name);
+      if (!existsSync2(path11.join(child, ".git"))) continue;
+      const remote = readGitRemote(child);
+      if (remote && !out.includes(remote)) out.push(remote);
+    }
+  } catch {
+  }
+  return out;
+}
+function isWorkspaceActive(input) {
+  return Boolean(input.resolvedProjectId) || input.workspaceBound;
+}
+function effectiveAccountId(input) {
+  return input.resolvedAccountId ?? input.configAccountId;
+}
+var ALLOW_ACCOUNT_MISMATCH_ENV, MAX_WORKSPACE_SCAN;
+var init_project_resolver = __esm({
+  "packages/plugin-core/dist/project-resolver.js"() {
+    "use strict";
+    init_runtime_shared();
+    init_workspace_binding();
+    init_backend_error();
+    ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
+    MAX_WORKSPACE_SCAN = 64;
+  }
+});
+
+// packages/plugin-core/dist/session-feature.js
+import { execFileSync } from "node:child_process";
+function validSession(value) {
+  return !!value && value.length <= 256;
+}
+function readFeatureBranch(cwd) {
+  try {
+    const raw = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 2e3
+    }).trim();
+    return raw.length <= 300 ? featureBranch(raw) : null;
+  } catch {
+    return null;
+  }
+}
+function cacheSessionFeature(state, identity, active, now = Date.now()) {
+  if (!validSession(identity.sessionId)) return;
+  if (!identity.accountId || !identity.projectId || !active || !UUID2.test(active.id) || !["pin", "handoff", "branch"].includes(active.via)) {
+    delete state.session_features?.[identity.sessionId];
+    return;
+  }
+  const branch = featureBranch(identity.gitBranch);
+  if (active.via === "branch" && !branch) {
+    delete state.session_features?.[identity.sessionId];
+    return;
+  }
+  const entries = state.session_features ??= /* @__PURE__ */ Object.create(null);
+  entries[identity.sessionId] = {
+    feature_id: active.id,
+    title: active.title.slice(0, 100),
+    via: active.via,
+    account_id: identity.accountId,
+    project_id: identity.projectId,
+    git_branch: branch,
+    at: now
+  };
+  Object.entries(entries).sort(([, a], [, b]) => b.at - a.at).slice(MAX_LAST_RESOLVE_SESSIONS).forEach(([id]) => {
+    delete entries[id];
+  });
+}
+function getSessionFeature(state, identity, now = Date.now()) {
+  if (!validSession(identity.sessionId) || !identity.accountId || !identity.projectId) return null;
+  const entry = state.session_features?.[identity.sessionId];
+  if (!entry || entry.account_id !== identity.accountId || entry.project_id !== identity.projectId || !UUID2.test(entry.feature_id) || !["pin", "handoff", "branch"].includes(entry.via) || !Number.isFinite(entry.at) || entry.at > now || now - entry.at >= TTL || entry.via === "branch" && (!entry.git_branch || entry.git_branch !== featureBranch(identity.gitBranch)))
+    return null;
+  return entry;
+}
+async function recordSessionFeature(identity, active) {
+  if (!validSession(identity.sessionId)) return;
+  await updateState((state) => cacheSessionFeature(state, identity, active)).catch(() => void 0);
+}
+async function sessionFeatureCaptureFields(identity) {
+  const entry = getSessionFeature(await readState(), identity);
+  const branch = featureBranch(identity.gitBranch);
+  return {
+    ...validSession(identity.sessionId) ? { session_id: identity.sessionId } : {},
+    ...branch ? { git_branch: branch } : {},
+    ...entry ? { feature_id: entry.feature_id } : {}
+  };
+}
+var TTL, UUID2;
+var init_session_feature = __esm({
+  "packages/plugin-core/dist/session-feature.js"() {
+    "use strict";
+    init_dist();
+    init_state();
+    TTL = 14 * 864e5;
+    UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   }
 });
 
@@ -27870,12 +28459,25 @@ async function pushPlanFile(api, file2, opts = {}) {
       created: false
     };
   }
+  const sessionId = opts.sessionId ?? process.env.MEMLIN_SESSION_ID ?? null;
+  let projectId = opts.projectId ?? null;
+  if (!projectId && sessionId && opts.cwd && opts.accountId) {
+    const resolved = await resolveProject(api, opts.cwd, null).catch(() => null);
+    if (resolved?.account_id === opts.accountId) projectId = resolved.project_id;
+  }
+  const featureFields = await sessionFeatureCaptureFields({
+    accountId: opts.accountId,
+    projectId,
+    sessionId,
+    gitBranch: opts.gitBranch === void 0 ? readFeatureBranch(opts.cwd ?? process.cwd()) : opts.gitBranch
+  });
   const result = await api.pushPlan(
     {
       title,
       body,
       cwd: opts.cwd ?? null,
-      git_remote: opts.gitRemote ?? null
+      git_remote: opts.gitRemote ?? null,
+      ...featureFields
     },
     opts.accountId ? { accountId: opts.accountId } : {}
   );
@@ -27983,6 +28585,7 @@ async function enqueuePlanPush(file2, opts = {}) {
       cwd: opts.cwd ?? prior?.cwd ?? null,
       git_remote: opts.gitRemote ?? prior?.git_remote ?? null,
       session_id: opts.sessionId ?? prior?.session_id ?? null,
+      git_branch: opts.cwd ? readFeatureBranch(opts.cwd) : prior?.git_branch ?? null,
       first_edit_at: prior?.first_edit_at ?? now,
       last_edit_at: now,
       ...prior?.attempts ? { attempts: prior.attempts } : {}
@@ -28024,6 +28627,8 @@ async function flushPlanPushes(api, opts = {}) {
       const result = await pushPlanFile(api, file2, {
         ...entry.cwd ? { cwd: entry.cwd } : {},
         gitRemote: entry.git_remote,
+        sessionId: entry.session_id,
+        gitBranch: entry.git_branch,
         ...opts.host ? { host: opts.host } : {},
         ...opts.accountId ? { accountId: opts.accountId } : {}
       });
@@ -28141,6 +28746,8 @@ var init_plan_sync = __esm({
     init_state();
     init_host();
     init_light_gate();
+    init_session_feature();
+    init_project_resolver();
     DEFAULT_PLAN_SETTLE_MS = 9e4;
     PLAN_PUSH_CLAIM_TTL_MS = 12e4;
     PLAN_PUSH_MAX_ATTEMPTS = 5;
@@ -28565,7 +29172,7 @@ var PLUGIN_RUNTIME_TIMEOUT_MS = 150;
 var VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/;
 var HOSTS3 = /* @__PURE__ */ new Set(["cursor", "antigravity", "codex", "claude-code"]);
 function ownVersion() {
-  const version2 = "0.2.80";
+  const version2 = "0.2.83";
   return typeof version2 === "string" && VERSION.test(version2) ? version2 : null;
 }
 async function reportPluginRuntime(report) {
@@ -28731,153 +29338,8 @@ function stateRow(d, h, at) {
   };
 }
 
-// packages/plugin-core/dist/project-resolver.js
-init_runtime_shared();
-init_workspace_binding();
-init_backend_error();
-import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2, lstatSync } from "node:fs";
-import path11 from "node:path";
-var ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
-function allowAccountMismatch(env = process.env) {
-  const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
-  return v === "1" || v === "true" || v === "yes";
-}
-function accountBindingHazard(r, opts = {}) {
-  if (!r.hasGitRemote || !r.project_id) return "none";
-  if (r.reason === "local-path") return opts.allowMismatch ? "warn" : "block";
-  if (r.reason === "config") return "warn";
-  return "none";
-}
-function formatAccountMismatchWarning(input) {
-  if (input.hazard === "none") return null;
-  const acct = input.accountName ? `"${input.accountName}"` : "this account";
-  const proj = input.projectName ? `"${input.projectName}"` : "a project";
-  const head = input.hazard === "block" ? "Memlin: account-binding mismatch \u2014 capture paused." : "Memlin: account-binding check.";
-  return [
-    head,
-    `  This repo has a git remote, but it resolved to ${proj} under ${acct} via ${input.reason} \u2014`,
-    `  that project does not own your git remote, so you may be recording to the wrong org.`,
-    "  Fix: run `memlin login` to refresh your accounts, then `memlin add-project`",
-    "  (or `memlin link <correct-org>`)." + (input.hazard === "block" ? ` To record here anyway, set ${ALLOW_ACCOUNT_MISMATCH_ENV}=1.` : "")
-  ].join("\n");
-}
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path11.resolve(cwd);
-  const remotes = detectGitRemotes(cwd);
-  const hasGitRemote = remotes.length > 0;
-  let serverFailure;
-  try {
-    const result = await api.resolveProject({
-      // Primary remote (back-compat with the single-remote server path).
-      git_remote: remotes[0] ?? null,
-      // All detected remotes — for the workspace-root-of-repos case, this is
-      // every sibling repo so the server resolves to the owning project.
-      git_remotes: remotes,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason,
-        hasGitRemote,
-        enforce_done_deployed: result.enforce_done_deployed
-      };
-    }
-  } catch (e) {
-    serverFailure = summarizeBackendFailure(e) ?? void 0;
-  }
-  if (configProjectId) {
-    const localBinding = await findWorkspaceBinding(absCwd).catch(() => null);
-    if (localBinding?.binding.project_id === configProjectId) {
-      return {
-        project_id: configProjectId,
-        project_name: null,
-        account_id: null,
-        reason: "config",
-        hasGitRemote,
-        server_failure: serverFailure
-      };
-    }
-  }
-  return {
-    project_id: null,
-    project_name: null,
-    account_id: null,
-    reason: "none",
-    hasGitRemote,
-    server_failure: serverFailure
-  };
-}
-function readGitRemote(cwd) {
-  const read = (file2) => {
-    const stat = lstatSync(file2);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024)
-      throw new Error("Unsupported Git metadata");
-    return readFileSync2(file2, "utf8");
-  };
-  try {
-    let root = path11.resolve(cwd);
-    for (; ; ) {
-      const marker = path11.join(root, ".git");
-      if (existsSync2(marker)) {
-        const info = lstatSync(marker);
-        if (info.isSymbolicLink()) return null;
-        let directory = marker;
-        if (info.isFile()) {
-          const match = /^gitdir:\s*(.+)$/m.exec(read(marker));
-          if (!match) return null;
-          directory = path11.resolve(root, match[1].trim());
-        }
-        const common2 = path11.join(directory, "commondir");
-        if (existsSync2(common2)) directory = path11.resolve(directory, read(common2).trim());
-        let origin = false;
-        for (const line of read(path11.join(directory, "config")).split(/\r?\n/)) {
-          if (/^\s*\[/.test(line)) origin = /^\s*\[remote\s+"origin"\]\s*(?:[#;].*)?$/.test(line);
-          else if (origin) {
-            const match = /^\s*url\s*=\s*(.*?)\s*$/.exec(line);
-            if (match) return normalizeGitRemote(match[1].replace(/^"(.*)"$/, "$1"));
-          }
-        }
-        return null;
-      }
-      const parent = path11.dirname(root);
-      if (parent === root) return null;
-      root = parent;
-    }
-  } catch {
-    return null;
-  }
-}
-var MAX_WORKSPACE_SCAN = 64;
-function detectGitRemotes(cwd) {
-  const enclosing = readGitRemote(cwd);
-  if (enclosing) return [enclosing];
-  const out = [];
-  try {
-    let scanned = 0;
-    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
-      if (scanned >= MAX_WORKSPACE_SCAN) break;
-      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
-        continue;
-      }
-      scanned++;
-      const child = path11.join(cwd, entry.name);
-      if (!existsSync2(path11.join(child, ".git"))) continue;
-      const remote = readGitRemote(child);
-      if (remote && !out.includes(remote)) out.push(remote);
-    }
-  } catch {
-  }
-  return out;
-}
-function isWorkspaceActive(input) {
-  return Boolean(input.resolvedProjectId) || input.workspaceBound;
-}
-function effectiveAccountId(input) {
-  return input.resolvedAccountId ?? input.configAccountId;
-}
+// apps/cli-plugin/src/hooks/session-start.ts
+init_project_resolver();
 
 // packages/plugin-core/dist/session-banner.js
 init_state();
@@ -28973,6 +29435,7 @@ async function buildSessionBanner(binding, opts = { authenticated: true }) {
 
 // packages/plugin-core/dist/handoffs.js
 init_host();
+init_session_feature();
 import { createHash as createHash2 } from "node:crypto";
 async function acceptPendingHandoffContext(api, projectId, opts = {}) {
   const targetAgentKind = resolveHost().kind;
@@ -29005,9 +29468,20 @@ async function acceptPendingHandoffContext(api, projectId, opts = {}) {
     ...opts.sessionId ? { sessionId: opts.sessionId } : {}
   }).catch(() => null);
   if (!accepted || accepted.id !== handoff.id || accepted.status !== "accepted") return null;
-  return renderHandoffContext(handoff);
+  const binding = accepted.feature_binding;
+  const active = binding?.bound && binding.feature_id && (binding.via === "pin" || binding.via === "handoff" || binding.via === "branch") ? { id: binding.feature_id, title: binding.feature_id, via: binding.via } : null;
+  if (active)
+    await recordSessionFeature(
+      {
+        accountId: opts.accountId,
+        projectId: handoff.project_id,
+        sessionId: opts.sessionId
+      },
+      active
+    );
+  return renderHandoffContext(handoff, active?.id);
 }
-function renderHandoffContext(handoff) {
+function renderHandoffContext(handoff, activeFeatureId) {
   return [
     "<memlin-handoff>",
     "# Assigned handoff accepted by Memlin session start.",
@@ -29016,6 +29490,7 @@ function renderHandoffContext(handoff) {
     handoff.packet_markdown,
     "",
     `handoff_id: ${handoff.id}`,
+    ...activeFeatureId ? [`active_feature_id: ${activeFeatureId}`] : [],
     "</memlin-handoff>"
   ].join("\n");
 }
@@ -29023,6 +29498,7 @@ function renderHandoffContext(handoff) {
 // packages/plugin-core/dist/heartbeat.js
 init_client();
 init_host();
+init_project_resolver();
 import crypto5 from "node:crypto";
 import { promises as fs8 } from "node:fs";
 import os9 from "node:os";
@@ -29140,6 +29616,7 @@ import path17 from "node:path";
 
 // packages/plugin-core/dist/edit-activity.js
 init_client();
+init_project_resolver();
 import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import path16 from "node:path";
@@ -29160,7 +29637,7 @@ import {
 } from "node:fs";
 import os10 from "node:os";
 import path15 from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync as execFileSync2 } from "node:child_process";
 
 // packages/plugin-core/dist/trigger-memories.js
 init_workspace_binding();

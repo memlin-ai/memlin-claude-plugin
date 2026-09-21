@@ -18,3 +18,5 @@ node "${CLAUDE_PLUGIN_ROOT}/dist/cli/inbox.js" "$ARGUMENTS"
 - `/memlin-inbox reject <id>` — soft-reject a proposal (kept for scribe-quality analysis, not surfaced).
 
 `<id>` is the 8-character prefix shown in the list. Proposals are also reviewable in the web inbox at `/app/<account>/inbox`.
+
+When a proposal has a suggested filing, the inbox shows its feature title and complete ID. Accept with `--feature <feature-id>` to choose an existing active feature, or `--no-feature` to keep the document unfiled and prevent automatic relinking. These choices apply to document proposals; use the document page to change filing later.
