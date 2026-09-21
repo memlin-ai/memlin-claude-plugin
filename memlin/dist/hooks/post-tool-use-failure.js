@@ -3564,7 +3564,7 @@ var init_workspace_binding = __esm({
 // packages/plugin-core/dist/edit-broker.js
 import {
   mkdtempSync,
-  readFileSync as readFileSync4,
+  readFileSync as readFileSync5,
   rmSync as rmSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
@@ -23589,18 +23589,17 @@ function releaseLocalWriteLeases(identity, sessionId, paths) {
 
 // packages/plugin-core/dist/edit-intent.js
 import crypto4 from "node:crypto";
-import { readFileSync as readFileSync3 } from "node:fs";
+import { readFileSync as readFileSync4 } from "node:fs";
 import path10 from "node:path";
 
 // packages/plugin-core/dist/edit-activity.js
-import { execSync as execSync2 } from "node:child_process";
+import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import path9 from "node:path";
 import os7 from "node:os";
 
 // packages/plugin-core/dist/project-resolver.js
-import { execSync } from "node:child_process";
-import { existsSync as existsSync2, readdirSync } from "node:fs";
+import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3, lstatSync } from "node:fs";
 import path8 from "node:path";
 init_workspace_binding();
 
@@ -23644,7 +23643,7 @@ function editedPathsFromHook(toolName, toolInput) {
 }
 function gitToplevel(cwd) {
   try {
-    const top = execSync2("git rev-parse --show-toplevel", {
+    const top = execSync("git rev-parse --show-toplevel", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],

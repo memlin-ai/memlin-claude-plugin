@@ -25237,7 +25237,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.78";
+  cachedAgentVersion = "0.2.79";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26655,6 +26655,44 @@ async function takeSessionDecisions(opts) {
 
 // apps/cli-plugin/src/hooks/user-prompt-submit.ts
 init_companion_client();
+
+// packages/plugin-core/dist/plugin-runtime.js
+init_companion_client();
+import { createHash, randomUUID as randomUUID4 } from "node:crypto";
+var PLUGIN_RUNTIME_TIMEOUT_MS = 150;
+var VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/;
+var HOSTS3 = /* @__PURE__ */ new Set(["cursor", "antigravity", "codex", "claude-code"]);
+function ownVersion() {
+  const version2 = "0.2.79";
+  return typeof version2 === "string" && VERSION.test(version2) ? version2 : null;
+}
+async function reportPluginRuntime(report) {
+  try {
+    return (await companionRequest("runtime.report", report, {
+      timeoutMs: PLUGIN_RUNTIME_TIMEOUT_MS
+    }))?.accepted === true;
+  } catch {
+    return false;
+  }
+}
+function reportPluginHookActivity(host, input, cwd) {
+  const version2 = ownVersion();
+  if (!version2 || !HOSTS3.has(host) || !cwd || !input || typeof input !== "object" || Array.isArray(input))
+    return;
+  const payload = input;
+  const session = payload.session_id ?? payload.conversation_id ?? payload.conversationId;
+  if (typeof session !== "string" || session.length === 0 || session.length > 256) return;
+  const instance = createHash("sha256").update(JSON.stringify([host, cwd, session, version2])).digest("hex");
+  void reportPluginRuntime({
+    host,
+    plugin_version: version2,
+    instance_id: instance,
+    source: "hook",
+    event: payload.hook_event_name === "sessionEnd" ? "end" : "activity"
+  });
+}
+
+// apps/cli-plugin/src/hooks/user-prompt-submit.ts
 var hookDir = path11.dirname(fileURLToPath2(import.meta.url));
 var RESOLVE_BIN = path11.resolve(hookDir, "../cli/resolve.js");
 var PULL_PLANS_BIN = path11.resolve(hookDir, "../cli/pull-plans.js");
@@ -26719,6 +26757,7 @@ async function main() {
   }
   const prompt = payload.prompt;
   const cwd = payload.cwd || process.cwd();
+  reportPluginHookActivity("claude-code", payload, cwd);
   const sessionId = payload.session_id ?? null;
   if (isIgnorablePrompt(prompt)) {
     exitHook(0);
@@ -26737,13 +26776,7 @@ async function main() {
   const scribeNotice = (await takeSessionDecisions({ sessionId, host: "claude-code", cwd })).block + await takeCorrectionNotice(sessionId ?? void 0) + await takeScribeNotice(sessionId ?? void 0);
   try {
     const state = await readState();
-    const continuation = continuationForPrompt(
-      state,
-      prompt,
-      cwd,
-      "claude-code",
-      sessionId
-    );
+    const continuation = continuationForPrompt(state, prompt, cwd, "claude-code", sessionId);
     if (continuation) {
       process.stdout.write(scribeNotice + buildContinuityMarker(continuation.audit_id));
       exitHook(0);

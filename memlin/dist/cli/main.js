@@ -26593,7 +26593,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.78";
+  cachedAgentVersion = "0.2.79";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -28418,8 +28418,7 @@ focused on the reader side.
 });
 
 // packages/plugin-core/src/project-resolver.ts
-import { execSync } from "node:child_process";
-import { existsSync as existsSync2, readdirSync } from "node:fs";
+import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2, lstatSync } from "node:fs";
 import path11 from "node:path";
 function allowAccountMismatch(env = process.env) {
   const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
@@ -28514,14 +28513,41 @@ async function resolveProject(api, cwd, configProjectId) {
   };
 }
 function readGitRemote(cwd) {
+  const read2 = (file2) => {
+    const stat = lstatSync(file2);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024)
+      throw new Error("Unsupported Git metadata");
+    return readFileSync2(file2, "utf8");
+  };
   try {
-    const url2 = execSync("git remote get-url origin", {
-      windowsHide: true,
-      cwd,
-      stdio: ["ignore", "pipe", "ignore"],
-      encoding: "utf8"
-    }).trim();
-    return normalizeGitRemote(url2);
+    let root = path11.resolve(cwd);
+    for (; ; ) {
+      const marker = path11.join(root, ".git");
+      if (existsSync2(marker)) {
+        const info2 = lstatSync(marker);
+        if (info2.isSymbolicLink()) return null;
+        let directory = marker;
+        if (info2.isFile()) {
+          const match = /^gitdir:\s*(.+)$/m.exec(read2(marker));
+          if (!match) return null;
+          directory = path11.resolve(root, match[1].trim());
+        }
+        const common2 = path11.join(directory, "commondir");
+        if (existsSync2(common2)) directory = path11.resolve(directory, read2(common2).trim());
+        let origin = false;
+        for (const line of read2(path11.join(directory, "config")).split(/\r?\n/)) {
+          if (/^\s*\[/.test(line)) origin = /^\s*\[remote\s+"origin"\]\s*(?:[#;].*)?$/.test(line);
+          else if (origin) {
+            const match = /^\s*url\s*=\s*(.*?)\s*$/.exec(line);
+            if (match) return normalizeGitRemote(match[1].replace(/^"(.*)"$/, "$1"));
+          }
+        }
+        return null;
+      }
+      const parent = path11.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
   } catch {
     return null;
   }
@@ -30965,7 +30991,7 @@ import {
   existsSync as existsSync7,
   mkdirSync,
   openSync,
-  readFileSync as readFileSync2,
+  readFileSync as readFileSync3,
   realpathSync,
   renameSync,
   rmSync,
@@ -30981,7 +31007,7 @@ var init_edit_broker_local = __esm({
 });
 
 // packages/plugin-core/src/edit-activity.ts
-import { execSync as execSync2 } from "node:child_process";
+import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import path21 from "node:path";
 import os15 from "node:os";
@@ -31584,7 +31610,7 @@ var init_pull_plans = __esm({
 
 // packages/plugin-core/src/cli/push-plan.ts
 var push_plan_exports = {};
-import { execSync as execSync3 } from "node:child_process";
+import { execSync as execSync2 } from "node:child_process";
 import { promises as fs19 } from "node:fs";
 import path26 from "node:path";
 function parseArgs2(argv) {
@@ -31641,7 +31667,7 @@ function splitTitleAndBody(raw) {
 }
 function readGitRemote2(cwd) {
   try {
-    const url2 = execSync3("git remote get-url origin", {
+    const url2 = execSync2("git remote get-url origin", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
@@ -31862,10 +31888,10 @@ var init_remember = __esm({
 var bind_plans_exports = {};
 import path27 from "node:path";
 import os17 from "node:os";
-import { execSync as execSync4 } from "node:child_process";
+import { execSync as execSync3 } from "node:child_process";
 function readGitRemote3(cwd) {
   try {
-    const url2 = execSync4("git remote get-url origin", {
+    const url2 = execSync3("git remote get-url origin", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
@@ -32210,7 +32236,7 @@ var init_pending_bundle = __esm({
 });
 
 // packages/plugin-core/src/deploy-broker.ts
-import { existsSync as existsSync9, mkdirSync as mkdirSync2, readFileSync as readFileSync3, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync as existsSync9, mkdirSync as mkdirSync2, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import os19 from "node:os";
 import path30 from "node:path";
 var init_deploy_broker = __esm({
@@ -33194,7 +33220,7 @@ var init_bundle_cache = __esm({
 
 // packages/plugin-core/src/cli/resolve.ts
 var resolve_exports = {};
-import { execSync as execSync5 } from "node:child_process";
+import { execSync as execSync4 } from "node:child_process";
 function printHelp2() {
   console.log(
     [
@@ -33220,7 +33246,7 @@ function printHelp2() {
 }
 function readGitRemote4(cwd) {
   try {
-    const url2 = execSync5("git remote get-url origin", {
+    const url2 = execSync4("git remote get-url origin", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
@@ -33233,7 +33259,7 @@ function readGitRemote4(cwd) {
 }
 function readGitBranch(cwd) {
   try {
-    const branch = execSync5("git rev-parse --abbrev-ref HEAD", {
+    const branch = execSync4("git rev-parse --abbrev-ref HEAD", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
@@ -33524,7 +33550,7 @@ var init_resolve = __esm({
 
 // packages/plugin-core/src/cli/ask.ts
 var ask_exports = {};
-import { execSync as execSync6 } from "node:child_process";
+import { execSync as execSync5 } from "node:child_process";
 function parseArgs3(argv) {
   const positional = [];
   let org;
@@ -33578,7 +33604,7 @@ function printHelp3() {
 }
 function readGitRemote5(cwd) {
   try {
-    const url2 = execSync6("git remote get-url origin", {
+    const url2 = execSync5("git remote get-url origin", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
@@ -35442,7 +35468,7 @@ var init_pin = __esm({
 
 // packages/plugin-core/src/sibling-detect.ts
 import { readdirSync as readdirSync2, existsSync as existsSync10 } from "node:fs";
-import { execSync as execSync7 } from "node:child_process";
+import { execSync as execSync6 } from "node:child_process";
 import path34 from "node:path";
 function childGitRemotes(cwd, deps = {}) {
   const listDirs = deps.listDirs ?? ((p) => {
@@ -35455,7 +35481,7 @@ function childGitRemotes(cwd, deps = {}) {
   const readRemote = deps.readRemote ?? ((repoPath) => {
     try {
       if (!existsSync10(path34.join(repoPath, ".git"))) return null;
-      const url2 = execSync7("git remote get-url origin", {
+      const url2 = execSync6("git remote get-url origin", {
         windowsHide: true,
         cwd: repoPath,
         stdio: ["ignore", "pipe", "ignore"],
@@ -35512,7 +35538,7 @@ var init_sibling_detect = __esm({
 
 // packages/plugin-core/src/cli/add-project.ts
 var add_project_exports = {};
-import { execSync as execSync8 } from "node:child_process";
+import { execSync as execSync7 } from "node:child_process";
 import path35 from "node:path";
 import readline3 from "node:readline";
 function parseArgs5(argv) {
@@ -35565,7 +35591,7 @@ function printHelp7() {
 }
 function readGitRemote6(cwd) {
   try {
-    const url2 = execSync8("git remote get-url origin", {
+    const url2 = execSync7("git remote get-url origin", {
       windowsHide: true,
       cwd,
       stdio: ["ignore", "pipe", "ignore"],
@@ -36849,7 +36875,7 @@ var init_actions_list = __esm({
 
 // packages/plugin-core/src/cli/actions-execute.ts
 var actions_execute_exports = {};
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 function parseArgs10(argv) {
   const positional = [];
   let inputJson = null;
@@ -36883,7 +36909,7 @@ function parseArgs10(argv) {
   if (inputJson === null) {
     if (stdinFlag || !process.stdin.isTTY) {
       try {
-        inputJson = readFileSync4(0, "utf8").trim();
+        inputJson = readFileSync5(0, "utf8").trim();
       } catch (e) {
         return { error: `stdin read failed: ${e instanceof Error ? e.message : e}` };
       }
@@ -285573,7 +285599,7 @@ var init_run_scan = __esm({
 
 // packages/plugin-core/src/cli/scan.ts
 var scan_exports = {};
-import { execSync as execSync9 } from "node:child_process";
+import { execSync as execSync8 } from "node:child_process";
 import path50 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 import { existsSync as existsSync12 } from "node:fs";
@@ -285620,7 +285646,7 @@ Options:
 function gitState(cwd) {
   const try1 = (cmd) => {
     try {
-      return execSync9(cmd, { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 200);
+      return execSync8(cmd, { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim().slice(0, 200);
     } catch {
       return null;
     }
