@@ -24318,6 +24318,24 @@ var NEEDS_YOU_HORIZON_DAYS = 14;
 var HORIZON_MS = NEEDS_YOU_HORIZON_DAYS * 24 * 60 * 60 * 1e3;
 var STALLED_GOAL_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 
+// packages/shared/dist/research-collection.js
+var ResearchCollectionSourceSchema = external_exports.object({
+  url: external_exports.string().url().max(2048).refine((value) => {
+    try {
+      const url2 = new URL(value);
+      return url2.protocol === "https:" && !url2.username && !url2.password && !url2.hash;
+    } catch {
+      return false;
+    }
+  }, "Use a public HTTPS feed URL"),
+  label: external_exports.string().trim().min(1).max(120),
+  category: external_exports.enum(["official", "community"])
+}).strict();
+var ResearchCollectionSchema = external_exports.object({
+  topics: external_exports.array(external_exports.string().trim().min(2).max(100)).min(1).max(10),
+  sources: external_exports.array(ResearchCollectionSourceSchema).min(1).max(4)
+}).strict();
+
 // packages/plugin-core/src/memlin-api-client.ts
 init_auth_refusal();
 import { readFileSync } from "node:fs";
@@ -24465,7 +24483,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.79";
+  cachedAgentVersion = "0.2.80";
   return cachedAgentVersion;
 }
 function agentCapabilities() {

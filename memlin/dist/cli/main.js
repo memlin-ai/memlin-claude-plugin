@@ -25209,6 +25209,31 @@ var init_needs_you_engine = __esm({
   }
 });
 
+// packages/shared/dist/research-collection.js
+var ResearchCollectionSourceSchema, ResearchCollectionSchema;
+var init_research_collection = __esm({
+  "packages/shared/dist/research-collection.js"() {
+    "use strict";
+    init_zod();
+    ResearchCollectionSourceSchema = external_exports.object({
+      url: external_exports.string().url().max(2048).refine((value) => {
+        try {
+          const url2 = new URL(value);
+          return url2.protocol === "https:" && !url2.username && !url2.password && !url2.hash;
+        } catch {
+          return false;
+        }
+      }, "Use a public HTTPS feed URL"),
+      label: external_exports.string().trim().min(1).max(120),
+      category: external_exports.enum(["official", "community"])
+    }).strict();
+    ResearchCollectionSchema = external_exports.object({
+      topics: external_exports.array(external_exports.string().trim().min(2).max(100)).min(1).max(10),
+      sources: external_exports.array(ResearchCollectionSourceSchema).min(1).max(4)
+    }).strict();
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25292,6 +25317,7 @@ var init_dist = __esm({
     init_project_flow_contracts();
     init_needs_you_groups();
     init_needs_you_engine();
+    init_research_collection();
   }
 });
 
@@ -26593,7 +26619,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.79";
+  cachedAgentVersion = "0.2.80";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
