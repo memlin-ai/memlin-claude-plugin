@@ -25867,13 +25867,6 @@ var init_feature_work = __esm({
   }
 });
 
-// packages/shared/dist/personal-scope.js
-var init_personal_scope = __esm({
-  "packages/shared/dist/personal-scope.js"() {
-    "use strict";
-  }
-});
-
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25966,7 +25959,6 @@ var init_dist = __esm({
     init_files();
     init_feature_binding();
     init_feature_work();
-    init_personal_scope();
   }
 });
 
@@ -27268,7 +27260,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.87";
+  cachedAgentVersion = "0.2.86";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
