@@ -8485,6 +8485,127 @@ var init_action_metadata = __esm({
 });
 
 // packages/shared/dist/task-classifier.js
+function deployCommands(command) {
+  const commands = [];
+  let words = [];
+  let word = "";
+  let started = false;
+  let quote = "";
+  let heredocs = [];
+  const flushWord = () => {
+    if (started) words.push(word);
+    word = "";
+    started = false;
+  };
+  const flushCommand = () => {
+    flushWord();
+    if (words.length) commands.push(words);
+    words = [];
+  };
+  for (let i = 0; i < command.length; i++) {
+    const c = command.charAt(i);
+    if (quote) {
+      if (c === quote) quote = "";
+      else if (c === "\\" && quote === '"' && /["\\$`\n]/.test(command[i + 1] ?? "")) {
+        const next = command[++i];
+        if (next !== "\n") word += next;
+      } else word += c;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      started = true;
+    } else if (c === "\\") {
+      const next = command[++i];
+      if (next && next !== "\n") {
+        word += next;
+        started = true;
+      }
+    } else if (c === "#" && !started) {
+      const end = command.indexOf("\n", i);
+      i = end < 0 ? command.length : end - 1;
+    } else if (c === "<" && command[i + 1] === "<") {
+      const match = /^<<(-?)\s*(?:'([^']+)'|"([^"]+)"|([\w-]+))/.exec(command.slice(i));
+      if (!match) return commands;
+      flushWord();
+      heredocs.push({ delimiter: match[2] ?? match[3] ?? match[4] ?? "", tabs: !!match[1] });
+      i += match[0].length - 1;
+    } else if (";|&\n".includes(c)) {
+      flushCommand();
+      if (c === "\n" && heredocs.length) {
+        for (const doc of heredocs) {
+          let found = false;
+          while (++i < command.length) {
+            const end = command.indexOf("\n", i);
+            const lineEnd = end < 0 ? command.length : end;
+            let line = command.slice(i, lineEnd).replace(/\r$/, "");
+            if (doc.tabs) line = line.replace(/^\t+/, "");
+            i = lineEnd;
+            if (line === doc.delimiter) {
+              found = true;
+              break;
+            }
+          }
+          if (!found) return commands;
+        }
+        heredocs = [];
+      }
+    } else if (/\s/.test(c)) flushWord();
+    else {
+      word += c;
+      started = true;
+    }
+  }
+  if (!quote) flushCommand();
+  return commands.map((argv) => {
+    let i = 0;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i] ?? "")) i++;
+    if (argv[i] === "env") {
+      i++;
+      while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(argv[i] ?? "")) i++;
+    }
+    return argv.slice(i);
+  });
+}
+function foregroundCommand(argv) {
+  if (!argv.length || /\s/.test(argv[0] ?? "")) return false;
+  const script = /^(?:bash|sh)$/.test(argv[0] ?? "") ? argv[1] : argv[0];
+  if (/^(?:[\w./-]*\/)?deploy(?:-(?:web|admin|prod|mcp|scanners)(?:-local)?)?(?:\.[a-z]+)?$/i.test(
+    script ?? ""
+  ))
+    return true;
+  if (argv[0] === "az") return argv[1] === "webapp" && argv[2] === "deploy";
+  if (argv[0] === "azd") return argv[1] === "deploy";
+  switch (argv[0]) {
+    case "vercel":
+      return argv[1] === "deploy" || argv[1] === "--prod";
+    case "fly":
+    case "flyctl":
+    case "sst":
+    case "serverless":
+    case "sls":
+      return argv[1] === "deploy";
+    case "wrangler":
+      return argv[1] === "deploy" || argv[1] === "publish";
+    case "npm":
+    case "pnpm":
+    case "yarn":
+      return /^deploy(?::[\w-]+)?$/.test(argv[argv[1] === "run" ? 2 : 1] ?? "");
+    case "make":
+      return argv[1] === "deploy";
+    case "git":
+      return argv[1] === "push" && /^\S*(?:deploy|prod|production|heroku)$/.test(argv[2] ?? "");
+    default:
+      return false;
+  }
+}
+function triggerCommand(argv) {
+  return argv[0] === "gh" && argv[1] === "workflow" && argv[2] === "run" && /\b(?:deploy|prod|production|release)\b/i.test(argv[3] ?? "");
+}
+function isDeployCommand(command) {
+  if (!command) return false;
+  return deployCommands(command).some((argv) => foregroundCommand(argv) || triggerCommand(argv));
+}
 var init_task_classifier = __esm({
   "packages/shared/dist/task-classifier.js"() {
     "use strict";
@@ -8843,6 +8964,21 @@ var init_model_prices = __esm({
       // $3/$15 on the strength of the old launch announcement — that over-bills
       // every Sonnet 5 turn by 50%.
       "claude-sonnet-5": { inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+      // Opus 5.5 shipped after the 5 pair and is the current default Anthropic
+      // recommends "for most workloads" — which makes it a current Claude Code
+      // default too, and therefore a model that arrives in ingested telemetry
+      // whether or not this app ever requests it. Absent until 2026-09-22, it was
+      // the THIRD time an Opus tier priced as $0: Opus at all (fixed 2026-07-23),
+      // Opus 5 (2026-09-02), and this. The pattern is not "we forgot" — it is that
+      // a new tier is invisible here until someone checks the sheet against the
+      // pricing page, so re-verify on every model launch.
+      //
+      // It is also CHEAPER than the tier it replaces ($4/$20 against Opus 5's
+      // $5/$25) and reads cache at 0.05x rather than the standard 0.1x — the
+      // second entry in this sheet to need the override, and the reason the
+      // override is a field rather than a special case for the 5.1 pair.
+      // Verified 2026-09-22 against https://platform.claude.com/docs/en/about-claude/pricing.
+      "claude-opus-5-5": { inputUsdPerMTok: 4, outputUsdPerMTok: 20, cacheReadMultiplier: 0.05 },
       // Opus 5 was absent until 2026-09-02. The app never requests it, but
       // aggregateTurnTiming prices provider-reported models from ingested Claude
       // Code telemetry, where it is a current default — so every Opus 5 turn was
@@ -8895,6 +9031,14 @@ var init_usage_stats = __esm({
     OUTPUT_MULTIPLIER = 0.3;
     SONNET_BLENDED_USD_PER_MTOK = SONNET_INPUT_USD_PER_MTOK + OUTPUT_MULTIPLIER * SONNET_OUTPUT_USD_PER_MTOK;
     SAVINGS_USD_PER_TOKEN = estCostUsd(1);
+  }
+});
+
+// packages/shared/dist/outcome-reconciliation.js
+var init_outcome_reconciliation = __esm({
+  "packages/shared/dist/outcome-reconciliation.js"() {
+    "use strict";
+    init_usage_stats();
   }
 });
 
@@ -12612,11 +12756,21 @@ var init_review_reasons = __esm({
   }
 });
 
+// packages/shared/dist/ops-watch.js
+var OPS_DIAGNOSE_SEV2_AFTER_MS;
+var init_ops_watch = __esm({
+  "packages/shared/dist/ops-watch.js"() {
+    "use strict";
+    OPS_DIAGNOSE_SEV2_AFTER_MS = 15 * 6e4;
+  }
+});
+
 // packages/shared/dist/entitlements.js
 var COORDINATION_SELF, INDIVIDUAL_KIT, TEAM_KIT, ENTERPRISE_KIT, ENTITLEMENTS_BY_TIER;
 var init_entitlements = __esm({
   "packages/shared/dist/entitlements.js"() {
     "use strict";
+    init_ops_watch();
     init_constants();
     COORDINATION_SELF = [
       "coordination.work_ledger",
@@ -25746,6 +25900,7 @@ var init_dist = __esm({
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
+    init_outcome_reconciliation();
     init_insights_optout();
     init_insight_stats();
     init_model_prices();
@@ -27105,7 +27260,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.83";
+  cachedAgentVersion = "0.2.86";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -27227,7 +27382,7 @@ async function* parseNdjsonEvents(body2) {
 function resolveApiUrl() {
   return process.env.MEMLIN_API_URL?.trim() || DEFAULT_API_URL;
 }
-var DEFAULT_API_URL, cachedAgentVersion, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, NATIVE_MEMORY_BATCH_SIZE, NATIVE_MEMORY_BATCH_CONCURRENCY, NATIVE_MEMORY_REQUEST_TIMEOUT_MS, NATIVE_MEMORY_BATCH_INDEX, RESOLVE_V2_MAX_LINE_BYTES, RETRIABLE_STATUS, RETRIABLE_NETWORK_CODES, MemlinApiClient;
+var DEFAULT_API_URL, cachedAgentVersion, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, NATIVE_MEMORY_BATCH_SIZE, NATIVE_MEMORY_BATCH_CONCURRENCY, NATIVE_MEMORY_REQUEST_TIMEOUT_MS, NATIVE_MEMORY_BATCH_INDEX, RESOLVE_V2_MAX_LINE_BYTES, RETRIABLE_STATUS, RETRIABLE_NETWORK_CODES, LIST_MAX_ROWS, MemlinApiClient;
 var init_memlin_api_client = __esm({
   "packages/plugin-core/src/memlin-api-client.ts"() {
     "use strict";
@@ -27261,6 +27416,7 @@ var init_memlin_api_client = __esm({
       "UND_ERR_BODY_TIMEOUT",
       "UND_ERR_SOCKET"
     ]);
+    LIST_MAX_ROWS = 1e3;
     MemlinApiClient = class {
       constructor(cfg) {
         this.cfg = cfg;
@@ -27269,6 +27425,9 @@ var init_memlin_api_client = __esm({
       /** The configured account (the light-gate cache key when a call names none). */
       get defaultAccountId() {
         return this.cfg.accountId;
+      }
+      nativeSessionHook(input, opts) {
+        return this.request("POST", "/agent-control/hook", input, { ...opts, agentVersion: agentVersion() });
       }
       // ---------- low-level ----------
       async authHeaders(includeAccount = true, override = {}) {
@@ -30213,6 +30372,16 @@ async function sessionFeatureCaptureFields(identity) {
     ...entry ? { feature_id: entry.feature_id } : {}
   };
 }
+function cliSessionFeatureIdentity(input) {
+  const env = input.env ?? process.env;
+  const session = env.MEMLIN_SESSION_ID?.trim();
+  return {
+    accountId: input.accountId,
+    projectId: input.projectId,
+    sessionId: session || null,
+    gitBranch: readFeatureBranch(input.cwd)
+  };
+}
 var TTL, UUID2;
 var init_session_feature = __esm({
   "packages/plugin-core/src/session-feature.ts"() {
@@ -31593,14 +31762,17 @@ async function archiveDestination(trackedRelPath) {
   }
   return `${stem}.${Date.now()}${ext}`;
 }
-async function applyPullToLocal(docs, state, now, rootOverride) {
+async function applyPullToLocal(docs, state, now, rootOverride, opts = {}) {
+  const reconcileMissing = opts.reconcileMissing ?? true;
   const out2 = {
     written: [],
     unchanged: [],
     removed: [],
     archived: [],
     keptEdited: [],
-    citations: {}
+    citations: {},
+    reconciliationSkipped: !reconcileMissing,
+    collisions: {}
   };
   const currentPaths = /* @__PURE__ */ new Set();
   const root = rootOverride ?? resolveHost().homeDir();
@@ -31608,6 +31780,9 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     if (d.kind === "brand_guidelines") continue;
     if (d.kind === "feedback") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
+    if (currentPaths.has(localPath)) {
+      out2.collisions[localPath] = (out2.collisions[localPath] ?? 1) + 1;
+    }
     currentPaths.add(localPath);
     const full = path19.join(root, localPath);
     const contentHash = hash(d.content);
@@ -31633,6 +31808,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     };
   }
   for (const tracked of Object.keys(state.documents)) {
+    if (!reconcileMissing) break;
     if (currentPaths.has(tracked)) continue;
     const full = path19.join(root, tracked);
     if (existsSync6(full)) {
@@ -31779,6 +31955,13 @@ async function readCompiledTriggers(file2 = compiledTriggersPath()) {
   } catch {
     return empty;
   }
+}
+async function refreshWorkspaceTriggers(args2) {
+  const docs = await args2.api.listDocuments(
+    { kinds: ["memory"], has_trigger: true, project_id: args2.projectId },
+    args2.callOpts ?? {}
+  );
+  return compileWorkspaceTriggers({ ...args2, docs });
 }
 async function compileWorkspaceTriggers(args2) {
   const file2 = args2.file ?? compiledTriggersPath();
@@ -31955,7 +32138,15 @@ async function main5() {
     project_id: resolved.project_id
   });
   const remote = [...m1, ...m2];
-  const result = await applyPullToLocal(remote, state, now);
+  const listTruncated = m1.length >= LIST_MAX_ROWS || m2.length >= LIST_MAX_ROWS;
+  const result = await applyPullToLocal(remote, state, now, void 0, {
+    reconcileMissing: !listTruncated
+  });
+  if (result.reconciliationSkipped) {
+    console.log(
+      `  \u26A0 server returned its maximum of ${LIST_MAX_ROWS} documents \u2014 the list is truncated, so nothing was archived this run.`
+    );
+  }
   for (const p of result.written) {
     console.log(`  \u2193 ${p}`);
     const cite = result.citations[p];
@@ -31969,11 +32160,11 @@ async function main5() {
   for (const p of result.keptEdited) console.log(`  \u2022 ${p} (kept \u2014 locally edited)`);
   await writeState(state);
   try {
-    const compiled = await compileWorkspaceTriggers({
+    const compiled = await refreshWorkspaceTriggers({
+      api,
       workspaceRoot: await workspaceRootFor(runtimeCwd()),
       accountId: resolved.account_id ?? config2.account_id,
-      projectId: resolved.project_id,
-      docs: m1
+      projectId: resolved.project_id
     });
     if (compiled.compiled > 0 || compiled.skipped > 0) {
       console.log(
@@ -32018,6 +32209,7 @@ var init_sync = __esm({
     init_state();
     init_apply();
     init_client();
+    init_memlin_api_client();
     init_trigger_memories2();
     init_dist();
     init_resolver_skill();
@@ -32059,23 +32251,37 @@ async function main6() {
     console.error("usage: memlin pull [--target <dir>]");
     process.exit(2);
   }
+  const listTruncated = memoryAndSkills.length >= LIST_MAX_ROWS || goals.length >= LIST_MAX_ROWS;
   const state = targetDir ? { documents: {} } : await readState();
   const result = await applyPullToLocal(
     docs,
     state,
     (/* @__PURE__ */ new Date()).toISOString(),
-    targetDir ? path24.resolve(runtimeCwd(), targetDir) : void 0
+    targetDir ? path24.resolve(runtimeCwd(), targetDir) : void 0,
+    { reconcileMissing: !listTruncated }
   );
+  if (result.reconciliationSkipped) {
+    console.log(
+      `  \u26A0 server returned its maximum of ${LIST_MAX_ROWS} documents \u2014 the list is truncated, so nothing was archived this run (an absent doc cannot be told apart from one past the cap).`
+    );
+  }
+  const collided = Object.entries(result.collisions);
+  if (collided.length > 0) {
+    const overwritten = collided.reduce((n, [, c]) => n + c - 1, 0);
+    console.log(
+      `  \u26A0 ${overwritten} document(s) were overwritten on disk by another document with the same local file name (${collided.length} file name(s) affected) \u2014 typically several memories about one source file. The resolver still sees all of them.`
+    );
+  }
   if (targetDir) {
     console.log(`  (export mode \u2014 wrote under ${targetDir}; sync state untouched)`);
   } else {
     await writeState(state);
     try {
-      const compiled = await compileWorkspaceTriggers({
+      const compiled = await refreshWorkspaceTriggers({
+        api,
         workspaceRoot: await workspaceRootFor(runtimeCwd()),
         accountId: resolved.account_id ?? config2.account_id,
-        projectId: resolved.project_id,
-        docs: memoryAndSkills
+        projectId: resolved.project_id
       });
       if (compiled.compiled > 0 || compiled.skipped > 0) {
         console.log(
@@ -32122,6 +32328,7 @@ var init_pull = __esm({
     init_project_resolver();
     init_state();
     init_client();
+    init_memlin_api_client();
     init_apply();
     init_trigger_memories2();
     main6().catch((err2) => {
@@ -32413,8 +32620,10 @@ async function main9() {
     exitCli(1);
   }
   let accountId = ctx.config.account_id;
+  let projectId = parsed.project ?? null;
   if (parsed.project === void 0) {
     const resolved = await resolveProject(api, cwd, ctx.config.project_id);
+    projectId = resolved.project_id;
     if (!isWorkspaceActive({
       resolvedProjectId: resolved.project_id,
       workspaceBound: ctx.workspaceBound
@@ -32431,6 +32640,9 @@ async function main9() {
     exitCli(0);
   }
   const gitRemote = readGitRemote2(cwd);
+  const featureFields = await sessionFeatureCaptureFields(
+    cliSessionFeatureIdentity({ accountId, projectId, cwd })
+  );
   let result;
   try {
     result = await api.pushPlan(
@@ -32439,6 +32651,7 @@ async function main9() {
         body: body2,
         cwd,
         git_remote: gitRemote,
+        ...featureFields,
         ...parsed.project !== void 0 ? { project_id: parsed.project } : {},
         ...parsed.audit !== void 0 ? { source_audit_id: parsed.audit } : {}
       },
@@ -32463,6 +32676,7 @@ var init_push_plan = __esm({
     "use strict";
     init_client();
     init_light_gate();
+    init_session_feature();
     init_cli_runner();
     init_project_resolver();
     runCliMain(main9, (err2) => {
@@ -32519,6 +32733,9 @@ async function main10() {
     const resolved = await resolveProject(api, cwd, config2.project_id);
     projectId = resolved.project_id;
   }
+  const featureFields = projectId ? await sessionFeatureCaptureFields(
+    cliSessionFeatureIdentity({ accountId: config2.account_id, projectId, cwd })
+  ) : {};
   const result = await api.rememberMemory(
     {
       text,
@@ -32530,7 +32747,8 @@ async function main10() {
       // capture to whatever project matches cwd / git_remote.
       ...useTeam ? { use_project: false } : {},
       cwd,
-      git_remote: detectGitRemotes(cwd)[0] ?? null
+      git_remote: detectGitRemotes(cwd)[0] ?? null,
+      ...featureFields
     },
     { accountId: config2.account_id }
   );
@@ -32575,6 +32793,7 @@ var init_remember = __esm({
     "use strict";
     init_client();
     init_light_gate();
+    init_session_feature();
     init_cli_runner();
     init_project_resolver();
     runCliMain(main10, (err2) => {
@@ -33614,13 +33833,15 @@ function compileBundle(result, parsedTask, agent, options2 = {}) {
       }
       out2.push("");
     }
-    const waiters = b.deploy_waiters ?? [];
+    const waiters = (b.deploy_waiters ?? []).filter((waiter) => isDeployCommand(waiter.task));
     if (waiters.length > 0) {
-      out2.push("## WAITING ON YOU");
+      out2.push("## DEPLOY QUEUE (not yours)");
       out2.push("");
       out2.push(
-        `# ${waiters.length} agent(s) are queued to deploy after you. Finish or release so they can proceed.`
+        `# ${waiters.length} other agent(s) already have a ship parked. Do not run their command.`
       );
+      out2.push("# Do not start a second deploy of the same service and commit.");
+      out2.push("# Merging or pushing does not deploy, and it does not belong in this queue.");
       for (const w of waiters) {
         const release = w.release_id ? ` \xB7 release ${w.release_id}${w.service ? ` (${w.service})` : ""}` : w.service ? ` \xB7 ${w.service}` : "";
         out2.push(
@@ -33630,13 +33851,14 @@ function compileBundle(result, parsedTask, agent, options2 = {}) {
       out2.push("");
     }
     const queued = b.queued_deploy ?? null;
-    if (queued) {
+    if (queued && isDeployCommand(queued.task)) {
       if (queued.status === "ready") {
-        out2.push("## RESUME QUEUED DEPLOY");
+        out2.push("## YOUR PARKED DEPLOY");
         out2.push("");
         out2.push(
-          "# The project deploy lease is free. Run this exact command now \u2014 do not ask the user."
+          "# The lease is free for a deploy you already parked. Run it only if the user asked you to ship this service and HEAD still matches the SHA."
         );
+        out2.push("# If the same service and commit is already running, stop.");
         if (queued.release_id) {
           out2.push(
             `# Release: ${queued.release_id}${queued.service ? ` (${queued.service})` : ""}`
@@ -33653,7 +33875,7 @@ function compileBundle(result, parsedTask, agent, options2 = {}) {
         out2.push("## QUEUED DEPLOY");
         out2.push("");
         out2.push(
-          `# You are in line (${queued.minutes_queued}m). Do not retry the zip; Memlin will inject RESUME QUEUED DEPLOY when the lease drops.`
+          `# You are in line (${queued.minutes_queued}m). Do not retry the zip. The next turn names YOUR PARKED DEPLOY when the lease drops, and only if the user asked for this ship.`
         );
         if (queued.release_id) {
           out2.push(
@@ -41391,22 +41613,6 @@ async function extractMigrations(root) {
 }
 async function extractTopLevelProposals(_root, signals) {
   const out2 = [];
-  if (signals.languages.length > 0 || signals.frameworks.length > 0 || signals.package_managers.length > 0) {
-    out2.push({
-      kind: "skill",
-      title: `Tech stack: ${signals.repo_name}`,
-      body: [
-        `Repository: ${signals.repo_name}`,
-        signals.languages.length > 0 && `Languages: ${signals.languages.join(", ")}`,
-        signals.frameworks.length > 0 && `Frameworks: ${signals.frameworks.join(", ")}`,
-        signals.component_count > 0 && `Components/projects: ${signals.component_count}`,
-        signals.package_managers.length > 0 && `Package managers: ${signals.package_managers.join(", ")}`,
-        signals.has_pnpm_workspace && "Monorepo: pnpm workspaces",
-        signals.has_turbo_repo && "Build orchestration: Turborepo"
-      ].filter(Boolean).join("\n"),
-      source: "repo:tech-stack"
-    });
-  }
   if (signals.readme_excerpt) {
     out2.push({
       kind: "memory",

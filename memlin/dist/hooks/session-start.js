@@ -9232,6 +9232,21 @@ var init_model_prices = __esm({
       // $3/$15 on the strength of the old launch announcement — that over-bills
       // every Sonnet 5 turn by 50%.
       "claude-sonnet-5": { inputUsdPerMTok: 2, outputUsdPerMTok: 10 },
+      // Opus 5.5 shipped after the 5 pair and is the current default Anthropic
+      // recommends "for most workloads" — which makes it a current Claude Code
+      // default too, and therefore a model that arrives in ingested telemetry
+      // whether or not this app ever requests it. Absent until 2026-09-22, it was
+      // the THIRD time an Opus tier priced as $0: Opus at all (fixed 2026-07-23),
+      // Opus 5 (2026-09-02), and this. The pattern is not "we forgot" — it is that
+      // a new tier is invisible here until someone checks the sheet against the
+      // pricing page, so re-verify on every model launch.
+      //
+      // It is also CHEAPER than the tier it replaces ($4/$20 against Opus 5's
+      // $5/$25) and reads cache at 0.05x rather than the standard 0.1x — the
+      // second entry in this sheet to need the override, and the reason the
+      // override is a field rather than a special case for the 5.1 pair.
+      // Verified 2026-09-22 against https://platform.claude.com/docs/en/about-claude/pricing.
+      "claude-opus-5-5": { inputUsdPerMTok: 4, outputUsdPerMTok: 20, cacheReadMultiplier: 0.05 },
       // Opus 5 was absent until 2026-09-02. The app never requests it, but
       // aggregateTurnTiming prices provider-reported models from ingested Claude
       // Code telemetry, where it is a current default — so every Opus 5 turn was
@@ -9284,6 +9299,14 @@ var init_usage_stats = __esm({
     OUTPUT_MULTIPLIER = 0.3;
     SONNET_BLENDED_USD_PER_MTOK = SONNET_INPUT_USD_PER_MTOK + OUTPUT_MULTIPLIER * SONNET_OUTPUT_USD_PER_MTOK;
     SAVINGS_USD_PER_TOKEN = estCostUsd(1);
+  }
+});
+
+// packages/shared/dist/outcome-reconciliation.js
+var init_outcome_reconciliation = __esm({
+  "packages/shared/dist/outcome-reconciliation.js"() {
+    "use strict";
+    init_usage_stats();
   }
 });
 
@@ -12905,11 +12928,21 @@ var init_review_reasons = __esm({
   }
 });
 
+// packages/shared/dist/ops-watch.js
+var OPS_DIAGNOSE_SEV2_AFTER_MS;
+var init_ops_watch = __esm({
+  "packages/shared/dist/ops-watch.js"() {
+    "use strict";
+    OPS_DIAGNOSE_SEV2_AFTER_MS = 15 * 6e4;
+  }
+});
+
 // packages/shared/dist/entitlements.js
 var COORDINATION_SELF, INDIVIDUAL_KIT, TEAM_KIT, ENTERPRISE_KIT, ENTITLEMENTS_BY_TIER;
 var init_entitlements = __esm({
   "packages/shared/dist/entitlements.js"() {
     "use strict";
+    init_ops_watch();
     init_constants();
     COORDINATION_SELF = [
       "coordination.work_ledger",
@@ -25877,6 +25910,7 @@ var init_dist = __esm({
     init_skill_frontmatter();
     init_prompt_linter();
     init_usage_stats();
+    init_outcome_reconciliation();
     init_insights_optout();
     init_insight_stats();
     init_model_prices();
@@ -26427,7 +26461,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.83";
+  cachedAgentVersion = "0.2.86";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26591,6 +26625,9 @@ var init_memlin_api_client = __esm({
       /** The configured account (the light-gate cache key when a call names none). */
       get defaultAccountId() {
         return this.cfg.accountId;
+      }
+      nativeSessionHook(input, opts) {
+        return this.request("POST", "/agent-control/hook", input, { ...opts, agentVersion: agentVersion() });
       }
       // ---------- low-level ----------
       async authHeaders(includeAccount = true, override = {}) {
@@ -29172,7 +29209,7 @@ var PLUGIN_RUNTIME_TIMEOUT_MS = 150;
 var VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/;
 var HOSTS3 = /* @__PURE__ */ new Set(["cursor", "antigravity", "codex", "claude-code"]);
 function ownVersion() {
-  const version2 = "0.2.83";
+  const version2 = "0.2.86";
   return typeof version2 === "string" && VERSION.test(version2) ? version2 : null;
 }
 async function reportPluginRuntime(report) {
@@ -29255,14 +29292,17 @@ async function archiveDestination(trackedRelPath) {
   }
   return `${stem}.${Date.now()}${ext}`;
 }
-async function applyPullToLocal(docs, state, now, rootOverride) {
+async function applyPullToLocal(docs, state, now, rootOverride, opts = {}) {
+  const reconcileMissing = opts.reconcileMissing ?? true;
   const out = {
     written: [],
     unchanged: [],
     removed: [],
     archived: [],
     keptEdited: [],
-    citations: {}
+    citations: {},
+    reconciliationSkipped: !reconcileMissing,
+    collisions: {}
   };
   const currentPaths = /* @__PURE__ */ new Set();
   const root = rootOverride ?? resolveHost().homeDir();
@@ -29270,6 +29310,9 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     if (d.kind === "brand_guidelines") continue;
     if (d.kind === "feedback") continue;
     const localPath = inferLocalPath(d.kind, d.title, d.path);
+    if (currentPaths.has(localPath)) {
+      out.collisions[localPath] = (out.collisions[localPath] ?? 1) + 1;
+    }
     currentPaths.add(localPath);
     const full = path10.join(root, localPath);
     const contentHash = hash(d.content);
@@ -29295,6 +29338,7 @@ async function applyPullToLocal(docs, state, now, rootOverride) {
     };
   }
   for (const tracked of Object.keys(state.documents)) {
+    if (!reconcileMissing) break;
     if (currentPaths.has(tracked)) continue;
     const full = path10.join(root, tracked);
     if (existsSync(full)) {
@@ -29699,6 +29743,13 @@ async function readCompiledTriggers(file2 = compiledTriggersPath()) {
   }
 }
 var COMPILED_MESSAGE_MAX = 700;
+async function refreshWorkspaceTriggers(args) {
+  const docs = await args.api.listDocuments(
+    { kinds: ["memory"], has_trigger: true, project_id: args.projectId },
+    args.callOpts ?? {}
+  );
+  return compileWorkspaceTriggers({ ...args, docs });
+}
 async function compileWorkspaceTriggers(args) {
   const file2 = args.file ?? compiledTriggersPath();
   const root = await canonicalRoot(args.workspaceRoot);
@@ -29929,15 +29980,12 @@ async function main() {
     log(`session-start sync failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   try {
-    const triggerDocs = await api.listDocuments(
-      { kinds: ["memory"], has_trigger: true, project_id: resolved.project_id },
-      resolved.account_id && resolved.account_id !== config2.account_id ? { accountId: resolved.account_id } : {}
-    );
-    const compiled = await compileWorkspaceTriggers({
+    const compiled = await refreshWorkspaceTriggers({
+      api,
       workspaceRoot: await workspaceRootFor(process.cwd()),
       accountId: resolved.account_id ?? config2.account_id,
       projectId: resolved.project_id,
-      docs: triggerDocs
+      callOpts: resolved.account_id && resolved.account_id !== config2.account_id ? { accountId: resolved.account_id } : {}
     });
     if (compiled.compiled > 0 || compiled.skipped > 0) {
       log(
