@@ -25009,7 +25009,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.86";
+  cachedAgentVersion = "0.2.88";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -27179,6 +27179,9 @@ function gitToplevel(cwd) {
   }
 }
 function repoRelativePath(absPath, cwd) {
+  return repoPathOrNull(absPath, cwd) ?? path12.basename(absPath);
+}
+function repoPathOrNull(absPath, cwd) {
   const top = gitToplevel(cwd);
   if (top) {
     const canonicalWithMissingTail = (candidate) => {
@@ -27201,7 +27204,7 @@ function repoRelativePath(absPath, cwd) {
     );
     if (rel && !rel.startsWith("..") && !path12.isAbsolute(rel)) return rel;
   }
-  return path12.basename(absPath);
+  return null;
 }
 function readGitBranch(cwd) {
   try {
@@ -27273,6 +27276,9 @@ function hashEditContent(value) {
 }
 
 // packages/plugin-core/dist/edit-broker.js
+function brokerPaths(rawPaths, cwd) {
+  return rawPaths.map((file2) => repoPathOrNull(path14.resolve(cwd, file2), cwd)).filter((relPath) => relPath !== null).map((relPath) => relPath.replaceAll(path14.sep, "/"));
+}
 async function completeEditBroker(ctx, payload) {
   const sessionId = payload.session_id;
   if (!sessionId) return;
@@ -27280,9 +27286,8 @@ async function completeEditBroker(ctx, payload) {
   const identity = localBrokerIdentity(cwd);
   const rawPaths = editedPathsFromHook(payload.tool_name, payload.tool_input);
   if (!identity || rawPaths.length === 0) return;
-  const paths = [...new Set(rawPaths.map(
-    (file2) => repoRelativePath(path14.resolve(cwd, file2), cwd).replaceAll(path14.sep, "/")
-  ))];
+  const paths = [...new Set(brokerPaths(rawPaths, cwd))];
+  if (paths.length === 0) return;
   try {
     const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
     if (!resolved.project_id) return;

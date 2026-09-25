@@ -12990,6 +12990,13 @@ var init_beta_trial = __esm({
   }
 });
 
+// packages/shared/dist/account-deletion-sweep.js
+var init_account_deletion_sweep = __esm({
+  "packages/shared/dist/account-deletion-sweep.js"() {
+    "use strict";
+  }
+});
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/core.js
 // @__NO_SIDE_EFFECTS__
 function $constructor(name, initializer3, params) {
@@ -25877,6 +25884,13 @@ var init_feature_work = __esm({
   }
 });
 
+// packages/shared/dist/personal-scope.js
+var init_personal_scope = __esm({
+  "packages/shared/dist/personal-scope.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25958,6 +25972,7 @@ var init_dist = __esm({
     init_review_reasons();
     init_entitlements();
     init_beta_trial();
+    init_account_deletion_sweep();
     init_project_flow_contracts();
     init_needs_you_groups();
     init_needs_you_engine();
@@ -25969,6 +25984,7 @@ var init_dist = __esm({
     init_files();
     init_feature_binding();
     init_feature_work();
+    init_personal_scope();
   }
 });
 
@@ -26461,7 +26477,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.86";
+  cachedAgentVersion = "0.2.88";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -29209,7 +29225,7 @@ var PLUGIN_RUNTIME_TIMEOUT_MS = 150;
 var VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/;
 var HOSTS3 = /* @__PURE__ */ new Set(["cursor", "antigravity", "codex", "claude-code"]);
 function ownVersion() {
-  const version2 = "0.2.86";
+  const version2 = "0.2.88";
   return typeof version2 === "string" && VERSION.test(version2) ? version2 : null;
 }
 async function reportPluginRuntime(report) {
@@ -29454,6 +29470,10 @@ function formatBanner(opts) {
   } else if (opts.authenticated) {
     lines.push(
       "Memlin: idle (this directory isn't a known Memlin project). Run /memlin-add-project to register it, or /memlin-link to pin it to an existing project."
+    );
+  } else {
+    lines.push(
+      "Memlin: not signed in, so it adds nothing to this session. Run /memlin-login to connect."
     );
   }
   if (opts.localVersion && opts.latestVersion && isOlderVersion(opts.localVersion, opts.latestVersion)) {
@@ -29864,6 +29884,8 @@ async function main() {
   const ctx = await getApi();
   if (!ctx) {
     log("not configured \u2014 skipping pull");
+    const signedOutBanner = await buildSessionBanner(null, { authenticated: false });
+    if (signedOutBanner) process.stdout.write(signedOutBanner + "\n");
     return;
   }
   if ((await ctx.api.lightStatus())?.active) {

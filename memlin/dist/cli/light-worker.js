@@ -26243,7 +26243,7 @@ function agentDevice() {
 var cachedAgentVersion = null;
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.86";
+  cachedAgentVersion = "0.2.88";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -32218,7 +32218,7 @@ function pendingDeploymentEvidence(evidence, changedPaths, cwd) {
 function strictBlock(reasons, base) {
   return {
     decision: "block",
-    reason: "HOLD \u2014 this session has an unfinished delivery obligation: " + reasons.join("; ") + `. Keep working until the change is committed, merged into ${base}, deployed, and verified by the configured production evidence. An honest \u201Cnot deployed\u201D status does not complete the task. Only the user may cancel the requirement or disable the gate.`
+    reason: "HOLD \u2014 this session has an unfinished delivery obligation: " + reasons.join("; ") + `. Commit it and merge it into ${base}. If production evidence is behind, say so. Do not start a deploy from this hold. Merging does not deploy, and a ship runs only when the user asked to deploy that service. Only the user may cancel the requirement or disable the gate.`
   };
 }
 async function enforceDoneMeansDeployed(payload) {
@@ -32279,9 +32279,7 @@ async function enforceDoneMeansDeployed(payload) {
     if (!merged) why.push(`HEAD (${branch}) is not merged into ${cfg.base}`);
     if (dirty) why.push("the working tree has uncommitted changes");
     if (unpushed) why.push(`there are unpushed commits (${cfg.base}..HEAD)`);
-    const reason = "HOLD \u2014 the last message claims the work is done/fixed/deployed, but it is NOT live: " + why.join("; ") + `. On this project "done" means merged into ${cfg.base} and deployed. Do ONE of:
-  (1) Ship it: commit \u2192 merge \u2192 confirm the deploy succeeded \u2192 verify the change live, THEN report done; or
-  (2) If you cannot merge right now (a concurrent deploy is in flight, you need sign-off, CI is red), say so plainly and state the exact remaining step \u2014 but do NOT call it done, fixed, or deployed.
+    const reason = "HOLD \u2014 the last message claims the work is done, fixed, or deployed, but git disagrees: " + why.join("; ") + `. On this project "done" means committed and merged into ${cfg.base}. Merging does not deploy. Do not start a deploy from this hold. A ship runs only when the user asked to deploy that service. Report the state as committed, merged, or not merged. Do not call it deployed or live unless a deploy script finished and its gates passed.
 Override (deliberate): include [skip-done-gate] in your message to ship-anyway this once, or disable the gate entirely with MEMLIN_DONE_GATE=off (or set "enabled": false in .memlin/enforce-done-deployed.json). The gate is opt-in and read-only \u2014 it never edits your files.`;
     return { decision: "block", reason };
   } catch (error40) {

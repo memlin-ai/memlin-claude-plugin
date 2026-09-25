@@ -12818,6 +12818,13 @@ var init_beta_trial = __esm({
   }
 });
 
+// packages/shared/dist/account-deletion-sweep.js
+var init_account_deletion_sweep = __esm({
+  "packages/shared/dist/account-deletion-sweep.js"() {
+    "use strict";
+  }
+});
+
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/core/core.js
 // @__NO_SIDE_EFFECTS__
 function $constructor(name, initializer3, params) {
@@ -25867,6 +25874,13 @@ var init_feature_work = __esm({
   }
 });
 
+// packages/shared/dist/personal-scope.js
+var init_personal_scope = __esm({
+  "packages/shared/dist/personal-scope.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/index.js
 var init_dist = __esm({
   "packages/shared/dist/index.js"() {
@@ -25948,6 +25962,7 @@ var init_dist = __esm({
     init_review_reasons();
     init_entitlements();
     init_beta_trial();
+    init_account_deletion_sweep();
     init_project_flow_contracts();
     init_needs_you_groups();
     init_needs_you_engine();
@@ -25959,6 +25974,7 @@ var init_dist = __esm({
     init_files();
     init_feature_binding();
     init_feature_work();
+    init_personal_scope();
   }
 });
 
@@ -27260,7 +27276,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.86";
+  cachedAgentVersion = "0.2.88";
   return cachedAgentVersion;
 }
 function agentCapabilities() {

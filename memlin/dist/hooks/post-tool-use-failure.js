@@ -23882,7 +23882,7 @@ function gitToplevel(cwd) {
     return null;
   }
 }
-function repoRelativePath(absPath, cwd) {
+function repoPathOrNull(absPath, cwd) {
   const top = gitToplevel(cwd);
   if (top) {
     const canonicalWithMissingTail = (candidate) => {
@@ -23905,18 +23905,21 @@ function repoRelativePath(absPath, cwd) {
     );
     if (rel && !rel.startsWith("..") && !path9.isAbsolute(rel)) return rel;
   }
-  return path9.basename(absPath);
+  return null;
 }
 
 // packages/plugin-core/dist/edit-broker.js
+function brokerPaths(rawPaths, cwd) {
+  return rawPaths.map((file2) => repoPathOrNull(path11.resolve(cwd, file2), cwd)).filter((relPath) => relPath !== null).map((relPath) => relPath.replaceAll(path11.sep, "/"));
+}
 function releaseEditBrokerTool(payload) {
   if (!payload.session_id) return;
   const cwd = payload.cwd ?? process.cwd();
   const identity = localBrokerIdentity(cwd);
   if (!identity) return;
-  const paths = editedPathsFromHook(payload.tool_name, payload.tool_input).map(
-    (file2) => repoRelativePath(path11.resolve(cwd, file2), cwd).replaceAll(path11.sep, "/")
-  );
+  const rawPaths = editedPathsFromHook(payload.tool_name, payload.tool_input);
+  const paths = brokerPaths(rawPaths, cwd);
+  if (rawPaths.length > 0 && paths.length === 0) return;
   releaseLocalWriteLeases(identity, payload.session_id, paths.length > 0 ? paths : void 0);
 }
 
