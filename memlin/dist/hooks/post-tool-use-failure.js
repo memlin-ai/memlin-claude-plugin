@@ -3435,7 +3435,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs6 = __require("fs");
+    var fs7 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -3519,7 +3519,7 @@ var require_gray_matter = __commonJS({
       return stringify(file2, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs6.readFileSync(filepath, "utf8");
+      const str2 = fs7.readFileSync(filepath, "utf8");
       const file2 = matter3(str2, options2);
       file2.path = filepath;
       return file2;
@@ -3549,8 +3549,8 @@ var require_gray_matter = __commonJS({
 
 // packages/plugin-core/dist/workspace-binding.js
 import { randomUUID as randomUUID2 } from "node:crypto";
-import { constants, promises as fs4 } from "node:fs";
-import path5 from "node:path";
+import { constants, promises as fs5 } from "node:fs";
+import path6 from "node:path";
 var GIT_POINTER_MAX_BYTES;
 var init_workspace_binding = __esm({
   "packages/plugin-core/dist/workspace-binding.js"() {
@@ -3568,14 +3568,14 @@ import {
   rmSync as rmSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import os8 from "node:os";
-import path11 from "node:path";
+import os9 from "node:os";
+import path12 from "node:path";
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 
 // packages/plugin-core/dist/client.js
-import { promises as fs5 } from "node:fs";
-import path6 from "node:path";
-import os5 from "node:os";
+import { promises as fs6 } from "node:fs";
+import path7 from "node:path";
+import os6 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // packages/plugin-core/dist/auth.js
@@ -4073,8 +4073,8 @@ function getErrorMap() {
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path12, errorMaps, issueData } = params;
-  const fullPath = [...path12, ...issueData.path || []];
+  const { data, path: path13, errorMaps, issueData } = params;
+  const fullPath = [...path13, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -4190,11 +4190,11 @@ var errorUtil;
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path12, key) {
+  constructor(parent, value, path13, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path12;
+    this._path = path13;
     this._key = key;
   }
   get path() {
@@ -8740,19 +8740,19 @@ var ContextManifestV1Schema = external_exports.object({
       location: `linked_contexts.${index}`
     }))
   ];
-  references.forEach(({ ref, path: path12, location }) => {
+  references.forEach(({ ref, path: path13, location }) => {
     const identity = contextReferenceIdentityKey(ref);
     const prior = seen.get(identity);
     if (prior && prior.revision !== ref.revision) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path12,
+        path: path13,
         message: `context ${identity} has conflicting revisions in ${prior.location} and ${location}`
       });
     } else if (prior && location.startsWith("linked_contexts.")) {
       ctx.addIssue({
         code: external_exports.ZodIssueCode.custom,
-        path: path12,
+        path: path13,
         message: `duplicate linked context ${identity}`
       });
     }
@@ -9066,11 +9066,11 @@ var ContextBundleV1Schema = external_exports.object({
         path: ["coverage", coverageIndex, "omitted_contexts", index, "context_ref"]
       }))
     ];
-    for (const { ref, path: path12 } of references) {
+    for (const { ref, path: path13 } of references) {
       if (!contextKeys.has(contextReferenceKey(ref))) {
         ctx.addIssue({
           code: external_exports.ZodIssueCode.custom,
-          path: path12,
+          path: path13,
           message: "provider coverage is outside the exact manifest contexts"
         });
       }
@@ -11953,10 +11953,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path12) {
-  if (!path12)
+function getElementAtPath(obj, path13) {
+  if (!path13)
     return obj;
-  return path12.reduce((acc, key) => acc?.[key], obj);
+  return path13.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -12276,11 +12276,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path12, issues) {
+function prefixIssues(path13, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path12);
+    iss.path.unshift(path13);
     return iss;
   });
 }
@@ -12417,7 +12417,7 @@ function treeifyError(error40, _mapper) {
     return issue2.message;
   };
   const result = { errors: [] };
-  const processError = (error41, path12 = []) => {
+  const processError = (error41, path13 = []) => {
     var _a, _b;
     for (const issue2 of error41.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -12427,7 +12427,7 @@ function treeifyError(error40, _mapper) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path12, ...issue2.path];
+        const fullpath = [...path13, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -12457,9 +12457,9 @@ function treeifyError(error40, _mapper) {
   processError(error40);
   return result;
 }
-function toDotPath(path12) {
+function toDotPath(path13) {
   const segs = [];
-  for (const seg of path12) {
+  for (const seg of path13) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -23117,10 +23117,10 @@ function validateFlowDefinitionSemantics(flow) {
       ],
       ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, path: `stages.${stageIndex}.bypass_target` }]
     ];
-    targets.forEach(({ target, path: path12 }) => {
+    targets.forEach(({ target, path: path13 }) => {
       if (!isReservedTarget(target) && !stageById.has(target)) {
         issues.push({
-          path: path12,
+          path: path13,
           code: "missing_transition_target",
           message: `transition target ${JSON.stringify(target)} does not exist`
         });
@@ -23150,7 +23150,7 @@ function validateFlowDefinitionSemantics(flow) {
   const visiting = /* @__PURE__ */ new Set();
   const visited = /* @__PURE__ */ new Set();
   let hasReachableEnd = false;
-  const visit = (stageId, path12, pathBounds) => {
+  const visit = (stageId, path13, pathBounds) => {
     reachable.add(stageId);
     if (visited.has(stageId)) return;
     visiting.add(stageId);
@@ -23166,7 +23166,7 @@ function validateFlowDefinitionSemantics(flow) {
         ...stage.default_transition === null ? [] : [{ target: stage.default_transition, bounded: false }],
         ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, bounded: false }]
       ];
-      const currentPath = [...path12, stageId];
+      const currentPath = [...path13, stageId];
       for (const edge of edges) {
         const { target } = edge;
         if (target === "$end") {
@@ -23274,18 +23274,18 @@ var FlowPackManifestBaseSchema = external_exports2.object({
   evals: external_exports2.array(ManifestEvalSchema).max(256),
   model_roles: external_exports2.array(ManifestModelRoleSchema).max(64)
 }).strict();
-function validateRelativePackPath(path12) {
-  if (path12.startsWith("/") || path12.startsWith("\\")) return "path must be relative";
-  if (/^[A-Za-z]:/.test(path12) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path12)) {
+function validateRelativePackPath(path13) {
+  if (path13.startsWith("/") || path13.startsWith("\\")) return "path must be relative";
+  if (/^[A-Za-z]:/.test(path13) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path13)) {
     return "drive-qualified paths and URI schemes are not allowed";
   }
-  if (/[\u0000-\u001f\u007f]/.test(path12)) return "control characters are not allowed";
-  if (/%(?:2e|2f|5c)/i.test(path12)) return "encoded path traversal is not allowed";
-  if (path12.includes("\\")) return "path must use forward slashes";
-  if (path12.split("/").some((segment) => segment === ".." || segment === ".")) {
+  if (/[\u0000-\u001f\u007f]/.test(path13)) return "control characters are not allowed";
+  if (/%(?:2e|2f|5c)/i.test(path13)) return "encoded path traversal is not allowed";
+  if (path13.includes("\\")) return "path must use forward slashes";
+  if (path13.split("/").some((segment) => segment === ".." || segment === ".")) {
     return "path traversal and dot segments are not allowed";
   }
-  if (path12.split("/").some((segment) => segment.length === 0)) {
+  if (path13.split("/").some((segment) => segment.length === 0)) {
     return "path cannot contain empty segments";
   }
   return null;
@@ -23332,22 +23332,22 @@ function validateFlowPackManifestSemantics(manifest) {
       issues
     );
     role.independence.compare_against_roles.forEach((comparedRole, comparedIndex) => {
-      const path12 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
+      const path13 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
       if (comparedRole === role.id) {
         issues.push({
-          path: path12,
+          path: path13,
           code: "self_referential_model_independence",
           message: "a model role cannot require independence from itself"
         });
       } else if (!modelRolesById.has(comparedRole)) {
         issues.push({
-          path: path12,
+          path: path13,
           code: "missing_independence_model_role",
           message: `independence policy references undeclared model role ${JSON.stringify(comparedRole)}`
         });
       } else if (modelRolesById.get(comparedRole)?.independence !== null) {
         issues.push({
-          path: path12,
+          path: path13,
           code: "independence_reference_not_author",
           message: `independence policy must compare against an author role; ${JSON.stringify(comparedRole)} declares its own independence policy`
         });
@@ -23613,7 +23613,7 @@ var Receipt = external_exports.object({
 init_auth_refusal();
 import { readFileSync } from "node:fs";
 import crypto2 from "node:crypto";
-import os4 from "node:os";
+import os5 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -23641,6 +23641,15 @@ async function closeHttpSockets() {
 import os3 from "node:os";
 import path4 from "node:path";
 
+// packages/plugin-core/dist/private-mode.js
+init_atomic_rename();
+import { promises as fs4 } from "node:fs";
+import path5 from "node:path";
+import os4 from "node:os";
+var PRIVATE_TTL_MS = 24 * 60 * 60 * 1e3;
+var DENIED_TTL_MS = 10 * 60 * 1e3;
+var FLOOR_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+
 // packages/plugin-core/dist/memlin-api-client.js
 var RESOLVE_V2_MAX_LINE_BYTES = 2 * 1024 * 1024;
 
@@ -23666,8 +23675,8 @@ function exitHook(code) {
 
 // packages/plugin-core/dist/client.js
 init_auth_refusal();
-var CONFIG_DIR = path6.join(os5.homedir(), ".config", "memlin");
-var TOKEN_FILE = path6.join(CONFIG_DIR, "token.json");
+var CONFIG_DIR = path7.join(os6.homedir(), ".config", "memlin");
+var TOKEN_FILE = path7.join(CONFIG_DIR, "token.json");
 
 // packages/plugin-core/dist/edit-broker-local.js
 import crypto3 from "node:crypto";
@@ -23682,8 +23691,8 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import os6 from "node:os";
-import path7 from "node:path";
+import os7 from "node:os";
+import path8 from "node:path";
 import { execFileSync } from "node:child_process";
 var LOCK_STALE_MS = 1e4;
 var STATE_VERSION = 1;
@@ -23707,7 +23716,7 @@ function canonical(value) {
   try {
     return realpathSync(value);
   } catch {
-    return path7.resolve(value);
+    return path8.resolve(value);
   }
 }
 function localBrokerIdentity(cwd) {
@@ -23716,9 +23725,9 @@ function localBrokerIdentity(cwd) {
   if (!rootRaw || !commonRaw) return null;
   const root = canonical(rootRaw);
   const commonDir = canonical(
-    path7.isAbsolute(commonRaw) ? commonRaw : path7.resolve(cwd, commonRaw)
+    path8.isAbsolute(commonRaw) ? commonRaw : path8.resolve(cwd, commonRaw)
   );
-  const deviceId = digest(`${os6.hostname()}\0${os6.platform()}\0${os6.arch()}`);
+  const deviceId = digest(`${os7.hostname()}\0${os7.platform()}\0${os7.arch()}`);
   return {
     root,
     commonDir,
@@ -23729,11 +23738,11 @@ function localBrokerIdentity(cwd) {
   };
 }
 function statePaths(identity) {
-  const dir = path7.join(identity.commonDir, "memlin");
+  const dir = path8.join(identity.commonDir, "memlin");
   return {
     dir,
-    state: path7.join(dir, "edit-broker-state.json"),
-    lock: path7.join(dir, "edit-broker.lock")
+    state: path8.join(dir, "edit-broker-state.json"),
+    lock: path8.join(dir, "edit-broker.lock")
   };
 }
 function emptyState() {
@@ -23817,17 +23826,17 @@ function releaseLocalWriteLeases(identity, sessionId, paths) {
 // packages/plugin-core/dist/edit-intent.js
 import crypto4 from "node:crypto";
 import { readFileSync as readFileSync4 } from "node:fs";
-import path10 from "node:path";
+import path11 from "node:path";
 
 // packages/plugin-core/dist/edit-activity.js
 import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
-import path9 from "node:path";
-import os7 from "node:os";
+import path10 from "node:path";
+import os8 from "node:os";
 
 // packages/plugin-core/dist/project-resolver.js
 import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3, lstatSync } from "node:fs";
-import path8 from "node:path";
+import path9 from "node:path";
 init_workspace_binding();
 
 // packages/plugin-core/dist/edit-activity.js
@@ -23887,30 +23896,30 @@ function repoPathOrNull(absPath, cwd) {
   if (top) {
     const canonicalWithMissingTail = (candidate) => {
       const tail = [];
-      let cursor = path9.resolve(candidate);
+      let cursor = path10.resolve(candidate);
       while (true) {
         try {
-          return path9.join(realpathSync2(cursor), ...tail.reverse());
+          return path10.join(realpathSync2(cursor), ...tail.reverse());
         } catch {
-          const parent = path9.dirname(cursor);
-          if (parent === cursor) return path9.resolve(candidate);
-          tail.push(path9.basename(cursor));
+          const parent = path10.dirname(cursor);
+          if (parent === cursor) return path10.resolve(candidate);
+          tail.push(path10.basename(cursor));
           cursor = parent;
         }
       }
     };
-    const rel = path9.relative(
+    const rel = path10.relative(
       canonicalWithMissingTail(top),
       canonicalWithMissingTail(absPath)
     );
-    if (rel && !rel.startsWith("..") && !path9.isAbsolute(rel)) return rel;
+    if (rel && !rel.startsWith("..") && !path10.isAbsolute(rel)) return rel;
   }
   return null;
 }
 
 // packages/plugin-core/dist/edit-broker.js
 function brokerPaths(rawPaths, cwd) {
-  return rawPaths.map((file2) => repoPathOrNull(path11.resolve(cwd, file2), cwd)).filter((relPath) => relPath !== null).map((relPath) => relPath.replaceAll(path11.sep, "/"));
+  return rawPaths.map((file2) => repoPathOrNull(path12.resolve(cwd, file2), cwd)).filter((relPath) => relPath !== null).map((relPath) => relPath.replaceAll(path12.sep, "/"));
 }
 function releaseEditBrokerTool(payload) {
   if (!payload.session_id) return;
