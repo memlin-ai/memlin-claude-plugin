@@ -3550,6 +3550,7 @@ var require_gray_matter = __commonJS({
 // packages/plugin-core/dist/workspace-binding.js
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { constants, promises as fs5 } from "node:fs";
+import os6 from "node:os";
 import path6 from "node:path";
 var GIT_POINTER_MAX_BYTES;
 var init_workspace_binding = __esm({
@@ -3568,14 +3569,14 @@ import {
   rmSync as rmSync2,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import os9 from "node:os";
+import os10 from "node:os";
 import path12 from "node:path";
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 
 // packages/plugin-core/dist/client.js
 import { promises as fs6 } from "node:fs";
 import path7 from "node:path";
-import os6 from "node:os";
+import os7 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
 // packages/plugin-core/dist/auth.js
@@ -10294,6 +10295,21 @@ var ThoughtPreferencesReceiptV2Schema = external_exports.object({
   scope: external_exports.enum(["personal", "project", "team"]),
   replayed: external_exports.boolean()
 }).strict();
+var ThoughtLibraryArchiveV2Schema = external_exports.object({
+  version: external_exports.literal(2),
+  thought_id: Id,
+  archived: external_exports.boolean(),
+  idempotency_key: Key
+}).strict();
+var ThoughtLibraryArchiveReceiptV2Schema = external_exports.object({
+  version: external_exports.literal(2),
+  receipt_id: Id,
+  thought_id: Id,
+  cursor: Revision,
+  archived: external_exports.boolean(),
+  archived_at: Time.nullable(),
+  replayed: external_exports.boolean()
+}).strict();
 var ThoughtTopicDesignateV2Schema = external_exports.object({
   version: external_exports.literal(2),
   root_thought_id: Id,
@@ -10499,7 +10515,7 @@ var ThoughtTopicOperationReceiptV2Schema = external_exports.object({
 var ThoughtListCursorV2Schema = external_exports.object({ updated_at: Time, id: Id }).strict();
 var ThoughtWorkspaceListQueryV2Schema = external_exports.object({
   query: external_exports.string().trim().max(160).default(""),
-  filter: external_exports.enum(["recent", "personal", "team", "project", "starred", "rooms"]).default("recent"),
+  filter: external_exports.enum(["recent", "personal", "team", "project", "starred", "rooms", "archived"]).default("recent"),
   limit: external_exports.number().int().min(1).max(100).default(30),
   cursor: ThoughtListCursorV2Schema.nullable().default(null)
 }).strict();
@@ -23675,7 +23691,7 @@ function exitHook(code) {
 
 // packages/plugin-core/dist/client.js
 init_auth_refusal();
-var CONFIG_DIR = path7.join(os6.homedir(), ".config", "memlin");
+var CONFIG_DIR = path7.join(os7.homedir(), ".config", "memlin");
 var TOKEN_FILE = path7.join(CONFIG_DIR, "token.json");
 
 // packages/plugin-core/dist/edit-broker-local.js
@@ -23691,7 +23707,7 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import os7 from "node:os";
+import os8 from "node:os";
 import path8 from "node:path";
 import { execFileSync } from "node:child_process";
 var LOCK_STALE_MS = 1e4;
@@ -23727,7 +23743,7 @@ function localBrokerIdentity(cwd) {
   const commonDir = canonical(
     path8.isAbsolute(commonRaw) ? commonRaw : path8.resolve(cwd, commonRaw)
   );
-  const deviceId = digest(`${os7.hostname()}\0${os7.platform()}\0${os7.arch()}`);
+  const deviceId = digest(`${os8.hostname()}\0${os8.platform()}\0${os8.arch()}`);
   return {
     root,
     commonDir,
@@ -23832,7 +23848,7 @@ import path11 from "node:path";
 import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import path10 from "node:path";
-import os8 from "node:os";
+import os9 from "node:os";
 
 // packages/plugin-core/dist/project-resolver.js
 import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3, lstatSync } from "node:fs";

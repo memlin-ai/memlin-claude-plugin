@@ -11267,7 +11267,7 @@ var init_resource_evidence = __esm({
 });
 
 // packages/shared/dist/thought-runtime.js
-var Id, Revision, Key, Hash, Time, Position, Size, ThoughtRelationKindV2Schema, ThoughtEntityKindV2Schema, ThoughtEntityPreconditionV2Schema, ThoughtPatch, LayoutPatchShape, LayoutPatch, ThoughtReferenceV2Schema, ThoughtCommandV2Schema, ThoughtCommandBatchV2Schema, CanonicalThoughtV2Schema, Layout, ThoughtWorkspaceSnapshotV2Schema, ThoughtWorkspaceChangesQueryV2Schema, ThoughtWorkspaceChangesV2Schema, ThoughtCommandResultV2Schema, ThoughtCreateV2Schema, ThoughtPreferencesV2Schema, ThoughtPreferencesReceiptV2Schema, ThoughtTopicDesignateV2Schema, ThoughtTopicDesignationReceiptV2Schema, ThoughtTopicMembershipV2Schema, ThoughtGuidanceStageV2Schema, ThoughtGuidanceStageStateV2Schema, GuidanceCardId, ThoughtGuidanceCardV2Schema, ThoughtGuidanceSessionV2Schema, ThoughtGuidanceReadV2Schema, GuidanceWriteBase, ThoughtGuidanceWriteV2Schema, ThoughtGuidanceQuestionRequestV2Schema, ThoughtGuidanceQuestionResultV2Schema, ThoughtTopicSuggestQueryV2Schema, ThoughtTopicPathStep, ThoughtTopicSuggestionsV2Schema, ThoughtTopicTreeV2Schema, TopicMemberBase, ThoughtTopicMemberWriteV2Schema, ThoughtTopicRemovalPreviewV2Schema, ThoughtTopicOperationReceiptV2Schema, ThoughtListCursorV2Schema, ThoughtWorkspaceListQueryV2Schema, ThoughtWorkspaceListV2Schema, ThoughtWorkspaceCountsV2Schema, ThoughtAssistRequestV2Schema, ThoughtProposalV1Schema, ResourceUploadRequestV2Schema, ResourceUploadReceiptV2Schema, ResourceIngestEnvelopeV2Schema, ResourceIngestReceiptV2Schema, ThoughtCollaborationSessionV1Schema, ThoughtWorkspaceEntryV2Schema, ThoughtAssistHistoryV2Schema, ThoughtAssistEvidenceV2Schema, ThoughtResourcePreviewV2Schema, ThoughtPublicLinkWriteV2Schema, ThoughtPublicLinksV2Schema, ThoughtDocumentCreateV2Schema, ThoughtDocumentLinkV2Schema, ThoughtDocumentsV2Schema, ThoughtDocumentCreatedV2Schema, ThoughtOutcomeResponseV2Schema, ThoughtOutcomeReceiptV2Schema, ThoughtDocumentSearchV2Schema, ThoughtDecisionAcceptV2Schema, ThoughtDecisionReceiptV2Schema;
+var Id, Revision, Key, Hash, Time, Position, Size, ThoughtRelationKindV2Schema, ThoughtEntityKindV2Schema, ThoughtEntityPreconditionV2Schema, ThoughtPatch, LayoutPatchShape, LayoutPatch, ThoughtReferenceV2Schema, ThoughtCommandV2Schema, ThoughtCommandBatchV2Schema, CanonicalThoughtV2Schema, Layout, ThoughtWorkspaceSnapshotV2Schema, ThoughtWorkspaceChangesQueryV2Schema, ThoughtWorkspaceChangesV2Schema, ThoughtCommandResultV2Schema, ThoughtCreateV2Schema, ThoughtPreferencesV2Schema, ThoughtPreferencesReceiptV2Schema, ThoughtLibraryArchiveV2Schema, ThoughtLibraryArchiveReceiptV2Schema, ThoughtTopicDesignateV2Schema, ThoughtTopicDesignationReceiptV2Schema, ThoughtTopicMembershipV2Schema, ThoughtGuidanceStageV2Schema, ThoughtGuidanceStageStateV2Schema, GuidanceCardId, ThoughtGuidanceCardV2Schema, ThoughtGuidanceSessionV2Schema, ThoughtGuidanceReadV2Schema, GuidanceWriteBase, ThoughtGuidanceWriteV2Schema, ThoughtGuidanceQuestionRequestV2Schema, ThoughtGuidanceQuestionResultV2Schema, ThoughtTopicSuggestQueryV2Schema, ThoughtTopicPathStep, ThoughtTopicSuggestionsV2Schema, ThoughtTopicTreeV2Schema, TopicMemberBase, ThoughtTopicMemberWriteV2Schema, ThoughtTopicRemovalPreviewV2Schema, ThoughtTopicOperationReceiptV2Schema, ThoughtListCursorV2Schema, ThoughtWorkspaceListQueryV2Schema, ThoughtWorkspaceListV2Schema, ThoughtWorkspaceCountsV2Schema, ThoughtAssistRequestV2Schema, ThoughtProposalV1Schema, ResourceUploadRequestV2Schema, ResourceUploadReceiptV2Schema, ResourceIngestEnvelopeV2Schema, ResourceIngestReceiptV2Schema, ThoughtCollaborationSessionV1Schema, ThoughtWorkspaceEntryV2Schema, ThoughtAssistHistoryV2Schema, ThoughtAssistEvidenceV2Schema, ThoughtResourcePreviewV2Schema, ThoughtPublicLinkWriteV2Schema, ThoughtPublicLinksV2Schema, ThoughtDocumentCreateV2Schema, ThoughtDocumentLinkV2Schema, ThoughtDocumentsV2Schema, ThoughtDocumentCreatedV2Schema, ThoughtOutcomeResponseV2Schema, ThoughtOutcomeReceiptV2Schema, ThoughtDocumentSearchV2Schema, ThoughtDecisionAcceptV2Schema, ThoughtDecisionReceiptV2Schema;
 var init_thought_runtime = __esm({
   "packages/shared/dist/thought-runtime.js"() {
     "use strict";
@@ -11536,6 +11536,21 @@ var init_thought_runtime = __esm({
       scope: external_exports.enum(["personal", "project", "team"]),
       replayed: external_exports.boolean()
     }).strict();
+    ThoughtLibraryArchiveV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      thought_id: Id,
+      archived: external_exports.boolean(),
+      idempotency_key: Key
+    }).strict();
+    ThoughtLibraryArchiveReceiptV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      receipt_id: Id,
+      thought_id: Id,
+      cursor: Revision,
+      archived: external_exports.boolean(),
+      archived_at: Time.nullable(),
+      replayed: external_exports.boolean()
+    }).strict();
     ThoughtTopicDesignateV2Schema = external_exports.object({
       version: external_exports.literal(2),
       root_thought_id: Id,
@@ -11741,7 +11756,7 @@ var init_thought_runtime = __esm({
     ThoughtListCursorV2Schema = external_exports.object({ updated_at: Time, id: Id }).strict();
     ThoughtWorkspaceListQueryV2Schema = external_exports.object({
       query: external_exports.string().trim().max(160).default(""),
-      filter: external_exports.enum(["recent", "personal", "team", "project", "starred", "rooms"]).default("recent"),
+      filter: external_exports.enum(["recent", "personal", "team", "project", "starred", "rooms", "archived"]).default("recent"),
       limit: external_exports.number().int().min(1).max(100).default(30),
       cursor: ThoughtListCursorV2Schema.nullable().default(null)
     }).strict();
@@ -26293,16 +26308,55 @@ __export(workspace_binding_exports, {
   WORKSPACE_BINDING_FILE: () => WORKSPACE_BINDING_FILE,
   WORKSPACE_DIR_NAME: () => WORKSPACE_DIR_NAME,
   clearWorkspaceBinding: () => clearWorkspaceBinding,
+  findIgnoredBroadWorkspaceBinding: () => findIgnoredBroadWorkspaceBinding,
   findWorkspaceBinding: () => findWorkspaceBinding,
+  isTooBroadForWorkspaceBinding: () => isTooBroadForWorkspaceBinding,
   resolveGitWorkspaceIdentity: () => resolveGitWorkspaceIdentity,
   writeWorkspaceBinding: () => writeWorkspaceBinding
 });
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { constants, promises as fs5 } from "node:fs";
+import os6 from "node:os";
 import path8 from "node:path";
+async function homeDirectories() {
+  const home = os6.homedir();
+  if (!home) return [];
+  const resolved = path8.resolve(home);
+  const real = await fs5.realpath(resolved).catch(() => resolved);
+  return real === resolved ? [resolved] : [resolved, real];
+}
+function coversHome(dir, homes) {
+  return homes.some((home) => containedBy(dir, home));
+}
+async function isTooBroadForWorkspaceBinding(dir) {
+  const homes = await homeDirectories();
+  const resolved = path8.resolve(dir);
+  const real = await fs5.realpath(resolved).catch(() => resolved);
+  return coversHome(resolved, homes) || coversHome(real, homes);
+}
+async function findIgnoredBroadWorkspaceBinding() {
+  const homes = await homeDirectories();
+  for (const home of homes) {
+    let dir = home;
+    for (let i = 0; i < 64; i++) {
+      const candidate = path8.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+      try {
+        const parsed = JSON.parse(await fs5.readFile(candidate, "utf8"));
+        if (typeof parsed.account_id === "string" && parsed.account_id) return candidate;
+      } catch {
+      }
+      const parent = path8.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return null;
+}
 async function walkForWorkspaceBinding(startDir) {
   let dir = path8.resolve(startDir);
+  const homes = await homeDirectories();
   for (let i = 0; i < 64; i++) {
+    if (coversHome(dir, homes)) return null;
     const candidate = path8.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
     try {
       const raw = await fs5.readFile(candidate, "utf8");
@@ -26495,6 +26549,11 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
   const root = await fs5.realpath(path8.resolve(workspaceRoot));
   const rootEntry = await fs5.stat(root);
   if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
+  if (await isTooBroadForWorkspaceBinding(root)) {
+    throw new Error(
+      `Refusing to link ${root}: it is your home folder or above it, so the link would cover every project inside it. Run this from inside the project folder instead.`
+    );
+  }
   const dir = path8.join(root, WORKSPACE_DIR_NAME);
   try {
     const entry = await fs5.lstat(dir);
@@ -26593,15 +26652,15 @@ var init_workspace_binding = __esm({
 // packages/plugin-core/dist/memlin-api-client.js
 import { readFileSync } from "node:fs";
 import crypto3 from "node:crypto";
-import os6 from "node:os";
+import os7 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function agentDevice() {
-  return process.env.MEMLIN_AGENT_DEVICE || os6.hostname() || "unknown";
+  return process.env.MEMLIN_AGENT_DEVICE || os7.hostname() || "unknown";
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.89";
+  cachedAgentVersion = "0.2.90";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -26781,8 +26840,8 @@ var init_memlin_api_client = __esm({
           [AGENT_DEVICE_HEADER]: agentDevice(),
           [AGENT_VERSION_HEADER]: version2,
           [AGENT_CAPABILITIES_HEADER]: (override.agentKind ? AGENT_EXPECTED_CAPABILITIES[kind] : agentCapabilities()).join(","),
-          [AGENT_PLATFORM_HEADER]: process.env.MEMLIN_AGENT_PLATFORM || os6.platform(),
-          [AGENT_ARCHITECTURE_HEADER]: process.env.MEMLIN_AGENT_ARCH || os6.arch()
+          [AGENT_PLATFORM_HEADER]: process.env.MEMLIN_AGENT_PLATFORM || os7.platform(),
+          [AGENT_ARCHITECTURE_HEADER]: process.env.MEMLIN_AGENT_ARCH || os7.arch()
         };
         if (includeAccount && this.cfg.accountId) {
           h["Memlin-Account-Id"] = this.cfg.accountId;
@@ -28012,10 +28071,10 @@ var init_hook_exit = __esm({
 // packages/plugin-core/dist/client.js
 import { promises as fs6 } from "node:fs";
 import path9 from "node:path";
-import os7 from "node:os";
+import os8 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 function globalConfigFilePath() {
-  return process.env.MEMLIN_CONFIG_FILE || path9.join(os7.homedir(), ".config", "memlin", "config.json");
+  return process.env.MEMLIN_CONFIG_FILE || path9.join(os8.homedir(), ".config", "memlin", "config.json");
 }
 async function readConfig() {
   try {
@@ -28128,7 +28187,7 @@ var init_client = __esm({
     init_private_mode();
     init_runtime_shared();
     init_hook_exit();
-    CONFIG_DIR = path9.join(os7.homedir(), ".config", "memlin");
+    CONFIG_DIR = path9.join(os8.homedir(), ".config", "memlin");
     TOKEN_FILE = path9.join(CONFIG_DIR, "token.json");
   }
 });
@@ -28136,7 +28195,7 @@ var init_client = __esm({
 // packages/plugin-core/dist/state.js
 import { promises as fs7 } from "node:fs";
 import path10 from "node:path";
-import os8 from "node:os";
+import os9 from "node:os";
 import crypto4 from "node:crypto";
 async function readState() {
   try {
@@ -28199,7 +28258,7 @@ var init_state = __esm({
   "packages/plugin-core/dist/state.js"() {
     "use strict";
     init_atomic_rename();
-    STATE_FILE = path10.join(os8.homedir(), ".config", "memlin", "state.json");
+    STATE_FILE = path10.join(os9.homedir(), ".config", "memlin", "state.json");
     MAX_LAST_RESOLVE_SESSIONS = 32;
     EMPTY = { documents: {} };
     LOCK_DIR = `${STATE_FILE}.lock`;
@@ -29384,7 +29443,7 @@ var PLUGIN_RUNTIME_TIMEOUT_MS = 150;
 var VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/;
 var HOSTS3 = /* @__PURE__ */ new Set(["cursor", "antigravity", "codex", "claude-code"]);
 function ownVersion() {
-  const version2 = "0.2.89";
+  const version2 = "0.2.90";
   return typeof version2 === "string" && VERSION.test(version2) ? version2 : null;
 }
 async function reportPluginRuntime(report) {
@@ -29420,7 +29479,7 @@ init_state();
 init_state();
 import { promises as fs8 } from "node:fs";
 import { existsSync } from "node:fs";
-import os9 from "node:os";
+import os10 from "node:os";
 import path11 from "node:path";
 
 // packages/plugin-core/dist/paths.js
@@ -29454,7 +29513,7 @@ function inferLocalPath(kind, title, existing) {
 // packages/plugin-core/dist/apply.js
 init_host();
 function archiveRoot() {
-  return path11.join(os9.homedir(), ".config", "memlin", "archive");
+  return path11.join(os10.homedir(), ".config", "memlin", "archive");
 }
 async function archiveDestination(trackedRelPath) {
   const base = path11.join(archiveRoot(), trackedRelPath);
@@ -29562,6 +29621,7 @@ init_project_resolver();
 
 // packages/plugin-core/dist/session-banner.js
 init_state();
+init_workspace_binding();
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var VERSION_URL = "https://raw.githubusercontent.com/memlin-ai/memlin-claude-plugin/main/.claude-plugin/marketplace.json";
 var FRESHNESS_TTL_MS = 6 * 60 * 60 * 1e3;
@@ -29621,6 +29681,11 @@ async function resolveBannerAccountName(input) {
 function formatBanner(opts) {
   const lines = [];
   if (opts.hazardWarning) lines.push(opts.hazardWarning);
+  if (opts.ignoredBroadPin) {
+    lines.push(
+      `Memlin: ignoring ${opts.ignoredBroadPin} \u2014 a link in your home folder would put every project under it into one account. Delete it and run /memlin-link inside each project instead.`
+    );
+  }
   if (opts.binding) {
     const { accountName, projectName, projectId, source } = opts.binding;
     const sourceTag = source === "workspace" ? " (workspace pin)" : source === "cross-account-match" ? " (auto-matched)" : "";
@@ -29652,7 +29717,8 @@ async function buildSessionBanner(binding, opts = { authenticated: true }) {
     authenticated: opts.authenticated,
     localVersion,
     latestVersion,
-    hazardWarning: opts.hazardWarning ?? null
+    hazardWarning: opts.hazardWarning ?? null,
+    ignoredBroadPin: await findIgnoredBroadWorkspaceBinding().catch(() => null)
   });
 }
 
@@ -29724,13 +29790,13 @@ init_host();
 init_project_resolver();
 import crypto5 from "node:crypto";
 import { promises as fs9 } from "node:fs";
-import os10 from "node:os";
+import os11 from "node:os";
 import path13 from "node:path";
 var DEFAULT_THROTTLE_MS = 6e4;
 var HEARTBEAT_REQUEST_TIMEOUT_MS = 750;
 function statePath(cwd, host) {
   const key = crypto5.createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return path13.join(os10.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
+  return path13.join(os11.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
 }
 async function recentlySent(file2, throttleMs) {
   try {
@@ -29834,7 +29900,7 @@ init_plan_sync();
 init_dist();
 init_atomic_rename();
 import { promises as fs12 } from "node:fs";
-import os13 from "node:os";
+import os14 from "node:os";
 import path18 from "node:path";
 
 // packages/plugin-core/dist/edit-activity.js
@@ -29843,7 +29909,7 @@ init_project_resolver();
 import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import path17 from "node:path";
-import os12 from "node:os";
+import os13 from "node:os";
 
 // packages/plugin-core/dist/edit-broker-local.js
 import crypto6 from "node:crypto";
@@ -29858,7 +29924,7 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import os11 from "node:os";
+import os12 from "node:os";
 import path16 from "node:path";
 import { execFileSync as execFileSync2 } from "node:child_process";
 
@@ -29866,7 +29932,7 @@ import { execFileSync as execFileSync2 } from "node:child_process";
 init_workspace_binding();
 init_dist();
 function compiledTriggersPath() {
-  return path18.join(os13.homedir(), ".config", "memlin", "triggers.json");
+  return path18.join(os14.homedir(), ".config", "memlin", "triggers.json");
 }
 function decodeStoredEntry(raw, fallbackId) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;

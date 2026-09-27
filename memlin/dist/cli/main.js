@@ -11218,7 +11218,7 @@ var init_resource_evidence = __esm({
 });
 
 // packages/shared/dist/thought-runtime.js
-var Id, Revision, Key, Hash, Time, Position, Size, ThoughtRelationKindV2Schema, ThoughtEntityKindV2Schema, ThoughtEntityPreconditionV2Schema, ThoughtPatch, LayoutPatchShape, LayoutPatch, ThoughtReferenceV2Schema, ThoughtCommandV2Schema, ThoughtCommandBatchV2Schema, CanonicalThoughtV2Schema, Layout, ThoughtWorkspaceSnapshotV2Schema, ThoughtWorkspaceChangesQueryV2Schema, ThoughtWorkspaceChangesV2Schema, ThoughtCommandResultV2Schema, ThoughtCreateV2Schema, ThoughtPreferencesV2Schema, ThoughtPreferencesReceiptV2Schema, ThoughtTopicDesignateV2Schema, ThoughtTopicDesignationReceiptV2Schema, ThoughtTopicMembershipV2Schema, ThoughtGuidanceStageV2Schema, ThoughtGuidanceStageStateV2Schema, GuidanceCardId, ThoughtGuidanceCardV2Schema, ThoughtGuidanceSessionV2Schema, ThoughtGuidanceReadV2Schema, GuidanceWriteBase, ThoughtGuidanceWriteV2Schema, ThoughtGuidanceQuestionRequestV2Schema, ThoughtGuidanceQuestionResultV2Schema, ThoughtTopicSuggestQueryV2Schema, ThoughtTopicPathStep, ThoughtTopicSuggestionsV2Schema, ThoughtTopicTreeV2Schema, TopicMemberBase, ThoughtTopicMemberWriteV2Schema, ThoughtTopicRemovalPreviewV2Schema, ThoughtTopicOperationReceiptV2Schema, ThoughtListCursorV2Schema, ThoughtWorkspaceListQueryV2Schema, ThoughtWorkspaceListV2Schema, ThoughtWorkspaceCountsV2Schema, ThoughtAssistRequestV2Schema, ThoughtProposalV1Schema, ResourceUploadRequestV2Schema, ResourceUploadReceiptV2Schema, ResourceIngestEnvelopeV2Schema, ResourceIngestReceiptV2Schema, ThoughtCollaborationSessionV1Schema, ThoughtWorkspaceEntryV2Schema, ThoughtAssistHistoryV2Schema, ThoughtAssistEvidenceV2Schema, ThoughtResourcePreviewV2Schema, ThoughtPublicLinkWriteV2Schema, ThoughtPublicLinksV2Schema, ThoughtDocumentCreateV2Schema, ThoughtDocumentLinkV2Schema, ThoughtDocumentsV2Schema, ThoughtDocumentCreatedV2Schema, ThoughtOutcomeResponseV2Schema, ThoughtOutcomeReceiptV2Schema, ThoughtDocumentSearchV2Schema, ThoughtDecisionAcceptV2Schema, ThoughtDecisionReceiptV2Schema;
+var Id, Revision, Key, Hash, Time, Position, Size, ThoughtRelationKindV2Schema, ThoughtEntityKindV2Schema, ThoughtEntityPreconditionV2Schema, ThoughtPatch, LayoutPatchShape, LayoutPatch, ThoughtReferenceV2Schema, ThoughtCommandV2Schema, ThoughtCommandBatchV2Schema, CanonicalThoughtV2Schema, Layout, ThoughtWorkspaceSnapshotV2Schema, ThoughtWorkspaceChangesQueryV2Schema, ThoughtWorkspaceChangesV2Schema, ThoughtCommandResultV2Schema, ThoughtCreateV2Schema, ThoughtPreferencesV2Schema, ThoughtPreferencesReceiptV2Schema, ThoughtLibraryArchiveV2Schema, ThoughtLibraryArchiveReceiptV2Schema, ThoughtTopicDesignateV2Schema, ThoughtTopicDesignationReceiptV2Schema, ThoughtTopicMembershipV2Schema, ThoughtGuidanceStageV2Schema, ThoughtGuidanceStageStateV2Schema, GuidanceCardId, ThoughtGuidanceCardV2Schema, ThoughtGuidanceSessionV2Schema, ThoughtGuidanceReadV2Schema, GuidanceWriteBase, ThoughtGuidanceWriteV2Schema, ThoughtGuidanceQuestionRequestV2Schema, ThoughtGuidanceQuestionResultV2Schema, ThoughtTopicSuggestQueryV2Schema, ThoughtTopicPathStep, ThoughtTopicSuggestionsV2Schema, ThoughtTopicTreeV2Schema, TopicMemberBase, ThoughtTopicMemberWriteV2Schema, ThoughtTopicRemovalPreviewV2Schema, ThoughtTopicOperationReceiptV2Schema, ThoughtListCursorV2Schema, ThoughtWorkspaceListQueryV2Schema, ThoughtWorkspaceListV2Schema, ThoughtWorkspaceCountsV2Schema, ThoughtAssistRequestV2Schema, ThoughtProposalV1Schema, ResourceUploadRequestV2Schema, ResourceUploadReceiptV2Schema, ResourceIngestEnvelopeV2Schema, ResourceIngestReceiptV2Schema, ThoughtCollaborationSessionV1Schema, ThoughtWorkspaceEntryV2Schema, ThoughtAssistHistoryV2Schema, ThoughtAssistEvidenceV2Schema, ThoughtResourcePreviewV2Schema, ThoughtPublicLinkWriteV2Schema, ThoughtPublicLinksV2Schema, ThoughtDocumentCreateV2Schema, ThoughtDocumentLinkV2Schema, ThoughtDocumentsV2Schema, ThoughtDocumentCreatedV2Schema, ThoughtOutcomeResponseV2Schema, ThoughtOutcomeReceiptV2Schema, ThoughtDocumentSearchV2Schema, ThoughtDecisionAcceptV2Schema, ThoughtDecisionReceiptV2Schema;
 var init_thought_runtime = __esm({
   "packages/shared/dist/thought-runtime.js"() {
     "use strict";
@@ -11487,6 +11487,21 @@ var init_thought_runtime = __esm({
       scope: external_exports.enum(["personal", "project", "team"]),
       replayed: external_exports.boolean()
     }).strict();
+    ThoughtLibraryArchiveV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      thought_id: Id,
+      archived: external_exports.boolean(),
+      idempotency_key: Key
+    }).strict();
+    ThoughtLibraryArchiveReceiptV2Schema = external_exports.object({
+      version: external_exports.literal(2),
+      receipt_id: Id,
+      thought_id: Id,
+      cursor: Revision,
+      archived: external_exports.boolean(),
+      archived_at: Time.nullable(),
+      replayed: external_exports.boolean()
+    }).strict();
     ThoughtTopicDesignateV2Schema = external_exports.object({
       version: external_exports.literal(2),
       root_thought_id: Id,
@@ -11692,7 +11707,7 @@ var init_thought_runtime = __esm({
     ThoughtListCursorV2Schema = external_exports.object({ updated_at: Time, id: Id }).strict();
     ThoughtWorkspaceListQueryV2Schema = external_exports.object({
       query: external_exports.string().trim().max(160).default(""),
-      filter: external_exports.enum(["recent", "personal", "team", "project", "starred", "rooms"]).default("recent"),
+      filter: external_exports.enum(["recent", "personal", "team", "project", "starred", "rooms", "archived"]).default("recent"),
       limit: external_exports.number().int().min(1).max(100).default(30),
       cursor: ThoughtListCursorV2Schema.nullable().default(null)
     }).strict();
@@ -27147,16 +27162,55 @@ __export(workspace_binding_exports, {
   WORKSPACE_BINDING_FILE: () => WORKSPACE_BINDING_FILE,
   WORKSPACE_DIR_NAME: () => WORKSPACE_DIR_NAME,
   clearWorkspaceBinding: () => clearWorkspaceBinding,
+  findIgnoredBroadWorkspaceBinding: () => findIgnoredBroadWorkspaceBinding,
   findWorkspaceBinding: () => findWorkspaceBinding,
+  isTooBroadForWorkspaceBinding: () => isTooBroadForWorkspaceBinding,
   resolveGitWorkspaceIdentity: () => resolveGitWorkspaceIdentity,
   writeWorkspaceBinding: () => writeWorkspaceBinding
 });
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { constants, promises as fs6 } from "node:fs";
+import os6 from "node:os";
 import path7 from "node:path";
+async function homeDirectories() {
+  const home = os6.homedir();
+  if (!home) return [];
+  const resolved = path7.resolve(home);
+  const real = await fs6.realpath(resolved).catch(() => resolved);
+  return real === resolved ? [resolved] : [resolved, real];
+}
+function coversHome(dir, homes) {
+  return homes.some((home) => containedBy(dir, home));
+}
+async function isTooBroadForWorkspaceBinding(dir) {
+  const homes = await homeDirectories();
+  const resolved = path7.resolve(dir);
+  const real = await fs6.realpath(resolved).catch(() => resolved);
+  return coversHome(resolved, homes) || coversHome(real, homes);
+}
+async function findIgnoredBroadWorkspaceBinding() {
+  const homes = await homeDirectories();
+  for (const home of homes) {
+    let dir = home;
+    for (let i = 0; i < 64; i++) {
+      const candidate = path7.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+      try {
+        const parsed = JSON.parse(await fs6.readFile(candidate, "utf8"));
+        if (typeof parsed.account_id === "string" && parsed.account_id) return candidate;
+      } catch {
+      }
+      const parent = path7.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+  return null;
+}
 async function walkForWorkspaceBinding(startDir) {
   let dir = path7.resolve(startDir);
+  const homes = await homeDirectories();
   for (let i = 0; i < 64; i++) {
+    if (coversHome(dir, homes)) return null;
     const candidate = path7.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
     try {
       const raw = await fs6.readFile(candidate, "utf8");
@@ -27349,6 +27403,11 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
   const root = await fs6.realpath(path7.resolve(workspaceRoot));
   const rootEntry = await fs6.stat(root);
   if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
+  if (await isTooBroadForWorkspaceBinding(root)) {
+    throw new Error(
+      `Refusing to link ${root}: it is your home folder or above it, so the link would cover every project inside it. Run this from inside the project folder instead.`
+    );
+  }
   const dir = path7.join(root, WORKSPACE_DIR_NAME);
   try {
     const entry = await fs6.lstat(dir);
@@ -27447,15 +27506,15 @@ var init_workspace_binding = __esm({
 // packages/plugin-core/src/memlin-api-client.ts
 import { readFileSync } from "node:fs";
 import crypto3 from "node:crypto";
-import os6 from "node:os";
+import os7 from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 function agentDevice() {
-  return process.env.MEMLIN_AGENT_DEVICE || os6.hostname() || "unknown";
+  return process.env.MEMLIN_AGENT_DEVICE || os7.hostname() || "unknown";
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.89";
+  cachedAgentVersion = "0.2.90";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -27636,8 +27695,8 @@ var init_memlin_api_client = __esm({
           [AGENT_DEVICE_HEADER]: agentDevice(),
           [AGENT_VERSION_HEADER]: version2,
           [AGENT_CAPABILITIES_HEADER]: (override.agentKind ? AGENT_EXPECTED_CAPABILITIES[kind] : agentCapabilities()).join(","),
-          [AGENT_PLATFORM_HEADER]: process.env.MEMLIN_AGENT_PLATFORM || os6.platform(),
-          [AGENT_ARCHITECTURE_HEADER]: process.env.MEMLIN_AGENT_ARCH || os6.arch()
+          [AGENT_PLATFORM_HEADER]: process.env.MEMLIN_AGENT_PLATFORM || os7.platform(),
+          [AGENT_ARCHITECTURE_HEADER]: process.env.MEMLIN_AGENT_ARCH || os7.arch()
         };
         if (includeAccount && this.cfg.accountId) {
           h["Memlin-Account-Id"] = this.cfg.accountId;
@@ -28851,10 +28910,10 @@ var init_hook_exit = __esm({
 // packages/plugin-core/src/client.ts
 import { promises as fs7 } from "node:fs";
 import path8 from "node:path";
-import os7 from "node:os";
+import os8 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 function globalConfigFilePath() {
-  return process.env.MEMLIN_CONFIG_FILE || path8.join(os7.homedir(), ".config", "memlin", "config.json");
+  return process.env.MEMLIN_CONFIG_FILE || path8.join(os8.homedir(), ".config", "memlin", "config.json");
 }
 async function readConfig() {
   try {
@@ -28955,7 +29014,7 @@ var init_client = __esm({
     init_private_mode();
     init_runtime_shared();
     init_hook_exit();
-    CONFIG_DIR = path8.join(os7.homedir(), ".config", "memlin");
+    CONFIG_DIR = path8.join(os8.homedir(), ".config", "memlin");
     TOKEN_FILE = path8.join(CONFIG_DIR, "token.json");
   }
 });
@@ -28964,9 +29023,9 @@ var init_client = __esm({
 import { promises as fs8 } from "node:fs";
 import { existsSync } from "node:fs";
 import path9 from "node:path";
-import os8 from "node:os";
+import os9 from "node:os";
 function defaultUserSettingsPaths() {
-  const claudeDir = path9.join(os8.homedir(), ".claude");
+  const claudeDir = path9.join(os9.homedir(), ".claude");
   return { claudeDir, settingsFile: path9.join(claudeDir, "settings.json") };
 }
 async function readClaudeUserSettings(paths) {
@@ -29304,7 +29363,7 @@ var init_login_bootstrap = __esm({
 // packages/plugin-core/src/resolver-skill.ts
 import { createHash } from "node:crypto";
 import { promises as fs10 } from "node:fs";
-import os9 from "node:os";
+import os10 from "node:os";
 import path11 from "node:path";
 async function ensureResolverSkill() {
   try {
@@ -29340,7 +29399,7 @@ var RESOLVER_SKILL_DIR, RESOLVER_SKILL_FILE, LEGACY_RESOLVER_SKILL_HASHES, RESOL
 var init_resolver_skill = __esm({
   "packages/plugin-core/src/resolver-skill.ts"() {
     "use strict";
-    RESOLVER_SKILL_DIR = path11.join(os9.homedir(), ".claude", "skills", "memlin");
+    RESOLVER_SKILL_DIR = path11.join(os10.homedir(), ".claude", "skills", "memlin");
     RESOLVER_SKILL_FILE = path11.join(RESOLVER_SKILL_DIR, "SKILL.md");
     LEGACY_RESOLVER_SKILL_HASHES = [
       // v1: 2026-06-09 → 2026-06-17. Before the "Writing your own memories"
@@ -29620,12 +29679,12 @@ var init_project_resolver = __esm({
 import { promises as fs11 } from "node:fs";
 import { existsSync as existsSync3 } from "node:fs";
 import { createHash as createHash2 } from "node:crypto";
-import os10 from "node:os";
+import os11 from "node:os";
 import path13 from "node:path";
 function nativeMemoryBackupRoot() {
   const override = process.env.MEMLIN_NATIVE_MEMORY_BACKUP_ROOT?.trim();
   if (override) return path13.resolve(override);
-  return path13.join(os10.homedir(), ".config", "memlin", "backups", "native-memory");
+  return path13.join(os11.homedir(), ".config", "memlin", "backups", "native-memory");
 }
 function backupSlugFor(memoryDir) {
   const resolved = path13.resolve(memoryDir);
@@ -29795,7 +29854,7 @@ var init_light_gate = __esm({
 import { promises as fs12 } from "node:fs";
 import { existsSync as existsSync4, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import os11 from "node:os";
+import os12 from "node:os";
 import path14 from "node:path";
 function gitMainRoot(cwd) {
   try {
@@ -29817,7 +29876,7 @@ function encodings(p) {
   ];
 }
 function nativeMemoryDirCandidates(cwd) {
-  const projects = path14.join(os11.homedir(), ".claude", "projects");
+  const projects = path14.join(os12.homedir(), ".claude", "projects");
   const roots = [gitMainRoot(cwd), cwd].filter((x) => !!x);
   const seen = /* @__PURE__ */ new Set();
   const out2 = [];
@@ -29863,7 +29922,7 @@ async function archiveHasFiles(memoryDir) {
   return false;
 }
 async function scanNativeMemoryGlobal() {
-  const projects = path14.join(os11.homedir(), ".claude", "projects");
+  const projects = path14.join(os12.homedir(), ".claude", "projects");
   let entries;
   try {
     entries = await fs12.readdir(projects);
@@ -30313,7 +30372,7 @@ var init_init = __esm({
 // packages/plugin-core/src/state.ts
 import { promises as fs13 } from "node:fs";
 import path15 from "node:path";
-import os12 from "node:os";
+import os13 from "node:os";
 import crypto4 from "node:crypto";
 async function readState() {
   try {
@@ -30411,7 +30470,7 @@ var init_state = __esm({
   "packages/plugin-core/src/state.ts"() {
     "use strict";
     init_atomic_rename();
-    STATE_FILE = path15.join(os12.homedir(), ".config", "memlin", "state.json");
+    STATE_FILE = path15.join(os13.homedir(), ".config", "memlin", "state.json");
     MAX_LAST_RESOLVE_SESSIONS = 32;
     EMPTY2 = { documents: {} };
     LOCK_DIR = `${STATE_FILE}.lock`;
@@ -31372,7 +31431,7 @@ var init_check_evaluators = __esm({
 var doctor_exports = {};
 import { promises as fs16 } from "node:fs";
 import path18 from "node:path";
-import os13 from "node:os";
+import os14 from "node:os";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function cursorPluginRoot() {
   const explicit = process.env.CURSOR_PLUGIN_ROOT ?? process.env.MEMLIN_CURSOR_PLUGIN_ROOT;
@@ -31643,7 +31702,7 @@ var init_doctor = __esm({
     init_companion_client();
     init_plugin_install();
     NET_TIMEOUT_MS = 5e3;
-    CONFIG_DIR2 = path18.join(os13.homedir(), ".config", "memlin");
+    CONFIG_DIR2 = path18.join(os14.homedir(), ".config", "memlin");
     CONFIG_FILE = path18.join(CONFIG_DIR2, "config.json");
     runCliMain(main4, (err2) => {
       console.error("memlin doctor failed:", err2 instanceof Error ? err2.message : err2);
@@ -31975,10 +32034,10 @@ var init_paths = __esm({
 // packages/plugin-core/src/apply.ts
 import { promises as fs18 } from "node:fs";
 import { existsSync as existsSync6 } from "node:fs";
-import os14 from "node:os";
+import os15 from "node:os";
 import path20 from "node:path";
 function archiveRoot() {
-  return path20.join(os14.homedir(), ".config", "memlin", "archive");
+  return path20.join(os15.homedir(), ".config", "memlin", "archive");
 }
 async function archiveDestination(trackedRelPath) {
   const base = path20.join(archiveRoot(), trackedRelPath);
@@ -32102,7 +32161,7 @@ import {
   rmSync,
   writeFileSync
 } from "node:fs";
-import os15 from "node:os";
+import os16 from "node:os";
 import path21 from "node:path";
 import { execFileSync as execFileSync3 } from "node:child_process";
 var init_edit_broker_local = __esm({
@@ -32115,7 +32174,7 @@ var init_edit_broker_local = __esm({
 import { execSync } from "node:child_process";
 import { realpathSync as realpathSync2 } from "node:fs";
 import path22 from "node:path";
-import os16 from "node:os";
+import os17 from "node:os";
 var init_edit_activity = __esm({
   "packages/plugin-core/src/edit-activity.ts"() {
     "use strict";
@@ -32127,10 +32186,10 @@ var init_edit_activity = __esm({
 
 // packages/plugin-core/src/trigger-memories.ts
 import { promises as fs19 } from "node:fs";
-import os17 from "node:os";
+import os18 from "node:os";
 import path23 from "node:path";
 function compiledTriggersPath() {
-  return path23.join(os17.homedir(), ".config", "memlin", "triggers.json");
+  return path23.join(os18.homedir(), ".config", "memlin", "triggers.json");
 }
 function decodeStoredEntry(raw, fallbackId) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -33096,7 +33155,7 @@ var init_private = __esm({
 // packages/plugin-core/src/cli/bind-plans.ts
 var bind_plans_exports = {};
 import path28 from "node:path";
-import os18 from "node:os";
+import os19 from "node:os";
 import { execSync as execSync3 } from "node:child_process";
 function readGitRemote3(cwd) {
   try {
@@ -33205,7 +33264,7 @@ var init_bind_plans = __esm({
     init_cli_runner();
     init_project_resolver();
     init_plan_sync();
-    PLANS_DIR = path28.join(os18.homedir(), ".claude", "plans");
+    PLANS_DIR = path28.join(os19.homedir(), ".claude", "plans");
     runCliMain(main12, (err2) => {
       console.error("memlin bind-plans failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
@@ -33374,9 +33433,9 @@ import { spawn } from "node:child_process";
 import crypto6 from "node:crypto";
 import { promises as fs22 } from "node:fs";
 import path30 from "node:path";
-import os19 from "node:os";
+import os20 from "node:os";
 function pendingBundleSpoolDir() {
-  return process.env.MEMLIN_PENDING_BUNDLE_DIR ?? path30.join(os19.homedir(), ".config", "memlin", PENDING_BUNDLE_DIR);
+  return process.env.MEMLIN_PENDING_BUNDLE_DIR ?? path30.join(os20.homedir(), ".config", "memlin", PENDING_BUNDLE_DIR);
 }
 function pendingBundleKey(cwd, host, sessionId, task) {
   return crypto6.createHash("sha256").update(JSON.stringify([cwd, host, sessionId ?? null, task])).digest("hex");
@@ -33446,7 +33505,7 @@ var init_pending_bundle = __esm({
 
 // packages/plugin-core/src/deploy-broker.ts
 import { existsSync as existsSync9, mkdirSync as mkdirSync2, readFileSync as readFileSync4, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
-import os20 from "node:os";
+import os21 from "node:os";
 import path31 from "node:path";
 var init_deploy_broker = __esm({
   "packages/plugin-core/src/deploy-broker.ts"() {
@@ -34395,10 +34454,10 @@ var init_resolve_args = __esm({
 // packages/plugin-core/src/bundle-cache.ts
 import crypto7 from "node:crypto";
 import { promises as fs23 } from "node:fs";
-import os21 from "node:os";
+import os22 from "node:os";
 import path32 from "node:path";
 function bundleCacheDir() {
-  return process.env.MEMLIN_BUNDLE_CACHE_DIR ?? path32.join(os21.homedir(), ".config", "memlin", "bundle-cache");
+  return process.env.MEMLIN_BUNDLE_CACHE_DIR ?? path32.join(os22.homedir(), ".config", "memlin", "bundle-cache");
 }
 function bundleCacheKey(accountId, projectId) {
   return crypto7.createHash("sha256").update(JSON.stringify([accountId ?? null, projectId ?? null])).digest("hex");
@@ -35394,10 +35453,10 @@ var init_transcript = __esm({
 var scribe_exports = {};
 import { promises as fs25 } from "node:fs";
 import path33 from "node:path";
-import os22 from "node:os";
+import os23 from "node:os";
 import { createHash as createHash4 } from "node:crypto";
 async function findLatestTranscript(cwd) {
-  const projectsDir = path33.join(os22.homedir(), ".claude", "projects");
+  const projectsDir = path33.join(os23.homedir(), ".claude", "projects");
   const encoded = cwd.replace(/\//g, "-");
   const direct = path33.join(projectsDir, encoded);
   let scanDirs = [];
@@ -37033,7 +37092,7 @@ var init_features = __esm({
 // packages/plugin-core/src/file-upload.ts
 import { constants as constants4, promises as fs27 } from "node:fs";
 import path38 from "node:path";
-import os23 from "node:os";
+import os24 from "node:os";
 import { createHash as createHash7, randomUUID as randomUUID7 } from "node:crypto";
 function validateFileUploadId(value) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
@@ -37056,7 +37115,7 @@ async function prepareLocalFile(input) {
     [file2, workspace, temporary] = await Promise.all([
       fs27.realpath(lexical),
       fs27.realpath(input.workspaceRoot),
-      fs27.realpath(input.tmpRoot ?? os23.tmpdir())
+      fs27.realpath(input.tmpRoot ?? os24.tmpdir())
     ]);
   } catch {
     throw new FileUploadRefusal("The file or workspace could not be opened.");
@@ -261291,7 +261350,7 @@ var require_ts_morph_common = __commonJS({
     var path$1 = require_path_browserify();
     var fs$1 = __require("node:fs");
     var fsp = __require("node:fs/promises");
-    var os24 = __require("node:os");
+    var os25 = __require("node:os");
     var path$2 = __require("node:path");
     var tinyglobby = require_dist2();
     function _interopDefaultCompat(e) {
@@ -261321,7 +261380,7 @@ var require_ts_morph_common = __commonJS({
     var path__default = /* @__PURE__ */ _interopDefaultCompat(path$1);
     var fs__namespace = /* @__PURE__ */ _interopNamespaceCompat(fs$1);
     var fsp__namespace = /* @__PURE__ */ _interopNamespaceCompat(fsp);
-    var os__namespace = /* @__PURE__ */ _interopNamespaceCompat(os24);
+    var os__namespace = /* @__PURE__ */ _interopNamespaceCompat(os25);
     var path__namespace = /* @__PURE__ */ _interopNamespaceCompat(path$2);
     var KeyValueCache = class {
       #cacheItems = /* @__PURE__ */ new Map();
