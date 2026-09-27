@@ -26182,6 +26182,17 @@ var init_host = __esm({
 import { promises as fs4 } from "node:fs";
 import path7 from "node:path";
 import os5 from "node:os";
+function normalizeLevel(raw) {
+  return raw === "read_only" ? "read_only" : "private";
+}
+function isMemoryWrite(method, pathAndQuery) {
+  if (method === "GET") return false;
+  const pathOnly = pathAndQuery.split("?")[0] ?? pathAndQuery;
+  if (!READ_ONLY_BLOCKED_PREFIXES.some((p) => pathOnly === p || pathOnly.startsWith(`${p}/`))) {
+    return false;
+  }
+  return !READ_ONLY_ALLOWED_WRITES.some((re) => re.test(`${method} ${pathOnly}`));
+}
 function stateFile() {
   return path7.join(os5.homedir(), ".config", "memlin", "private-sessions.json");
 }
@@ -26212,21 +26223,28 @@ async function writePrivateState(state, now) {
   await fs4.writeFile(tmp, JSON.stringify(state, null, 2), { mode: 384 });
   await atomicRename(tmp, file2);
 }
-function envPrivate() {
+function envLevel() {
   const v = process.env.MEMLIN_PRIVATE?.trim().toLowerCase();
-  return v === "1" || v === "true" || v === "on";
+  if (v === "1" || v === "true" || v === "on" || v === "private") return "private";
+  if (v === "read-only" || v === "read_only" || v === "readonly") return "read_only";
+  return null;
 }
 function currentSessionId() {
   return process.env.MEMLIN_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null;
 }
-async function isPrivateSession(sessionId = currentSessionId(), now = Date.now(), accountId = null) {
+async function captureLevel(sessionId = currentSessionId(), now = Date.now(), accountId = null) {
   const state = await readPrivateState();
-  if (accountId && accountDenied(state, accountId, now)) return false;
-  if (envPrivate()) return true;
-  if (accountId && accountPrivateActive(state, accountId, now)) return true;
-  if (!sessionId) return false;
-  const entry = state.sessions[sessionId];
-  return Boolean(entry && entry.expires_at > now);
+  const asked = [];
+  const env = envLevel();
+  if (env) asked.push(env);
+  if (accountId && accountPrivateActive(state, accountId, now)) {
+    asked.push(normalizeLevel(state.accounts[accountId].level));
+  }
+  const entry = sessionId ? state.sessions[sessionId] : void 0;
+  if (entry && entry.expires_at > now) asked.push(normalizeLevel(entry.level));
+  const denied = Boolean(accountId && accountDenied(state, accountId, now));
+  if (asked.includes("private") && !denied) return "private";
+  return asked.includes("read_only") ? "read_only" : null;
 }
 function accountDenied(state, accountId, now) {
   const entry = state.denied?.[accountId];
@@ -26236,7 +26254,7 @@ function accountPrivateActive(state, accountId, now) {
   const entry = state.accounts?.[accountId];
   return Boolean(entry && (entry.until === null || entry.until > now));
 }
-async function notePrivateUntil(accountId, header, now = Date.now()) {
+async function notePrivateUntil(accountId, header, now = Date.now(), levelHeader = null) {
   const state = await readPrivateState();
   if (header === "denied") {
     const prev2 = state.denied?.[accountId];
@@ -26253,14 +26271,17 @@ async function notePrivateUntil(accountId, header, now = Date.now()) {
     const at = Date.parse(header);
     until = Number.isFinite(at) && at > now ? at : void 0;
   }
-  if (until !== void 0 && state.denied?.[accountId]) delete state.denied[accountId];
+  const level = normalizeLevel(levelHeader);
+  if (until !== void 0 && level === "private" && state.denied?.[accountId]) {
+    delete state.denied[accountId];
+  }
   const prev = state.accounts?.[accountId];
   if (until === void 0) {
     if (!prev) return;
     delete state.accounts[accountId];
   } else {
-    if (prev && prev.until === until) return;
-    state.accounts = { ...state.accounts, [accountId]: { until, seen_at: now } };
+    if (prev && prev.until === until && normalizeLevel(prev.level) === level) return;
+    state.accounts = { ...state.accounts, [accountId]: { until, seen_at: now, level } };
   }
   await writePrivateState(state, now);
 }
@@ -26272,7 +26293,12 @@ async function inheritClearedPrivate(sessionId, opts = {}) {
   if (!cleared || now - cleared.at > CLEAR_INHERIT_WINDOW_MS) return false;
   if ((cleared.cwd ?? null) !== (opts.cwd ?? null)) return false;
   delete state.cleared;
-  state.sessions[sessionId] = { started_at: now, expires_at: now + PRIVATE_TTL_MS, cwd: opts.cwd ?? null };
+  state.sessions[sessionId] = {
+    started_at: now,
+    expires_at: now + PRIVATE_TTL_MS,
+    cwd: opts.cwd ?? null,
+    level: normalizeLevel(cleared.level)
+  };
   state.last_toggled = { session_id: sessionId, on: true, at: now };
   await writePrivateState(state, now);
   return true;
@@ -26282,13 +26308,26 @@ function isPrivateAllowedWrite(method, pathAndQuery) {
   const pathOnly = pathAndQuery.split("?")[0];
   return PRIVATE_ALLOWED_WRITES.includes(`${method} ${pathOnly}`);
 }
-var PRIVATE_HEADER, PRIVATE_UNTIL_HEADER, PRIVATE_TTL_MS, CLEAR_INHERIT_WINDOW_MS, PRIVATE_ALLOWED_WRITES, DENIED_TTL_MS, FLOOR_TTL_MS, PRIVATE_ON_NOTICE;
+var PRIVATE_HEADER, PRIVATE_UNTIL_HEADER, PRIVATE_LEVEL_HEADER, READ_ONLY_BLOCKED_PREFIXES, READ_ONLY_ALLOWED_WRITES, PRIVATE_TTL_MS, CLEAR_INHERIT_WINDOW_MS, PRIVATE_ALLOWED_WRITES, DENIED_TTL_MS, FLOOR_TTL_MS, READ_ONLY_ON_NOTICE, PRIVATE_ON_NOTICE;
 var init_private_mode = __esm({
   "packages/plugin-core/dist/private-mode.js"() {
     "use strict";
     init_atomic_rename();
     PRIVATE_HEADER = "Memlin-Private";
     PRIVATE_UNTIL_HEADER = "Memlin-Private-Until";
+    PRIVATE_LEVEL_HEADER = "Memlin-Private-Level";
+    READ_ONLY_BLOCKED_PREFIXES = [
+      "/scribe",
+      "/memory",
+      "/documents",
+      "/decisions",
+      "/inbox",
+      "/promote"
+    ];
+    READ_ONLY_ALLOWED_WRITES = [
+      /^POST \/documents\/search$/,
+      /^POST \/decisions\/[^/]+\/asked$/
+    ];
     PRIVATE_TTL_MS = 24 * 60 * 60 * 1e3;
     CLEAR_INHERIT_WINDOW_MS = 3e4;
     PRIVATE_ALLOWED_WRITES = [
@@ -26298,6 +26337,7 @@ var init_private_mode = __esm({
     ];
     DENIED_TTL_MS = 10 * 60 * 1e3;
     FLOOR_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+    READ_ONLY_ON_NOTICE = "Memlin read-only mode is ON for this session. Memlin context still loads and your team still sees this work, but nothing changes team memory: no scribe capture, no memory proposals, no saved memories, skills or decisions. Turn it off with /memlin-private off. It ends with the session.";
     PRIVATE_ON_NOTICE = "Memlin private mode is ON for this session. Memlin context still loads, but nothing from this session is saved: no scribe capture, no plan sync, no activity, no audit. Turn it off with /memlin-private off. It ends with the session.";
   }
 });
@@ -26847,6 +26887,7 @@ var init_memlin_api_client = __esm({
           h["Memlin-Account-Id"] = this.cfg.accountId;
         }
         if (this.cfg.privateSession) h[PRIVATE_HEADER] = "1";
+        else if (this.cfg.readOnlySession) h[PRIVATE_HEADER] = "read-only";
         return h;
       }
       async request(method, pathAndQuery, body, opts = {}) {
@@ -26901,11 +26942,14 @@ var init_memlin_api_client = __esm({
             }
           }
           const refusalCode = await this.noteAuthOutcome(res.status, parsed, refusalAccountId);
-          const privateRefusal = parsed?.code === "private_mode";
+          const refusedCode = parsed?.code;
+          const privateRefusal = refusedCode === "private_mode" || refusedCode === "read_only_mode";
           if (refusalAccountId && (res.ok || privateRefusal)) {
             await notePrivateUntil(
               refusalAccountId,
-              res.headers.get(PRIVATE_UNTIL_HEADER) ?? (parsed?.private_until ?? null)
+              res.headers.get(PRIVATE_UNTIL_HEADER) ?? (parsed?.private_until ?? null),
+              Date.now(),
+              res.headers.get(PRIVATE_LEVEL_HEADER) ?? (refusedCode === "read_only_mode" ? "read_only" : null)
             ).catch(() => {
             });
           }
@@ -26915,7 +26959,7 @@ var init_memlin_api_client = __esm({
             throw new MemlinApiError(
               `${method} ${pathAndQuery} \u2192 ${res.status}: ${errMsg}`,
               res.status,
-              refusalCode ?? (privateRefusal ? "private_mode" : void 0)
+              refusalCode ?? (privateRefusal ? refusedCode : void 0)
             );
           }
           return parsed;
@@ -26934,7 +26978,17 @@ var init_memlin_api_client = __esm({
       }
       /** Zero-network short circuit while a membership refusal is fresh. */
       throwIfPrivateWrite(method, pathAndQuery) {
-        if (!this.cfg.privateSession || isPrivateAllowedWrite(method, pathAndQuery)) return;
+        if (!this.cfg.privateSession) {
+          if (this.cfg.readOnlySession && isMemoryWrite(method, pathAndQuery)) {
+            throw new MemlinApiError(
+              `${method} ${pathAndQuery}: skipped \u2014 Memlin read-only mode is on for this session, so nothing may change team memory (turn it off with /memlin-private off)`,
+              423,
+              "read_only_mode"
+            );
+          }
+          return;
+        }
+        if (isPrivateAllowedWrite(method, pathAndQuery)) return;
         if (method === "POST" && pathAndQuery.split("?")[0] === "/resolve/v2") {
           throw new MemlinApiError("POST /resolve/v2 \u2192 404: progressive resolve unavailable", 404);
         }
@@ -27677,9 +27731,18 @@ var init_memlin_api_client = __esm({
       async getPrivateMode(opts = {}) {
         return this.request("GET", "/account/private-mode", void 0, opts);
       }
-      /** PUT /account/private-mode — until: ISO timestamp, 'infinity', or null (off). */
+      /**
+       * PUT /account/private-mode — until: ISO timestamp, 'infinity', or null
+       * (off); level: 'private' (default) or 'read_only'.
+       */
       async setPrivateMode(until, opts = {}) {
-        return this.request("PUT", "/account/private-mode", { until }, opts);
+        const { level, ...requestOpts } = opts;
+        return this.request(
+          "PUT",
+          "/account/private-mode",
+          level ? { until, level } : { until },
+          requestOpts
+        );
       }
       /**
        * POST /deploy-guard — acquire, release, status, or queue the per-project
@@ -28128,15 +28191,26 @@ async function getApi(opts = {}) {
     overlay
   );
   const apiUrl = process.env.MEMLIN_API_URL?.trim() || config2.api_url || resolveApiUrl();
-  const privateSession = await isPrivateSession(void 0, void 0, config2.account_id);
+  const level = await captureLevel(void 0, void 0, config2.account_id);
+  const privateSession = level === "private";
+  const readOnlySession = level === "read_only";
   const api = new MemlinApiClient({
     baseUrl: apiUrl,
     getAccessToken: () => getIdentityBoundAccessToken(config2),
     accountId: config2.account_id,
     authRefusal: { binding: workspaceRoot, accountName: workspaceAccountName },
-    privateSession
+    privateSession,
+    readOnlySession
   });
-  return { api, config: config2, workspaceBound, workspaceRoot, workspaceAccountName, privateSession };
+  return {
+    api,
+    config: config2,
+    workspaceBound,
+    workspaceRoot,
+    workspaceAccountName,
+    privateSession,
+    readOnlySession
+  };
 }
 async function hookAuthRefusal(opts) {
   try {
@@ -30119,6 +30193,7 @@ async function main() {
     return;
   }
   if (ctx.privateSession) process.stdout.write(PRIVATE_ON_NOTICE + "\n");
+  else if (ctx.readOnlySession) process.stdout.write(READ_ONLY_ON_NOTICE + "\n");
   if ((await ctx.api.lightStatus())?.active) {
     startLightWorker(cwd);
     process.stdout.write(
