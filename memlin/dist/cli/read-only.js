@@ -41,9 +41,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/plugin-core/dist/atomic-rename.js
+// packages/plugin-core/src/atomic-rename.ts
 import { promises as fs } from "node:fs";
-import path2 from "node:path";
+import path from "node:path";
 async function renameWithRetry(from, to, rename) {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -60,7 +60,7 @@ async function renameWithRetry(from, to, rename) {
 }
 async function atomicRename(from, to, dependencies = {}) {
   const rename = dependencies.rename ?? fs.rename;
-  const queueKey = path2.resolve(to);
+  const queueKey = path.resolve(to);
   const previous = renameQueues.get(queueKey) ?? Promise.resolve();
   const run = previous.catch(() => void 0).then(() => renameWithRetry(from, to, rename));
   renameQueues.set(queueKey, run);
@@ -72,7 +72,7 @@ async function atomicRename(from, to, dependencies = {}) {
 }
 var RETRYABLE_CODES, MAX_ATTEMPTS, BASE_DELAY_MS, MAX_DELAY_MS, renameQueues;
 var init_atomic_rename = __esm({
-  "packages/plugin-core/dist/atomic-rename.js"() {
+  "packages/plugin-core/src/atomic-rename.ts"() {
     "use strict";
     RETRYABLE_CODES = /* @__PURE__ */ new Set(["EPERM", "EACCES", "EBUSY"]);
     MAX_ATTEMPTS = 10;
@@ -82,7 +82,216 @@ var init_atomic_rename = __esm({
   }
 });
 
-// packages/plugin-core/dist/backend-error.js
+// packages/plugin-core/src/private-mode.ts
+import { promises as fs2 } from "node:fs";
+import path2 from "node:path";
+import os from "node:os";
+function normalizeLevel(raw) {
+  return raw === "read_only" ? "read_only" : "private";
+}
+function isMemoryWrite(method, pathAndQuery) {
+  if (method === "GET") return false;
+  const pathOnly = pathAndQuery.split("?")[0] ?? pathAndQuery;
+  if (!READ_ONLY_BLOCKED_PREFIXES.some((p) => pathOnly === p || pathOnly.startsWith(`${p}/`))) {
+    return false;
+  }
+  return !READ_ONLY_ALLOWED_WRITES.some((re) => re.test(`${method} ${pathOnly}`));
+}
+function stateFile() {
+  return path2.join(os.homedir(), ".config", "memlin", "private-sessions.json");
+}
+async function readPrivateState() {
+  try {
+    const parsed = JSON.parse(await fs2.readFile(stateFile(), "utf8"));
+    return { ...parsed, sessions: parsed.sessions ?? {} };
+  } catch {
+    return { sessions: {} };
+  }
+}
+async function writePrivateState(state, now) {
+  for (const [id, entry] of Object.entries(state.sessions)) {
+    if (entry.expires_at <= now) delete state.sessions[id];
+  }
+  for (const [id, entry] of Object.entries(state.denied ?? {})) {
+    if (now - entry.at > DENIED_TTL_MS) delete state.denied?.[id];
+  }
+  for (const [id, entry] of Object.entries(state.accounts ?? {})) {
+    if (entry.until !== null && entry.until <= now) delete state.accounts?.[id];
+  }
+  for (const [id, floor] of Object.entries(state.floors ?? {})) {
+    if (now - floor.at > FLOOR_TTL_MS) delete state.floors?.[id];
+  }
+  const file2 = stateFile();
+  await fs2.mkdir(path2.dirname(file2), { recursive: true });
+  const tmp = `${file2}.${process.pid}.${Date.now()}.tmp`;
+  await fs2.writeFile(tmp, JSON.stringify(state, null, 2), { mode: 384 });
+  await atomicRename(tmp, file2);
+}
+function envLevel() {
+  const v = process.env.MEMLIN_PRIVATE?.trim().toLowerCase();
+  if (v === "1" || v === "true" || v === "on" || v === "private") return "private";
+  if (v === "read-only" || v === "read_only" || v === "readonly") return "read_only";
+  return null;
+}
+function currentSessionId() {
+  return process.env.MEMLIN_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null;
+}
+async function captureLevel(sessionId = currentSessionId(), now = Date.now(), accountId = null) {
+  const state = await readPrivateState();
+  const asked = [];
+  const env = envLevel();
+  if (env) asked.push(env);
+  if (accountId && accountPrivateActive(state, accountId, now)) {
+    asked.push(normalizeLevel(state.accounts[accountId].level));
+  }
+  const entry = sessionId ? state.sessions[sessionId] : void 0;
+  if (entry && entry.expires_at > now) asked.push(normalizeLevel(entry.level));
+  const denied = Boolean(accountId && accountDenied(state, accountId, now));
+  if (asked.includes("private") && !denied) return "private";
+  return asked.includes("read_only") ? "read_only" : null;
+}
+function accountDenied(state, accountId, now) {
+  const entry = state.denied?.[accountId];
+  return Boolean(entry && now - entry.at <= DENIED_TTL_MS);
+}
+function accountPrivateActive(state, accountId, now) {
+  const entry = state.accounts?.[accountId];
+  return Boolean(entry && (entry.until === null || entry.until > now));
+}
+async function notePrivateUntil(accountId, header, now = Date.now(), levelHeader = null) {
+  const state = await readPrivateState();
+  if (header === "denied") {
+    const prev2 = state.denied?.[accountId];
+    if (prev2 && now - prev2.at < 6e4 && !state.accounts?.[accountId]) return;
+    state.denied = { ...state.denied, [accountId]: { at: now } };
+    delete state.accounts?.[accountId];
+    await writePrivateState(state, now);
+    return;
+  }
+  let until;
+  if (!header || header === "off") until = void 0;
+  else if (header === "infinity") until = null;
+  else {
+    const at = Date.parse(header);
+    until = Number.isFinite(at) && at > now ? at : void 0;
+  }
+  const level = normalizeLevel(levelHeader);
+  if (until !== void 0 && level === "private" && state.denied?.[accountId]) {
+    delete state.denied[accountId];
+  }
+  const prev = state.accounts?.[accountId];
+  if (until === void 0) {
+    if (!prev) return;
+    delete state.accounts[accountId];
+  } else {
+    if (prev && prev.until === until && normalizeLevel(prev.level) === level) return;
+    state.accounts = { ...state.accounts, [accountId]: { until, seen_at: now, level } };
+  }
+  await writePrivateState(state, now);
+}
+async function setPrivateSession(sessionId, on, opts = {}) {
+  const now = opts.now ?? Date.now();
+  const state = await readPrivateState();
+  if (!on && state.sessions[sessionId]) {
+    await raiseFloor(state, sessionId, opts.transcriptPath ?? null, now);
+  }
+  if (on) {
+    state.sessions[sessionId] = {
+      started_at: state.sessions[sessionId]?.started_at ?? now,
+      expires_at: now + PRIVATE_TTL_MS,
+      cwd: opts.cwd ?? null,
+      level: opts.level ?? "private"
+    };
+  } else {
+    delete state.sessions[sessionId];
+  }
+  state.last_toggled = { session_id: sessionId, on, at: now };
+  await writePrivateState(state, now);
+}
+async function privateStatus(sessionId = currentSessionId(), now = Date.now(), accountId = null) {
+  const state = await readPrivateState();
+  const id = sessionId ?? state.last_toggled?.session_id ?? null;
+  const level = await captureLevel(id, now, accountId);
+  if (!level) {
+    const denied = Boolean(accountId && accountDenied(state, accountId, now));
+    return { on: false, source: denied ? "denied" : "off", expiresAt: null, level: null };
+  }
+  const env = envLevel();
+  if (env === level) return { on: true, source: "env", expiresAt: null, level };
+  const account = accountId ? state.accounts?.[accountId] : void 0;
+  if (account && accountPrivateActive(state, accountId, now) && normalizeLevel(account.level) === level) {
+    return { on: true, source: "account", expiresAt: account.until, level };
+  }
+  const entry = id ? state.sessions[id] : void 0;
+  return { on: true, source: "session", expiresAt: entry?.expires_at ?? null, level };
+}
+async function raiseFloor(state, sessionId, transcriptPath, now) {
+  let chars = null;
+  if (transcriptPath) {
+    try {
+      chars = (await fs2.readFile(transcriptPath, "utf8")).length;
+    } catch {
+    }
+  }
+  const prev = state.floors?.[sessionId];
+  if (prev && (prev.chars === null || chars === null)) chars = null;
+  else if (prev && chars !== null) chars = Math.max(prev.chars, chars);
+  state.floors = { ...state.floors, [sessionId]: { chars, at: now } };
+}
+async function checkPrivateAllowed(api, accountId, timeoutMs = 3e3) {
+  try {
+    const res = await Promise.race([
+      api.getPrivateMode({ accountId }),
+      new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs).unref())
+    ]);
+    if (!res || typeof res.allowed !== "boolean") return null;
+    if (!res.allowed) await notePrivateUntil(accountId, "denied");
+    return res.allowed;
+  } catch {
+    return null;
+  }
+}
+function isPrivateAllowedWrite(method, pathAndQuery) {
+  if (method === "GET") return true;
+  const pathOnly = pathAndQuery.split("?")[0];
+  return PRIVATE_ALLOWED_WRITES.includes(`${method} ${pathOnly}`);
+}
+var PRIVATE_HEADER, PRIVATE_UNTIL_HEADER, PRIVATE_LEVEL_HEADER, READ_ONLY_BLOCKED_PREFIXES, READ_ONLY_ALLOWED_WRITES, PRIVATE_TTL_MS, PRIVATE_ALLOWED_WRITES, DENIED_TTL_MS, FLOOR_TTL_MS, READ_ONLY_ON_NOTICE, PRIVATE_ON_NOTICE, PRIVATE_DENIED_NOTICE, PRIVATE_OFF_NOTICE;
+var init_private_mode = __esm({
+  "packages/plugin-core/src/private-mode.ts"() {
+    "use strict";
+    init_atomic_rename();
+    PRIVATE_HEADER = "Memlin-Private";
+    PRIVATE_UNTIL_HEADER = "Memlin-Private-Until";
+    PRIVATE_LEVEL_HEADER = "Memlin-Private-Level";
+    READ_ONLY_BLOCKED_PREFIXES = [
+      "/scribe",
+      "/memory",
+      "/documents",
+      "/decisions",
+      "/inbox",
+      "/promote"
+    ];
+    READ_ONLY_ALLOWED_WRITES = [
+      /^POST \/documents\/search$/,
+      /^POST \/decisions\/[^/]+\/asked$/
+    ];
+    PRIVATE_TTL_MS = 24 * 60 * 60 * 1e3;
+    PRIVATE_ALLOWED_WRITES = [
+      "POST /resolve",
+      "POST /projects/resolve",
+      "POST /deploy-guard"
+    ];
+    DENIED_TTL_MS = 10 * 60 * 1e3;
+    FLOOR_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
+    READ_ONLY_ON_NOTICE = "Memlin read-only mode is ON for this session. Memlin context still loads and your team still sees this work, but nothing changes team memory: no scribe capture, no memory proposals, no saved memories, skills or decisions. Turn it off with /memlin-private off. It ends with the session.";
+    PRIVATE_ON_NOTICE = "Memlin private mode is ON for this session. Memlin context still loads, but nothing from this session is saved: no scribe capture, no plan sync, no activity, no audit. Turn it off with /memlin-private off. It ends with the session.";
+    PRIVATE_DENIED_NOTICE = "Memlin private mode is not available to you in this workspace \u2014 its owners or admins limit who can use it (Settings \u2192 Private mode). This session is captured normally.";
+    PRIVATE_OFF_NOTICE = "Memlin private and read-only mode are OFF. This session is captured normally from here on; nothing before it was saved or learned from.";
+  }
+});
+
+// packages/plugin-core/src/backend-error.ts
 function looksLikeHtml(text) {
   const head = text.slice(0, 512).trimStart().toLowerCase();
   return head.startsWith("<!doctype html") || head.startsWith("<html") || head.includes("<html") || head.startsWith("<") && /<\/(head|body|title|div|p)>/i.test(text);
@@ -100,47 +309,9 @@ function describeOpaqueBody(status, text) {
   }
   return `HTTP ${status}: ${singleLine(trimmed)}`;
 }
-function backendUnreachableLine(detail) {
-  return `memlin: backend unreachable (${detail}), no memory available`;
-}
-function statusOf(err) {
-  if (err instanceof MemlinApiError) return err.status;
-  const status = err?.status;
-  if (typeof status === "number" && status >= 100 && status <= 599) return status;
-  const message = err instanceof Error ? err.message : String(err);
-  const arrow = message.match(/→ (\d{3}):/);
-  if (arrow) return Number(arrow[1]);
-  return null;
-}
-function summarizeBackendFailure(err) {
-  const message = err instanceof Error ? err.message : String(err ?? "");
-  const status = statusOf(err);
-  if (ROUTING_PATTERN.test(message)) {
-    const embedded = message.match(CLOUDFLARE_STATUS)?.[1];
-    const code = embedded ?? (status !== null && status >= 500 ? String(status) : null);
-    const detail = code ? `routing ${code}` : "routing unavailable";
-    return { kind: "routing", status: code ? Number(code) : status, detail, line: backendUnreachableLine(detail) };
-  }
-  if (status !== null && status >= 500) {
-    const detail = `HTTP ${status}`;
-    return { kind: "http", status, detail, line: backendUnreachableLine(detail) };
-  }
-  if (/took longer than \d+ seconds/i.test(message)) {
-    return { kind: "network", status: null, detail: "timeout", line: backendUnreachableLine("timeout") };
-  }
-  if (/couldn'?t reach|fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network/i.test(message)) {
-    return {
-      kind: "network",
-      status: null,
-      detail: "network unreachable",
-      line: backendUnreachableLine("network unreachable")
-    };
-  }
-  return null;
-}
-var MemlinApiError, ROUTING_PATTERN, CLOUDFLARE_STATUS;
+var MemlinApiError;
 var init_backend_error = __esm({
-  "packages/plugin-core/dist/backend-error.js"() {
+  "packages/plugin-core/src/backend-error.ts"() {
     "use strict";
     MemlinApiError = class extends Error {
       constructor(message, status, code) {
@@ -152,15 +323,13 @@ var init_backend_error = __esm({
       status;
       code;
     };
-    ROUTING_PATTERN = /account routing (unavailable|lookup failed)/i;
-    CLOUDFLARE_STATUS = /\b(52[0-7])\b/;
   }
 });
 
-// packages/plugin-core/dist/auth-refusal.js
+// packages/plugin-core/src/auth-refusal.ts
 import crypto from "node:crypto";
-import { promises as fs2 } from "node:fs";
-import os from "node:os";
+import { promises as fs3 } from "node:fs";
+import os2 from "node:os";
 import path3 from "node:path";
 function isReason(value) {
   return value === "not_member" || value === "no_profile";
@@ -182,7 +351,7 @@ function classifyAuthRefusal(status, body) {
   return null;
 }
 function authRefusalDir() {
-  return process.env.MEMLIN_AUTH_REFUSAL_DIR ?? path3.join(os.homedir(), ".config", "memlin", "auth-refusal");
+  return process.env.MEMLIN_AUTH_REFUSAL_DIR ?? path3.join(os2.homedir(), ".config", "memlin", "auth-refusal");
 }
 function sha(value) {
   return crypto.createHash("sha256").update(value).digest("hex").slice(0, 32);
@@ -203,7 +372,7 @@ function isEntry(value) {
 }
 async function readRaw(file2) {
   try {
-    const parsed = JSON.parse(await fs2.readFile(file2, "utf8"));
+    const parsed = JSON.parse(await fs3.readFile(file2, "utf8"));
     return isEntry(parsed) ? parsed : null;
   } catch {
     return null;
@@ -211,9 +380,9 @@ async function readRaw(file2) {
 }
 async function writeEntry(entry) {
   const file2 = entryPath(entry.account_id, entry.binding);
-  await fs2.mkdir(path3.dirname(file2), { recursive: true });
+  await fs3.mkdir(path3.dirname(file2), { recursive: true });
   const tmp = `${file2}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  await fs2.writeFile(tmp, JSON.stringify(entry), { mode: 384 });
+  await fs3.writeFile(tmp, JSON.stringify(entry), { mode: 384 });
   await atomicRename(tmp, file2);
 }
 async function recordAuthRefusal(input) {
@@ -237,42 +406,27 @@ async function readAuthRefusal(accountId, binding, now = Date.now()) {
   const entry = await readRaw(file2);
   if (!entry) return null;
   if (now >= entry.expires_at) {
-    await fs2.rm(file2, { force: true }).catch(() => {
+    await fs3.rm(file2, { force: true }).catch(() => {
     });
     return null;
   }
   return entry;
 }
 async function clearAuthRefusalsForAccount(accountId) {
-  await fs2.rm(accountDir(accountId), { recursive: true, force: true }).catch(() => {
+  await fs3.rm(accountDir(accountId), { recursive: true, force: true }).catch(() => {
   });
 }
 async function clearAllAuthRefusals() {
-  await fs2.rm(authRefusalDir(), { recursive: true, force: true }).catch(() => {
+  await fs3.rm(authRefusalDir(), { recursive: true, force: true }).catch(() => {
   });
-}
-function formatAuthRefusalNotice(entry) {
-  const label = entry.account_name?.trim() || entry.account_id.slice(0, 8);
-  return `Memlin can't use account ${label}: you're not a member (or not signed in to the web app). Run /memlin-link to pick an account or /memlin-login.`;
-}
-async function claimAuthRefusalNotice(entry, sessionId) {
-  const key = sessionId || NO_SESSION;
-  if (entry.notified_sessions.includes(key)) return null;
-  const updated = {
-    ...entry,
-    notified_sessions: [...entry.notified_sessions, key].slice(-MAX_NOTIFIED_SESSIONS)
-  };
-  await writeEntry(updated).catch(() => {
-  });
-  return formatAuthRefusalNotice(entry);
 }
 function accountIdsChanged(before, after) {
   const normalize = (value) => Array.isArray(value) ? value.filter((v) => typeof v === "string").sort().join(",") : "";
   return normalize(before) !== normalize(after);
 }
-var AUTH_REFUSAL_MESSAGES, AUTH_REFUSAL_TTL_MS, MAX_NOTIFIED_SESSIONS, NO_SESSION;
+var AUTH_REFUSAL_MESSAGES, AUTH_REFUSAL_TTL_MS;
 var init_auth_refusal = __esm({
-  "packages/plugin-core/dist/auth-refusal.js"() {
+  "packages/plugin-core/src/auth-refusal.ts"() {
     "use strict";
     init_atomic_rename();
     AUTH_REFUSAL_MESSAGES = {
@@ -280,12 +434,10 @@ var init_auth_refusal = __esm({
       no_profile: "no Memlin profile for this user \u2014 sign in to the web app first"
     };
     AUTH_REFUSAL_TTL_MS = 15 * 60 * 1e3;
-    MAX_NOTIFIED_SESSIONS = 50;
-    NO_SESSION = "(no-session)";
   }
 });
 
-// packages/plugin-core/dist/companion-client.js
+// packages/plugin-core/src/companion-client.ts
 var companion_client_exports = {};
 __export(companion_client_exports, {
   CODEX_ADDITIONAL_CONTEXT_MAX_BYTES: () => CODEX_ADDITIONAL_CONTEXT_MAX_BYTES,
@@ -324,18 +476,18 @@ __export(companion_client_exports, {
 });
 import http from "node:http";
 import crypto2 from "node:crypto";
-import os2 from "node:os";
+import os3 from "node:os";
 import path4 from "node:path";
 function companionSocketPath(env = process.env) {
   const override = env[COMPANION_SOCKET_ENV];
   if (override) return override;
   if (process.platform === "win32") {
-    return `\\\\.\\pipe\\memlin-companion-${os2.userInfo().username}`;
+    return `\\\\.\\pipe\\memlin-companion-${os3.userInfo().username}`;
   }
-  return path4.join(os2.homedir(), ".config", "memlin", "run", "companion.sock");
+  return path4.join(os3.homedir(), ".config", "memlin", "run", "companion.sock");
 }
 function companionRunDir() {
-  return path4.join(os2.homedir(), ".config", "memlin", "run");
+  return path4.join(os3.homedir(), ".config", "memlin", "run");
 }
 function deriveResolveId(input) {
   const digest = crypto2.createHash("sha256").update("memlin.resolve.v2\0").update(JSON.stringify([input.accountId, input.host, input.sessionId ?? null, input.turnId])).digest().subarray(0, 16);
@@ -495,7 +647,7 @@ function resetCompanionClientCache() {
 }
 var COMPANION_PROTOCOL, MIN_COMPANION_PROTOCOL, MAX_COMPANION_PROTOCOL, NO_COMPANION_ENV, IS_COMPANION_ENV, COMPANION_SOCKET_ENV, CODEX_HOOK_RESOLVE_PROFILE, CODEX_ADDITIONAL_CONTEXT_MAX_BYTES, CONNECT_TIMEOUT_MS, DEFAULT_CALL_TIMEOUT_MS, CALL_TIMEOUTS, socketDeadUntil, SOCKET_DEAD_TTL_MS, USE_COMPANION_ENV;
 var init_companion_client = __esm({
-  "packages/plugin-core/dist/companion-client.js"() {
+  "packages/plugin-core/src/companion-client.ts"() {
     "use strict";
     COMPANION_PROTOCOL = 1;
     MIN_COMPANION_PROTOCOL = 1;
@@ -538,13 +690,13 @@ var init_companion_client = __esm({
   }
 });
 
-// packages/plugin-core/dist/auth.js
-import { promises as fs3 } from "node:fs";
+// packages/plugin-core/src/auth.ts
+import { promises as fs4 } from "node:fs";
 import path5 from "node:path";
-import os3 from "node:os";
+import os4 from "node:os";
 import { randomUUID } from "node:crypto";
 function persistedTokenFilePath() {
-  return process.env.MEMLIN_TOKEN_FILE || path5.join(os3.homedir(), ".config", "memlin", "token.json");
+  return process.env.MEMLIN_TOKEN_FILE || path5.join(os4.homedir(), ".config", "memlin", "token.json");
 }
 function authFileLockPath() {
   return `${persistedTokenFilePath()}.auth.lock`;
@@ -552,18 +704,18 @@ function authFileLockPath() {
 async function acquireAuthFileLock() {
   const file2 = authFileLockPath();
   const owner = `${process.pid}:${randomUUID()}`;
-  await fs3.mkdir(path5.dirname(file2), { recursive: true });
+  await fs4.mkdir(path5.dirname(file2), { recursive: true });
   const deadline = Date.now() + AUTH_FILE_LOCK_TIMEOUT_MS;
   while (true) {
     try {
-      const handle = await fs3.open(file2, "wx", 384);
+      const handle = await fs4.open(file2, "wx", 384);
       try {
         await handle.writeFile(owner, "utf8");
         await handle.sync();
       } catch (error40) {
         await handle.close().catch(() => {
         });
-        await fs3.rm(file2, { force: true }).catch(() => {
+        await fs4.rm(file2, { force: true }).catch(() => {
         });
         throw error40;
       }
@@ -573,16 +725,16 @@ async function acquireAuthFileLock() {
         released = true;
         await handle.close().catch(() => {
         });
-        const currentOwner = await fs3.readFile(file2, "utf8").catch(() => null);
-        if (currentOwner === owner) await fs3.rm(file2, { force: true }).catch(() => {
+        const currentOwner = await fs4.readFile(file2, "utf8").catch(() => null);
+        if (currentOwner === owner) await fs4.rm(file2, { force: true }).catch(() => {
         });
       };
     } catch (error40) {
       if (error40.code !== "EEXIST") throw error40;
       try {
-        const stat = await fs3.stat(file2);
+        const stat = await fs4.stat(file2);
         if (Date.now() - stat.mtimeMs > AUTH_FILE_LOCK_STALE_MS) {
-          await fs3.rm(file2, { force: true });
+          await fs4.rm(file2, { force: true });
           continue;
         }
       } catch (statError) {
@@ -606,7 +758,7 @@ async function withAuthFileLock(operation) {
 }
 async function readPersistedToken() {
   try {
-    const raw = await fs3.readFile(persistedTokenFilePath(), "utf8");
+    const raw = await fs4.readFile(persistedTokenFilePath(), "utf8");
     return JSON.parse(raw);
   } catch {
     return null;
@@ -614,14 +766,14 @@ async function readPersistedToken() {
 }
 async function writePersistedToken(t) {
   const file2 = persistedTokenFilePath();
-  await fs3.mkdir(path5.dirname(file2), { recursive: true });
+  await fs4.mkdir(path5.dirname(file2), { recursive: true });
   const tmp = path5.join(
     path5.dirname(file2),
     `${path5.basename(file2)}.tmp-${process.pid}-${randomUUID()}`
   );
   const previous = await readPersistedToken().catch(() => null);
-  await fs3.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
-  await fs3.chmod(tmp, 384).catch(() => {
+  await fs4.writeFile(tmp, JSON.stringify(t, null, 2), { mode: 384 });
+  await fs4.chmod(tmp, 384).catch(() => {
   });
   await atomicRename(tmp, file2);
   await clearRefusalsIfAccountsChanged(previous?.access_token ?? null, t.access_token);
@@ -734,7 +886,7 @@ function decodeJwtPayload(jwt2) {
 }
 var MEMLIN_PROD_AUTH0_DOMAIN, MEMLIN_PROD_AUTH0_CLIENT_ID, AUTH0_DOMAIN, AUTH0_CLIENT_ID, AUTH0_AUDIENCE, AUTH_FILE_LOCK_TIMEOUT_MS, AUTH_FILE_LOCK_STALE_MS, AUTH_FILE_LOCK_RETRY_MS, refreshInFlight, DEFAULT_FRESHNESS_MARGIN_MS;
 var init_auth = __esm({
-  "packages/plugin-core/dist/auth.js"() {
+  "packages/plugin-core/src/auth.ts"() {
     "use strict";
     init_atomic_rename();
     init_backend_error();
@@ -1164,8 +1316,8 @@ var init_parseUtil = __esm({
     init_errors();
     init_en();
     makeIssue = (params) => {
-      const { data, path: path19, errorMaps, issueData } = params;
-      const fullPath = [...path19, ...issueData.path || []];
+      const { data, path: path10, errorMaps, issueData } = params;
+      const fullPath = [...path10, ...issueData.path || []];
       const fullIssue = {
         ...issueData,
         path: fullPath
@@ -1473,11 +1625,11 @@ var init_types = __esm({
     init_parseUtil();
     init_util();
     ParseInputLazyPath = class {
-      constructor(parent, value, path19, key) {
+      constructor(parent, value, path10, key) {
         this._cachedPath = [];
         this.parent = parent;
         this.data = value;
-        this._path = path19;
+        this._path = path10;
         this._key = key;
       }
       get path() {
@@ -4276,9 +4428,9 @@ var init_types = __esm({
         const { status, ctx } = this._processInputParams(input);
         const effect = this._def.effect || null;
         const checkCtx = {
-          addIssue: (arg) => {
-            addIssueToContext(ctx, arg);
-            if (arg.fatal) {
+          addIssue: (arg2) => {
+            addIssueToContext(ctx, arg2);
+            if (arg2.fatal) {
               status.abort();
             } else {
               status.dirty();
@@ -4715,14 +4867,14 @@ var init_types = __esm({
     onumber = () => numberType().optional();
     oboolean = () => booleanType().optional();
     coerce = {
-      string: ((arg) => ZodString.create({ ...arg, coerce: true })),
-      number: ((arg) => ZodNumber.create({ ...arg, coerce: true })),
-      boolean: ((arg) => ZodBoolean.create({
-        ...arg,
+      string: ((arg2) => ZodString.create({ ...arg2, coerce: true })),
+      number: ((arg2) => ZodNumber.create({ ...arg2, coerce: true })),
+      boolean: ((arg2) => ZodBoolean.create({
+        ...arg2,
         coerce: true
       })),
-      bigint: ((arg) => ZodBigInt.create({ ...arg, coerce: true })),
-      date: ((arg) => ZodDate.create({ ...arg, coerce: true }))
+      bigint: ((arg2) => ZodBigInt.create({ ...arg2, coerce: true })),
+      date: ((arg2) => ZodDate.create({ ...arg2, coerce: true }))
     };
     NEVER = INVALID;
   }
@@ -5452,9 +5604,9 @@ var require_common = __commonJS({
       }
       return target;
     }
-    function repeat(string4, count2) {
+    function repeat(string4, count) {
       var result = "", cycle;
-      for (cycle = 0; cycle < count2; cycle += 1) {
+      for (cycle = 0; cycle < count; cycle += 1) {
         result += string4;
       }
       return result;
@@ -6836,11 +6988,11 @@ var require_loader = __commonJS({
       }
       return false;
     }
-    function writeFoldedLines(state, count2) {
-      if (count2 === 1) {
+    function writeFoldedLines(state, count) {
+      if (count === 1) {
         state.result += " ";
-      } else if (count2 > 1) {
-        state.result += common2.repeat("\n", count2 - 1);
+      } else if (count > 1) {
+        state.result += common2.repeat("\n", count - 1);
       }
     }
     function readPlainScalar(state, nodeIndent, withinFlowCollection) {
@@ -8528,7 +8680,7 @@ var require_parse = __commonJS({
 var require_gray_matter = __commonJS({
   "node_modules/.pnpm/gray-matter@4.0.3/node_modules/gray-matter/index.js"(exports2, module2) {
     "use strict";
-    var fs13 = __require("fs");
+    var fs7 = __require("fs");
     var sections = require_section_matter();
     var defaults = require_defaults();
     var stringify = require_stringify();
@@ -8612,7 +8764,7 @@ var require_gray_matter = __commonJS({
       return stringify(file2, data, options2);
     };
     matter3.read = function(filepath, options2) {
-      const str2 = fs13.readFileSync(filepath, "utf8");
+      const str2 = fs7.readFileSync(filepath, "utf8");
       const file2 = matter3(str2, options2);
       file2.path = filepath;
       return file2;
@@ -8923,113 +9075,9 @@ var init_guardrails = __esm({
 });
 
 // packages/shared/dist/trigger-memories.js
-function parseMemoryTrigger(raw) {
-  if (raw === null || raw === void 0 || typeof raw !== "object" || Array.isArray(raw)) {
-    return { ok: false, errors: ["trigger must be an object"] };
-  }
-  const obj = raw;
-  const errors = [];
-  const commandPattern = normalizeCommandPattern(obj.command_pattern, errors);
-  const pathPrefix = normalizePathPrefix(obj.path_prefix, errors);
-  const mode = normalizeMode(obj.mode, errors);
-  const message = normalizeMessage(obj.message, errors);
-  if (!commandPattern && !pathPrefix && errors.length === 0) {
-    errors.push("trigger requires at least one of command_pattern / path_prefix");
-  }
-  if (errors.length > 0) return { ok: false, errors };
-  return {
-    ok: true,
-    trigger: {
-      command_pattern: commandPattern,
-      path_prefix: pathPrefix,
-      mode: mode ?? "warn",
-      message
-    }
-  };
-}
-function normalizeCommandPattern(raw, errors) {
-  if (raw === null || raw === void 0) return null;
-  if (typeof raw !== "string") {
-    errors.push("command_pattern must be a string");
-    return null;
-  }
-  const pattern = raw.trim().replace(/\s+/g, " ");
-  if (!pattern) {
-    errors.push("command_pattern must not be empty");
-    return null;
-  }
-  if (pattern.length > TRIGGER_MAX_PATTERN_LENGTH) {
-    errors.push(`command_pattern longer than ${TRIGGER_MAX_PATTERN_LENGTH} chars`);
-    return null;
-  }
-  if (/[;&|()\n`]/.test(pattern)) {
-    errors.push("command_pattern must be a single command prefix (no ; & | ( ) or newlines)");
-    return null;
-  }
-  const tokens = pattern.split(" ");
-  if (tokens.length > TRIGGER_MAX_PATTERN_TOKENS) {
-    errors.push(`command_pattern has more than ${TRIGGER_MAX_PATTERN_TOKENS} tokens`);
-    return null;
-  }
-  return pattern;
-}
-function normalizePathPrefix(raw, errors) {
-  if (raw === null || raw === void 0) return null;
-  if (typeof raw !== "string") {
-    errors.push("path_prefix must be a string");
-    return null;
-  }
-  if (raw.length > TRIGGER_MAX_PATH_PREFIX_LENGTH) {
-    errors.push(`path_prefix longer than ${TRIGGER_MAX_PATH_PREFIX_LENGTH} chars`);
-    return null;
-  }
-  const slashed = raw.trim().replace(/\\/g, "/");
-  if (slashed.startsWith("/") || /^[A-Za-z]:/.test(slashed)) {
-    errors.push("path_prefix must be workspace-relative, not absolute");
-    return null;
-  }
-  const prefix = slashed.replace(/^(\.\/)+/, "").replace(/\/+$/, "");
-  if (!prefix) {
-    errors.push("path_prefix must not be empty");
-    return null;
-  }
-  if (prefix.split("/").some((seg) => seg === ".." || seg === "")) {
-    errors.push('path_prefix must not contain ".." or empty segments');
-    return null;
-  }
-  return prefix;
-}
-function normalizeMode(raw, errors) {
-  if (raw === null || raw === void 0) return null;
-  if (typeof raw !== "string" || !MEMORY_TRIGGER_MODES.includes(raw)) {
-    errors.push(`mode must be one of ${MEMORY_TRIGGER_MODES.join(" | ")}`);
-    return null;
-  }
-  return raw;
-}
-function normalizeMessage(raw, errors) {
-  if (raw === null || raw === void 0) return null;
-  if (typeof raw !== "string") {
-    errors.push("message must be a string");
-    return null;
-  }
-  const message = raw.trim();
-  if (!message) return null;
-  if (message.length > TRIGGER_MAX_MESSAGE_LENGTH) {
-    errors.push(`message longer than ${TRIGGER_MAX_MESSAGE_LENGTH} chars`);
-    return null;
-  }
-  return message;
-}
-var MEMORY_TRIGGER_MODES, TRIGGER_MAX_PATTERN_LENGTH, TRIGGER_MAX_PATTERN_TOKENS, TRIGGER_MAX_PATH_PREFIX_LENGTH, TRIGGER_MAX_MESSAGE_LENGTH;
 var init_trigger_memories = __esm({
   "packages/shared/dist/trigger-memories.js"() {
     "use strict";
-    MEMORY_TRIGGER_MODES = ["warn", "deny"];
-    TRIGGER_MAX_PATTERN_LENGTH = 200;
-    TRIGGER_MAX_PATTERN_TOKENS = 8;
-    TRIGGER_MAX_PATH_PREFIX_LENGTH = 300;
-    TRIGGER_MAX_MESSAGE_LENGTH = 2e3;
   }
 });
 
@@ -10112,19 +10160,19 @@ var init_context_engine = __esm({
           location: `linked_contexts.${index}`
         }))
       ];
-      references.forEach(({ ref, path: path19, location }) => {
+      references.forEach(({ ref, path: path10, location }) => {
         const identity = contextReferenceIdentityKey(ref);
         const prior = seen.get(identity);
         if (prior && prior.revision !== ref.revision) {
           ctx.addIssue({
             code: external_exports.ZodIssueCode.custom,
-            path: path19,
+            path: path10,
             message: `context ${identity} has conflicting revisions in ${prior.location} and ${location}`
           });
         } else if (prior && location.startsWith("linked_contexts.")) {
           ctx.addIssue({
             code: external_exports.ZodIssueCode.custom,
-            path: path19,
+            path: path10,
             message: `duplicate linked context ${identity}`
           });
         }
@@ -10438,11 +10486,11 @@ var init_context_engine = __esm({
             path: ["coverage", coverageIndex, "omitted_contexts", index, "context_ref"]
           }))
         ];
-        for (const { ref, path: path19 } of references) {
+        for (const { ref, path: path10 } of references) {
           if (!contextKeys.has(contextReferenceKey(ref))) {
             ctx.addIssue({
               code: external_exports.ZodIssueCode.custom,
-              path: path19,
+              path: path10,
               message: "provider coverage is outside the exact manifest contexts"
             });
           }
@@ -12704,316 +12752,13 @@ var init_light_provenance = __esm({
 });
 
 // packages/shared/dist/memory-decisions.js
-function isDecisionKind(value) {
-  return typeof value === "string" && DECISION_KIND_IDS.includes(value);
-}
-function escapeRegExp(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function labelDecisionOptionIds(kind, text) {
-  const spec = DECISION_KINDS[kind];
-  if (!spec || !text) return text;
-  let out = text;
-  const options2 = [...spec.options].sort((a, b) => b.id.length - a.id.length);
-  for (const o of options2) {
-    const id = escapeRegExp(o.id);
-    const bare = o.id.includes("_") ? `|(?<![\\w-])${id}(?![\\w-])` : "";
-    out = out.replace(new RegExp(`\`${id}\`${bare}`, "gi"), o.label);
-  }
-  return out;
-}
-var DECISION_KIND_IDS, DECISION_KINDS, DECISION_CAPS;
 var init_memory_decisions = __esm({
   "packages/shared/dist/memory-decisions.js"() {
     "use strict";
-    DECISION_KIND_IDS = ["replace", "conflict", "sensitive", "runbook", "goal"];
-    DECISION_KINDS = {
-      replace: {
-        id: "replace",
-        label: "Replace live memory",
-        raisedWhen: "A new capture would retire or rewrite a live doc that governs agents: a decision, a correction, a verified directive, or anything a person wrote.",
-        whyHuman: "Agents follow the existing doc today. Replacing it changes what every agent is told, and the evidence alone cannot say the new version is right.",
-        options: [
-          {
-            id: "replace",
-            label: "Replace",
-            consequence: "The new capture goes live and the existing doc is retired.",
-            reversible: true
-          },
-          {
-            id: "keep_both",
-            label: "Keep both",
-            consequence: "Both stay live. Agents may be given both.",
-            reversible: true
-          },
-          {
-            id: "keep_existing",
-            label: "Keep existing",
-            consequence: "Nothing changes for agents. The new capture stays searchable only.",
-            reversible: true
-          }
-        ],
-        defaultOption: "keep_existing",
-        deadlineDays: 7,
-        urgent: true,
-        aiExplanation: true
-      },
-      conflict: {
-        id: "conflict",
-        label: "Two live docs disagree",
-        raisedWhen: "Two live docs contradict, at least one was served to agents in the last 30 days, and at least one is a decision or was written by a person.",
-        whyHuman: "Agents are being given both answers. Which one is current is a judgement about your project that neither doc settles.",
-        options: [
-          {
-            id: "a_wins",
-            label: "First is current",
-            consequence: "The first doc stays live and the second is retired.",
-            reversible: true
-          },
-          {
-            id: "b_wins",
-            label: "Second is current",
-            consequence: "The second doc stays live and the first is retired.",
-            reversible: true
-          },
-          {
-            id: "both_valid",
-            label: "Both are valid",
-            consequence: "Both stay live; the pair is marked as not a conflict and is not raised again.",
-            reversible: true
-          }
-        ],
-        defaultOption: "both_valid",
-        deadlineDays: 14,
-        urgent: false,
-        aiExplanation: true
-      },
-      sensitive: {
-        id: "sensitive",
-        label: "Sensitive content",
-        raisedWhen: "A capture matches a sensitive topic: compensation, HR, personal data or banking.",
-        whyHuman: "Whether this should be remembered, and who may see it, is not something automation should decide.",
-        options: [
-          {
-            id: "keep",
-            label: "Keep for the team",
-            consequence: "It goes live at its captured scope.",
-            reversible: true
-          },
-          {
-            id: "private",
-            label: "Keep private to me",
-            consequence: "It goes live, visible only to you.",
-            reversible: true
-          },
-          {
-            id: "discard",
-            label: "Discard",
-            consequence: "It is removed and will not be captured again.",
-            reversible: true
-          }
-        ],
-        defaultOption: "discard",
-        deadlineDays: 7,
-        urgent: true,
-        aiExplanation: false
-      },
-      runbook: {
-        id: "runbook",
-        label: "Incident runbook",
-        raisedWhen: "A session that handled an incident produced a runbook.",
-        whyHuman: "A runbook steers future incident response. You were there; you know whether it is what should happen next time.",
-        options: [
-          {
-            id: "keep_live",
-            label: "Keep live",
-            consequence: "Agents are given it for similar incidents.",
-            reversible: true
-          },
-          {
-            id: "searchable_only",
-            label: "Searchable only",
-            consequence: "It is kept and findable, but not given to agents unprompted.",
-            reversible: true
-          },
-          {
-            id: "discard",
-            label: "Discard",
-            consequence: "It is removed.",
-            reversible: true
-          }
-        ],
-        defaultOption: "searchable_only",
-        deadlineDays: 7,
-        urgent: false,
-        aiExplanation: true
-      },
-      goal: {
-        id: "goal",
-        label: "Goal approval",
-        raisedWhen: "A goal was proposed and needs approval before agents work toward it.",
-        whyHuman: "Goals direct what agents optimise for. Only a person can commit the team to one.",
-        options: [
-          {
-            id: "approve",
-            label: "Approve",
-            consequence: "Agents are given the goal.",
-            reversible: true
-          },
-          {
-            id: "not_now",
-            label: "Not now",
-            consequence: "It stays a draft that agents are not given.",
-            reversible: true
-          },
-          {
-            id: "reject",
-            label: "Reject",
-            consequence: "It is closed.",
-            reversible: true
-          }
-        ],
-        defaultOption: "not_now",
-        deadlineDays: 14,
-        urgent: false,
-        aiExplanation: true
-      }
-    };
-    DECISION_CAPS = {
-      /** Decisions a single capture (one scribe run) may raise. */
-      perCapture: 3,
-      /** Open questions of a session-grouped kind (runbook, sensitive) one agent
-       *  session may hold. Later captures of that kind from the same session are
-       *  attached to the open question instead of raising another. */
-      openPerSession: 1,
-      /** Captures one session-grouped question may cover. Past it the raise is
-       *  capped, like perCapture. */
-      capturesPerDecision: 100,
-      /** Questions injected into one user turn. */
-      perTurn: 1,
-      /** Questions asked in one session before the rest wait for the web list. */
-      perSession: 3,
-      /** Urgent end-of-turn interruptions in one session. */
-      urgentPerSession: 1
-    };
   }
 });
 
 // packages/shared/dist/decision-prompt.js
-function utf8Bytes(value) {
-  return encoder.encode(value).length;
-}
-function utf8Truncate(value, maxBytes) {
-  if (utf8Bytes(value) <= maxBytes) return value;
-  let out = "";
-  let bytes = 0;
-  for (const ch of value) {
-    const size = utf8Bytes(ch);
-    if (bytes + size > maxBytes) break;
-    out += ch;
-    bytes += size;
-  }
-  return out;
-}
-function oneLine(value, max = 400) {
-  const s = value.replace(/\s+/g, " ").trim();
-  return s.length > max ? `${s.slice(0, max - 1).trimEnd()}\u2026` : s;
-}
-function optionLabel(decision, id) {
-  return decision.options.find((o) => o.id === id)?.label ?? DECISION_KINDS[decision.kind]?.options.find((o) => o.id === id)?.label ?? id;
-}
-function describeDeadline(deadlineAt, nowMs = Date.now()) {
-  const t = Date.parse(deadlineAt);
-  if (!Number.isFinite(t)) return "at its deadline";
-  const date5 = new Date(t).toISOString().slice(0, 10);
-  const days = Math.ceil((t - nowMs) / 864e5);
-  if (days <= 0) return `on ${date5} (due now)`;
-  return `on ${date5} (in ${days} day${days === 1 ? "" : "s"})`;
-}
-function askLine(host, decision) {
-  switch (host) {
-    case "claude-code":
-      return `1. Ask with your AskUserQuestion tool: one question, one choice per option (${decision.options.map((o) => `"${o.label}"`).join(", ")}), each choice described by its consequence. Put why a person is needed and the recommendation in the question text.`;
-    case "codex":
-      return "1. The user was shown a one-line notice about this. Ask the question in your reply, in plain language, listing the options.";
-    case "mcp":
-      return "1. Ask me in your reply, in plain language, listing the options.";
-    default:
-      return "1. Ask the question in your reply, in plain language, listing the options.";
-  }
-}
-function renderAt(decision, host, detail, nowMs) {
-  const prose = (text, max) => oneLine(labelDecisionOptionIds(decision.kind, text), max);
-  const lines = [];
-  lines.push(`<memlin-decision id="${decision.id}" kind="${decision.kind}">`);
-  lines.push(
-    "# Memlin needs ONE decision from the user. Finish the user's current request first; do not let this interrupt or change that work."
-  );
-  lines.push(`Question: ${oneLine(decision.question, 300)}`);
-  if (detail !== "minimal") {
-    lines.push(`Why a person is needed: ${oneLine(decision.why_human, 400)}`);
-  }
-  const rec = decision.recommendation;
-  if (rec) {
-    const reason = detail === "minimal" ? "" : ` \u2014 ${prose(rec.rationale, detail === "full" ? 500 : 240)}`;
-    lines.push(`Recommendation: ${optionLabel(decision, rec.option)} (${rec.option})${reason}`);
-  } else if (detail !== "minimal") {
-    lines.push(
-      DECISION_KINDS[decision.kind]?.aiExplanation === false ? "Recommendation: none \u2014 this kind is never sent to an AI model, so present the facts only." : "Recommendation: none yet \u2014 present the options evenly."
-    );
-  }
-  lines.push("Options:");
-  for (const o of decision.options) {
-    if (detail === "minimal") {
-      lines.push(`- ${o.label} (${o.id})`);
-      continue;
-    }
-    lines.push(
-      `- ${o.label} (${o.id}): ${oneLine(o.consequence, 200)}${o.reversible ? " Can be undone." : " Cannot be undone."}`
-    );
-    if (detail === "full") {
-      for (const p of o.pros) lines.push(`  + ${prose(p, 200)}`);
-      for (const c of o.cons) lines.push(`  - ${prose(c, 200)}`);
-    }
-  }
-  lines.push(
-    `If unanswered: ${optionLabel(decision, decision.default_option)} (${decision.default_option}) applies automatically ${describeDeadline(decision.deadline_at, nowMs)}. Ignoring it is safe.`
-  );
-  lines.push("How to ask, after the current request is done:");
-  lines.push(askLine(host, decision));
-  lines.push(
-    "2. Say why a person is needed, the recommendation and its reason, what each option does with its pros and cons, and what happens if they do not answer."
-  );
-  lines.push(
-    `3. Offer to explain more. If they want to know where it came from, what automation already did or the diff, call memlin_explain_decision {"decision_id":"${decision.id}"} and answer from it.`
-  );
-  lines.push(
-    `4. When they choose, call memlin_decide {"decision_id":"${decision.id}","option":"<option id>","note":"<their reason>","user_quote":"<their exact words>"}.`
-  );
-  lines.push(
-    "5. Never choose for them. If they decline, change the subject or do not answer, do nothing: the default applies."
-  );
-  lines.push("</memlin-decision>");
-  return lines.join("\n") + "\n";
-}
-function renderDecisionBlock(decision, opts) {
-  const nowMs = opts.nowMs ?? Date.now();
-  for (const detail of ["full", "compact", "minimal"]) {
-    const block = renderAt(decision, opts.host, detail, nowMs);
-    if (opts.maxBytes === void 0 || utf8Bytes(block) <= opts.maxBytes) return block;
-  }
-  return "";
-}
-function decisionNoticeLine(decision, maxBytes = 700, nowMs = Date.now()) {
-  const options2 = decision.options.map((o) => o.label).join(" / ");
-  const tail = ` \u2014 options: ${options2}. If you do not answer, ${optionLabel(decision, decision.default_option)} applies ${describeDeadline(decision.deadline_at, nowMs)}. Your agent will ask after this request.`;
-  const head = "Memlin needs a decision: ";
-  const room = maxBytes - utf8Bytes(head) - utf8Bytes(tail);
-  if (room >= 40) {
-    return head + utf8Truncate(oneLine(decision.question, 300), room) + tail;
-  }
-  return utf8Truncate(head + oneLine(decision.question, 300), maxBytes);
-}
 var encoder;
 var init_decision_prompt = __esm({
   "packages/shared/dist/decision-prompt.js"() {
@@ -13391,10 +13136,10 @@ function assignProp(target, prop, value) {
     configurable: true
   });
 }
-function getElementAtPath(obj, path19) {
-  if (!path19)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path19.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -13643,11 +13388,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path19, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a;
     (_a = iss).path ?? (_a.path = []);
-    iss.path.unshift(path19);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -13836,7 +13581,7 @@ function treeifyError(error40, _mapper) {
     return issue2.message;
   };
   const result = { errors: [] };
-  const processError = (error41, path19 = []) => {
+  const processError = (error41, path10 = []) => {
     var _a, _b;
     for (const issue2 of error41.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -13846,7 +13591,7 @@ function treeifyError(error40, _mapper) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path19, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -13876,9 +13621,9 @@ function treeifyError(error40, _mapper) {
   processError(error40);
   return result;
 }
-function toDotPath(path19) {
+function toDotPath(path10) {
   const segs = [];
-  for (const seg of path19) {
+  for (const seg of path10) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -14675,13 +14420,13 @@ var init_doc = __esm({
         fn(this);
         this.indent -= 1;
       }
-      write(arg) {
-        if (typeof arg === "function") {
-          arg(this, { execution: "sync" });
-          arg(this, { execution: "async" });
+      write(arg2) {
+        if (typeof arg2 === "function") {
+          arg2(this, { execution: "sync" });
+          arg2(this, { execution: "async" });
           return;
         }
-        const content = arg;
+        const content = arg2;
         const lines = content.split("\n").filter((x) => x);
         const minIndent = Math.min(...lines.map((x) => x.length - x.trimStart().length));
         const dedented = lines.map((x) => x.slice(minIndent)).map((x) => " ".repeat(this.indent * 2) + x);
@@ -16598,8 +16343,8 @@ var init_az = __esm({
 });
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/locales/be.js
-function getBelarusianPlural(count2, one, few, many) {
-  const absCount = Math.abs(count2);
+function getBelarusianPlural(count, one, few, many) {
+  const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -19900,8 +19645,8 @@ var init_pt = __esm({
 });
 
 // node_modules/.pnpm/zod@3.25.76/node_modules/zod/v4/locales/ru.js
-function getRussianPlural(count2, one, few, many) {
-  const absCount = Math.abs(count2);
+function getRussianPlural(count, one, few, many) {
+  const absCount = Math.abs(count);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -23997,8 +23742,8 @@ var init_schemas3 = __esm({
       inst.nullish = () => optional(nullable(inst));
       inst.nonoptional = (params) => nonoptional(inst, params);
       inst.array = () => array(inst);
-      inst.or = (arg) => union([inst, arg]);
-      inst.and = (arg) => intersection(inst, arg);
+      inst.or = (arg2) => union([inst, arg2]);
+      inst.and = (arg2) => intersection(inst, arg2);
       inst.transform = (tx) => pipe(inst, transform(tx));
       inst.default = (def2) => _default2(inst, def2);
       inst.prefault = (def2) => prefault(inst, def2);
@@ -24992,10 +24737,10 @@ function validateFlowDefinitionSemantics(flow) {
       ],
       ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, path: `stages.${stageIndex}.bypass_target` }]
     ];
-    targets.forEach(({ target, path: path19 }) => {
+    targets.forEach(({ target, path: path10 }) => {
       if (!isReservedTarget(target) && !stageById.has(target)) {
         issues.push({
-          path: path19,
+          path: path10,
           code: "missing_transition_target",
           message: `transition target ${JSON.stringify(target)} does not exist`
         });
@@ -25025,7 +24770,7 @@ function validateFlowDefinitionSemantics(flow) {
   const visiting = /* @__PURE__ */ new Set();
   const visited = /* @__PURE__ */ new Set();
   let hasReachableEnd = false;
-  const visit = (stageId, path19, pathBounds) => {
+  const visit = (stageId, path10, pathBounds) => {
     reachable.add(stageId);
     if (visited.has(stageId)) return;
     visiting.add(stageId);
@@ -25041,7 +24786,7 @@ function validateFlowDefinitionSemantics(flow) {
         ...stage.default_transition === null ? [] : [{ target: stage.default_transition, bounded: false }],
         ...stage.bypass_target === null ? [] : [{ target: stage.bypass_target, bounded: false }]
       ];
-      const currentPath = [...path19, stageId];
+      const currentPath = [...path10, stageId];
       for (const edge of edges) {
         const { target } = edge;
         if (target === "$end") {
@@ -25088,18 +24833,18 @@ function validateFlowDefinitionSemantics(flow) {
   }
   return issues;
 }
-function validateRelativePackPath(path19) {
-  if (path19.startsWith("/") || path19.startsWith("\\")) return "path must be relative";
-  if (/^[A-Za-z]:/.test(path19) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path19)) {
+function validateRelativePackPath(path10) {
+  if (path10.startsWith("/") || path10.startsWith("\\")) return "path must be relative";
+  if (/^[A-Za-z]:/.test(path10) || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(path10)) {
     return "drive-qualified paths and URI schemes are not allowed";
   }
-  if (/[\u0000-\u001f\u007f]/.test(path19)) return "control characters are not allowed";
-  if (/%(?:2e|2f|5c)/i.test(path19)) return "encoded path traversal is not allowed";
-  if (path19.includes("\\")) return "path must use forward slashes";
-  if (path19.split("/").some((segment) => segment === ".." || segment === ".")) {
+  if (/[\u0000-\u001f\u007f]/.test(path10)) return "control characters are not allowed";
+  if (/%(?:2e|2f|5c)/i.test(path10)) return "encoded path traversal is not allowed";
+  if (path10.includes("\\")) return "path must use forward slashes";
+  if (path10.split("/").some((segment) => segment === ".." || segment === ".")) {
     return "path traversal and dot segments are not allowed";
   }
-  if (path19.split("/").some((segment) => segment.length === 0)) {
+  if (path10.split("/").some((segment) => segment.length === 0)) {
     return "path cannot contain empty segments";
   }
   return null;
@@ -25146,22 +24891,22 @@ function validateFlowPackManifestSemantics(manifest) {
       issues
     );
     role.independence.compare_against_roles.forEach((comparedRole, comparedIndex) => {
-      const path19 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
+      const path10 = `model_roles.${roleIndex}.independence.compare_against_roles.${comparedIndex}`;
       if (comparedRole === role.id) {
         issues.push({
-          path: path19,
+          path: path10,
           code: "self_referential_model_independence",
           message: "a model role cannot require independence from itself"
         });
       } else if (!modelRolesById.has(comparedRole)) {
         issues.push({
-          path: path19,
+          path: path10,
           code: "missing_independence_model_role",
           message: `independence policy references undeclared model role ${JSON.stringify(comparedRole)}`
         });
       } else if (modelRolesById.get(comparedRole)?.independence !== null) {
         issues.push({
-          path: path19,
+          path: path10,
           code: "independence_reference_not_author",
           message: `independence policy must compare against an author role; ${JSON.stringify(comparedRole)} declares its own independence policy`
         });
@@ -25793,22 +25538,6 @@ var init_project_flow_contracts = __esm({
 });
 
 // packages/shared/dist/needs-you-groups.js
-function whole(n) {
-  const v = typeof n === "number" ? n : typeof n === "string" && n.trim() ? Number(n) : NaN;
-  return Number.isFinite(v) ? Math.max(0, Math.floor(v)) : null;
-}
-function decisionCountsOf(res) {
-  return { open: whole(res?.count) ?? 0, needsYou: whole(res?.needs_you_count) };
-}
-function needsYouDecisionsPhrase(counts) {
-  const { open, needsYou } = counts;
-  if (needsYou === null) {
-    return open > 0 ? `${open} open decision${open === 1 ? "" : "s"}` : "";
-  }
-  if (needsYou === 0 && open === 0) return "";
-  const head = `${needsYou} decision${needsYou === 1 ? "" : "s"} need${needsYou === 1 ? "s" : ""} you`;
-  return open !== needsYou ? `${head} (${open} open question${open === 1 ? "" : "s"})` : head;
-}
 var init_needs_you_groups = __esm({
   "packages/shared/dist/needs-you-groups.js"() {
     "use strict";
@@ -26040,10 +25769,6 @@ var init_file_formats = __esm({
 });
 
 // packages/shared/dist/feature-binding.js
-function featureBranch(branch) {
-  const value = branch?.trim().replace(/^(refs\/heads\/|refs\/remotes\/[^/]+\/|origin\/)/i, "");
-  return value && !["main", "master", "develop", "trunk", "head"].includes(value.toLowerCase()) ? value : null;
-}
 var FeatureCaptureFieldsSchema;
 var init_feature_binding = __esm({
   "packages/shared/dist/feature-binding.js"() {
@@ -26190,47 +25915,7 @@ var init_dist = __esm({
   }
 });
 
-// packages/plugin-core/dist/runtime-shared.js
-function normalizeGitRemote(raw) {
-  if (!raw) return null;
-  let s = raw.trim();
-  if (!s) return null;
-  if (!s.includes("://")) {
-    s = s.replace(/^(?:[^@/\s]+@)?([^:/\s]+):(?!\/)/, "https://$1/");
-  }
-  s = s.replace(/^(?:ssh|git|https?):\/\//, "");
-  s = s.replace(/^[^/@]+@/, "");
-  s = s.replace(/\.git$/, "");
-  s = s.replace(/\/$/, "");
-  const slash = s.indexOf("/");
-  if (slash > 0) {
-    const host = s.slice(0, slash).toLowerCase();
-    const rest = s.slice(slash);
-    s = host + rest;
-    for (const provider of PROVIDER_HOSTS) {
-      if (host === provider) break;
-      if (host.startsWith(provider + "-")) {
-        s = provider + rest;
-        break;
-      }
-    }
-  }
-  return s || null;
-}
-async function withTimeout(promise2, ms, fallback) {
-  let timer;
-  try {
-    return await Promise.race([
-      promise2,
-      new Promise((resolve) => {
-        timer = setTimeout(() => resolve(fallback), ms);
-        timer.unref?.();
-      })
-    ]);
-  } finally {
-    if (timer !== void 0) clearTimeout(timer);
-  }
-}
+// packages/plugin-core/src/runtime-shared.ts
 async function closeHttpSockets() {
   try {
     const dispatcher = globalThis[/* @__PURE__ */ Symbol.for("undici.globalDispatcher.1")];
@@ -26249,9 +25934,9 @@ async function closeHttpSockets() {
   } catch {
   }
 }
-var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_PLATFORM_HEADER, AGENT_ARCHITECTURE_HEADER, AGENT_EXPECTED_CAPABILITIES, PROVIDER_HOSTS;
+var AGENT_KIND_HEADER, AGENT_DEVICE_HEADER, AGENT_VERSION_HEADER, AGENT_CAPABILITIES_HEADER, AGENT_PLATFORM_HEADER, AGENT_ARCHITECTURE_HEADER, AGENT_EXPECTED_CAPABILITIES;
 var init_runtime_shared = __esm({
-  "packages/plugin-core/dist/runtime-shared.js"() {
+  "packages/plugin-core/src/runtime-shared.ts"() {
     "use strict";
     AGENT_KIND_HEADER = "Memlin-Agent-Kind";
     AGENT_DEVICE_HEADER = "Memlin-Agent-Device";
@@ -26279,21 +25964,11 @@ var init_runtime_shared = __esm({
       // of its own.
       companion: ["cli", "sync", "realtime", "resolve"]
     };
-    PROVIDER_HOSTS = [
-      "github.com",
-      "gitlab.com",
-      "bitbucket.org",
-      "dev.azure.com",
-      "ssh.dev.azure.com",
-      "codeberg.org",
-      "sr.ht",
-      "git.sr.ht"
-    ];
   }
 });
 
-// packages/plugin-core/dist/host.js
-import os4 from "node:os";
+// packages/plugin-core/src/host.ts
+import os5 from "node:os";
 import path6 from "node:path";
 function resolveHost() {
   const envHost = process.env.MEMLIN_HOST ?? (process.env.CURSOR_AGENT ? "cursor" : "claude-code");
@@ -26302,7 +25977,7 @@ function resolveHost() {
 }
 var BaseHost, ClaudeCodeHost, CursorHost, CodexHost, WindsurfHost, AntigravityHost, VSCodeHost, CompanionHost, HOSTS2;
 var init_host = __esm({
-  "packages/plugin-core/dist/host.js"() {
+  "packages/plugin-core/src/host.ts"() {
     "use strict";
     BaseHost = class {
       constructor(kind, home) {
@@ -26320,37 +25995,37 @@ var init_host = __esm({
     };
     ClaudeCodeHost = class extends BaseHost {
       constructor() {
-        super("claude-code", path6.join(os4.homedir(), ".claude"));
+        super("claude-code", path6.join(os5.homedir(), ".claude"));
       }
     };
     CursorHost = class extends BaseHost {
       constructor() {
-        super("cursor", path6.join(os4.homedir(), ".config", "memlin"));
+        super("cursor", path6.join(os5.homedir(), ".config", "memlin"));
       }
     };
     CodexHost = class extends BaseHost {
       constructor() {
-        super("codex", path6.join(os4.homedir(), ".config", "memlin"));
+        super("codex", path6.join(os5.homedir(), ".config", "memlin"));
       }
     };
     WindsurfHost = class extends BaseHost {
       constructor() {
-        super("windsurf", path6.join(os4.homedir(), ".config", "memlin"));
+        super("windsurf", path6.join(os5.homedir(), ".config", "memlin"));
       }
     };
     AntigravityHost = class extends BaseHost {
       constructor() {
-        super("antigravity", path6.join(os4.homedir(), ".config", "memlin"));
+        super("antigravity", path6.join(os5.homedir(), ".config", "memlin"));
       }
     };
     VSCodeHost = class extends BaseHost {
       constructor() {
-        super("vscode", path6.join(os4.homedir(), ".config", "memlin"));
+        super("vscode", path6.join(os5.homedir(), ".config", "memlin"));
       }
     };
     CompanionHost = class extends BaseHost {
       constructor() {
-        super("companion", path6.join(os4.homedir(), ".config", "memlin"));
+        super("companion", path6.join(os5.homedir(), ".config", "memlin"));
       }
     };
     HOSTS2 = {
@@ -26365,171 +26040,7 @@ var init_host = __esm({
   }
 });
 
-// packages/plugin-core/dist/private-mode.js
-import { promises as fs4 } from "node:fs";
-import path7 from "node:path";
-import os5 from "node:os";
-function normalizeLevel(raw) {
-  return raw === "read_only" ? "read_only" : "private";
-}
-function isMemoryWrite(method, pathAndQuery) {
-  if (method === "GET") return false;
-  const pathOnly = pathAndQuery.split("?")[0] ?? pathAndQuery;
-  if (!READ_ONLY_BLOCKED_PREFIXES.some((p) => pathOnly === p || pathOnly.startsWith(`${p}/`))) {
-    return false;
-  }
-  return !READ_ONLY_ALLOWED_WRITES.some((re) => re.test(`${method} ${pathOnly}`));
-}
-function stateFile() {
-  return path7.join(os5.homedir(), ".config", "memlin", "private-sessions.json");
-}
-async function readPrivateState() {
-  try {
-    const parsed = JSON.parse(await fs4.readFile(stateFile(), "utf8"));
-    return { ...parsed, sessions: parsed.sessions ?? {} };
-  } catch {
-    return { sessions: {} };
-  }
-}
-async function writePrivateState(state, now) {
-  for (const [id, entry] of Object.entries(state.sessions)) {
-    if (entry.expires_at <= now) delete state.sessions[id];
-  }
-  for (const [id, entry] of Object.entries(state.denied ?? {})) {
-    if (now - entry.at > DENIED_TTL_MS) delete state.denied?.[id];
-  }
-  for (const [id, entry] of Object.entries(state.accounts ?? {})) {
-    if (entry.until !== null && entry.until <= now) delete state.accounts?.[id];
-  }
-  for (const [id, floor] of Object.entries(state.floors ?? {})) {
-    if (now - floor.at > FLOOR_TTL_MS) delete state.floors?.[id];
-  }
-  const file2 = stateFile();
-  await fs4.mkdir(path7.dirname(file2), { recursive: true });
-  const tmp = `${file2}.${process.pid}.${Date.now()}.tmp`;
-  await fs4.writeFile(tmp, JSON.stringify(state, null, 2), { mode: 384 });
-  await atomicRename(tmp, file2);
-}
-function envLevel() {
-  const v = process.env.MEMLIN_PRIVATE?.trim().toLowerCase();
-  if (v === "1" || v === "true" || v === "on" || v === "private") return "private";
-  if (v === "read-only" || v === "read_only" || v === "readonly") return "read_only";
-  return null;
-}
-function currentSessionId() {
-  return process.env.MEMLIN_SESSION_ID || process.env.CLAUDE_CODE_SESSION_ID || null;
-}
-async function captureLevel(sessionId = currentSessionId(), now = Date.now(), accountId = null) {
-  const state = await readPrivateState();
-  const asked = [];
-  const env = envLevel();
-  if (env) asked.push(env);
-  if (accountId && accountPrivateActive(state, accountId, now)) {
-    asked.push(normalizeLevel(state.accounts[accountId].level));
-  }
-  const entry = sessionId ? state.sessions[sessionId] : void 0;
-  if (entry && entry.expires_at > now) asked.push(normalizeLevel(entry.level));
-  const denied = Boolean(accountId && accountDenied(state, accountId, now));
-  if (asked.includes("private") && !denied) return "private";
-  return asked.includes("read_only") ? "read_only" : null;
-}
-function accountDenied(state, accountId, now) {
-  const entry = state.denied?.[accountId];
-  return Boolean(entry && now - entry.at <= DENIED_TTL_MS);
-}
-function accountPrivateActive(state, accountId, now) {
-  const entry = state.accounts?.[accountId];
-  return Boolean(entry && (entry.until === null || entry.until > now));
-}
-async function notePrivateUntil(accountId, header, now = Date.now(), levelHeader = null) {
-  const state = await readPrivateState();
-  if (header === "denied") {
-    const prev2 = state.denied?.[accountId];
-    if (prev2 && now - prev2.at < 6e4 && !state.accounts?.[accountId]) return;
-    state.denied = { ...state.denied, [accountId]: { at: now } };
-    delete state.accounts?.[accountId];
-    await writePrivateState(state, now);
-    return;
-  }
-  let until;
-  if (!header || header === "off") until = void 0;
-  else if (header === "infinity") until = null;
-  else {
-    const at = Date.parse(header);
-    until = Number.isFinite(at) && at > now ? at : void 0;
-  }
-  const level = normalizeLevel(levelHeader);
-  if (until !== void 0 && level === "private" && state.denied?.[accountId]) {
-    delete state.denied[accountId];
-  }
-  const prev = state.accounts?.[accountId];
-  if (until === void 0) {
-    if (!prev) return;
-    delete state.accounts[accountId];
-  } else {
-    if (prev && prev.until === until && normalizeLevel(prev.level) === level) return;
-    state.accounts = { ...state.accounts, [accountId]: { until, seen_at: now, level } };
-  }
-  await writePrivateState(state, now);
-}
-async function inheritClearedPrivate(sessionId, opts = {}) {
-  if (!sessionId || opts.source !== "clear") return false;
-  const now = opts.now ?? Date.now();
-  const state = await readPrivateState();
-  const cleared = state.cleared;
-  if (!cleared || now - cleared.at > CLEAR_INHERIT_WINDOW_MS) return false;
-  if ((cleared.cwd ?? null) !== (opts.cwd ?? null)) return false;
-  delete state.cleared;
-  state.sessions[sessionId] = {
-    started_at: now,
-    expires_at: now + PRIVATE_TTL_MS,
-    cwd: opts.cwd ?? null,
-    level: normalizeLevel(cleared.level)
-  };
-  state.last_toggled = { session_id: sessionId, on: true, at: now };
-  await writePrivateState(state, now);
-  return true;
-}
-function isPrivateAllowedWrite(method, pathAndQuery) {
-  if (method === "GET") return true;
-  const pathOnly = pathAndQuery.split("?")[0];
-  return PRIVATE_ALLOWED_WRITES.includes(`${method} ${pathOnly}`);
-}
-var PRIVATE_HEADER, PRIVATE_UNTIL_HEADER, PRIVATE_LEVEL_HEADER, READ_ONLY_BLOCKED_PREFIXES, READ_ONLY_ALLOWED_WRITES, PRIVATE_TTL_MS, CLEAR_INHERIT_WINDOW_MS, PRIVATE_ALLOWED_WRITES, DENIED_TTL_MS, FLOOR_TTL_MS, READ_ONLY_ON_NOTICE, PRIVATE_ON_NOTICE;
-var init_private_mode = __esm({
-  "packages/plugin-core/dist/private-mode.js"() {
-    "use strict";
-    init_atomic_rename();
-    PRIVATE_HEADER = "Memlin-Private";
-    PRIVATE_UNTIL_HEADER = "Memlin-Private-Until";
-    PRIVATE_LEVEL_HEADER = "Memlin-Private-Level";
-    READ_ONLY_BLOCKED_PREFIXES = [
-      "/scribe",
-      "/memory",
-      "/documents",
-      "/decisions",
-      "/inbox",
-      "/promote"
-    ];
-    READ_ONLY_ALLOWED_WRITES = [
-      /^POST \/documents\/search$/,
-      /^POST \/decisions\/[^/]+\/asked$/
-    ];
-    PRIVATE_TTL_MS = 24 * 60 * 60 * 1e3;
-    CLEAR_INHERIT_WINDOW_MS = 3e4;
-    PRIVATE_ALLOWED_WRITES = [
-      "POST /resolve",
-      "POST /projects/resolve",
-      "POST /deploy-guard"
-    ];
-    DENIED_TTL_MS = 10 * 60 * 1e3;
-    FLOOR_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
-    READ_ONLY_ON_NOTICE = "Memlin read-only mode is ON for this session. Memlin context still loads and your team still sees this work, but nothing changes team memory: no scribe capture, no memory proposals, no saved memories, skills or decisions. Turn it off with /memlin-private off. It ends with the session.";
-    PRIVATE_ON_NOTICE = "Memlin private mode is ON for this session. Memlin context still loads, but nothing from this session is saved: no scribe capture, no plan sync, no activity, no audit. Turn it off with /memlin-private off. It ends with the session.";
-  }
-});
-
-// packages/plugin-core/dist/workspace-binding.js
+// packages/plugin-core/src/workspace-binding.ts
 var workspace_binding_exports = {};
 __export(workspace_binding_exports, {
   WORKSPACE_BINDING_FILE: () => WORKSPACE_BINDING_FILE,
@@ -26544,11 +26055,11 @@ __export(workspace_binding_exports, {
 import { randomUUID as randomUUID2 } from "node:crypto";
 import { constants, promises as fs5 } from "node:fs";
 import os6 from "node:os";
-import path8 from "node:path";
+import path7 from "node:path";
 async function homeDirectories() {
   const home = os6.homedir();
   if (!home) return [];
-  const resolved = path8.resolve(home);
+  const resolved = path7.resolve(home);
   const real = await fs5.realpath(resolved).catch(() => resolved);
   return real === resolved ? [resolved] : [resolved, real];
 }
@@ -26557,7 +26068,7 @@ function coversHome(dir, homes) {
 }
 async function isTooBroadForWorkspaceBinding(dir) {
   const homes = await homeDirectories();
-  const resolved = path8.resolve(dir);
+  const resolved = path7.resolve(dir);
   const real = await fs5.realpath(resolved).catch(() => resolved);
   return coversHome(resolved, homes) || coversHome(real, homes);
 }
@@ -26566,13 +26077,13 @@ async function findIgnoredBroadWorkspaceBinding() {
   for (const home of homes) {
     let dir = home;
     for (let i = 0; i < 64; i++) {
-      const candidate = path8.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+      const candidate = path7.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
       try {
         const parsed = JSON.parse(await fs5.readFile(candidate, "utf8"));
         if (typeof parsed.account_id === "string" && parsed.account_id) return candidate;
       } catch {
       }
-      const parent = path8.dirname(dir);
+      const parent = path7.dirname(dir);
       if (parent === dir) break;
       dir = parent;
     }
@@ -26580,11 +26091,11 @@ async function findIgnoredBroadWorkspaceBinding() {
   return null;
 }
 async function walkForWorkspaceBinding(startDir) {
-  let dir = path8.resolve(startDir);
+  let dir = path7.resolve(startDir);
   const homes = await homeDirectories();
   for (let i = 0; i < 64; i++) {
     if (coversHome(dir, homes)) return null;
-    const candidate = path8.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
+    const candidate = path7.join(dir, WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE);
     try {
       const raw = await fs5.readFile(candidate, "utf8");
       const parsed = JSON.parse(raw);
@@ -26600,7 +26111,7 @@ async function walkForWorkspaceBinding(startDir) {
       }
     } catch {
     }
-    const parent = path8.dirname(dir);
+    const parent = path7.dirname(dir);
     if (parent === dir) return null;
     dir = parent;
   }
@@ -26638,8 +26149,8 @@ async function readSmallRegularFile(file2) {
   }
 }
 function containedBy(parent, child) {
-  const relative = path8.relative(parent, child);
-  return relative === "" || relative !== ".." && !relative.startsWith(`..${path8.sep}`) && !path8.isAbsolute(relative);
+  const relative = path7.relative(parent, child);
+  return relative === "" || relative !== ".." && !relative.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relative);
 }
 async function canonicalSafeDirectory(candidate) {
   try {
@@ -26664,7 +26175,7 @@ function gitIdentity(checkoutRoot, state, repositoryRoot = checkoutRoot) {
   };
 }
 async function resolveGitWorkspaceIdentity(startDir) {
-  const requested = path8.resolve(startDir);
+  const requested = path7.resolve(startDir);
   let canonicalStart;
   try {
     canonicalStart = await fs5.realpath(requested);
@@ -26675,13 +26186,13 @@ async function resolveGitWorkspaceIdentity(startDir) {
   }
   let dir = canonicalStart;
   for (let i = 0; i < 64; i++) {
-    const gitEntry = path8.join(dir, ".git");
+    const gitEntry = path7.join(dir, ".git");
     let entry;
     try {
       entry = await fs5.lstat(gitEntry);
     } catch (error40) {
       if (!isFileNotFound(error40)) return gitIdentity(dir, "unknown");
-      const parent = path8.dirname(dir);
+      const parent = path7.dirname(dir);
       if (parent === dir) return gitIdentity(canonicalStart, "none");
       dir = parent;
       continue;
@@ -26702,16 +26213,16 @@ async function resolveGitWorkspaceIdentity(startDir) {
     if (!pointerValue) return gitIdentity(checkoutRoot, "unknown");
     let gitDirCandidate;
     try {
-      gitDirCandidate = path8.isAbsolute(pointerValue) ? pointerValue : path8.resolve(checkoutRoot, pointerValue);
+      gitDirCandidate = path7.isAbsolute(pointerValue) ? pointerValue : path7.resolve(checkoutRoot, pointerValue);
     } catch {
       return gitIdentity(checkoutRoot, "unknown");
     }
     const gitDir = await canonicalSafeDirectory(gitDirCandidate);
     if (!gitDir) return gitIdentity(checkoutRoot, "unknown");
-    const commonRead = await readSmallRegularFile(path8.join(gitDir, "commondir"));
+    const commonRead = await readSmallRegularFile(path7.join(gitDir, "commondir"));
     if (commonRead.kind === "missing") {
-      const gitDirParent = path8.dirname(gitDir);
-      const looksLikeWorktreeAdmin = path8.basename(gitDirParent) === "worktrees" && path8.basename(path8.dirname(gitDirParent)) === ".git";
+      const gitDirParent = path7.dirname(gitDir);
+      const looksLikeWorktreeAdmin = path7.basename(gitDirParent) === "worktrees" && path7.basename(path7.dirname(gitDirParent)) === ".git";
       if (looksLikeWorktreeAdmin) return gitIdentity(checkoutRoot, "unknown");
       return gitIdentity(checkoutRoot, "main");
     }
@@ -26723,22 +26234,22 @@ async function resolveGitWorkspaceIdentity(startDir) {
     if (!commonValue) return gitIdentity(checkoutRoot, "unknown");
     let commonCandidate;
     try {
-      commonCandidate = path8.isAbsolute(commonValue) ? commonValue : path8.resolve(gitDir, commonValue);
+      commonCandidate = path7.isAbsolute(commonValue) ? commonValue : path7.resolve(gitDir, commonValue);
     } catch {
       return gitIdentity(checkoutRoot, "unknown");
     }
     const commonDir = await canonicalSafeDirectory(commonCandidate);
     if (!commonDir) return gitIdentity(checkoutRoot, "unknown");
-    const worktreesDir = path8.join(commonDir, "worktrees");
-    if (path8.basename(commonDir) !== ".git" || gitDir === worktreesDir || !containedBy(worktreesDir, gitDir)) {
+    const worktreesDir = path7.join(commonDir, "worktrees");
+    if (path7.basename(commonDir) !== ".git" || gitDir === worktreesDir || !containedBy(worktreesDir, gitDir)) {
       return gitIdentity(checkoutRoot, "unknown");
     }
-    const repositoryRoot = path8.dirname(commonDir);
-    const repositoryGitDir = await canonicalSafeDirectory(path8.join(repositoryRoot, ".git"));
+    const repositoryRoot = path7.dirname(commonDir);
+    const repositoryGitDir = await canonicalSafeDirectory(path7.join(repositoryRoot, ".git"));
     if (!repositoryGitDir || repositoryGitDir !== commonDir) {
       return gitIdentity(checkoutRoot, "unknown");
     }
-    const reverseRead = await readSmallRegularFile(path8.join(gitDir, "gitdir"));
+    const reverseRead = await readSmallRegularFile(path7.join(gitDir, "gitdir"));
     if (reverseRead.kind !== "ok" || reverseRead.value.includes("\0")) {
       return gitIdentity(checkoutRoot, "unknown");
     }
@@ -26746,7 +26257,7 @@ async function resolveGitWorkspaceIdentity(startDir) {
     const reverseValue = reverseMatch?.[1];
     if (!reverseValue) return gitIdentity(checkoutRoot, "unknown");
     try {
-      const reverseCandidate = path8.isAbsolute(reverseValue) ? reverseValue : path8.resolve(gitDir, reverseValue);
+      const reverseCandidate = path7.isAbsolute(reverseValue) ? reverseValue : path7.resolve(gitDir, reverseValue);
       const [reverseTarget, checkoutGitFile] = await Promise.all([
         fs5.realpath(reverseCandidate),
         fs5.realpath(gitEntry)
@@ -26764,7 +26275,7 @@ async function findWorkspaceBinding(startDir) {
   const gitIdentity2 = await resolveGitWorkspaceIdentity(startDir);
   if (gitIdentity2.state !== "worktree") return direct;
   if (direct) {
-    const bindingRoot = await fs5.realpath(direct.workspaceRoot).catch(() => path8.resolve(direct.workspaceRoot));
+    const bindingRoot = await fs5.realpath(direct.workspaceRoot).catch(() => path7.resolve(direct.workspaceRoot));
     if (containedBy(gitIdentity2.checkout_root, bindingRoot)) return direct;
   }
   return walkForWorkspaceBinding(gitIdentity2.repository_root);
@@ -26773,7 +26284,7 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
   if (typeof binding.account_id !== "string" || binding.account_id.length === 0) {
     throw new Error("Workspace binding account_id is required.");
   }
-  const root = await fs5.realpath(path8.resolve(workspaceRoot));
+  const root = await fs5.realpath(path7.resolve(workspaceRoot));
   const rootEntry = await fs5.stat(root);
   if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
   if (await isTooBroadForWorkspaceBinding(root)) {
@@ -26781,7 +26292,7 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
       `Refusing to link ${root}: it is your home folder or above it, so the link would cover every project inside it. Run this from inside the project folder instead.`
     );
   }
-  const dir = path8.join(root, WORKSPACE_DIR_NAME);
+  const dir = path7.join(root, WORKSPACE_DIR_NAME);
   try {
     const entry = await fs5.lstat(dir);
     if (!entry.isDirectory() || entry.isSymbolicLink()) {
@@ -26795,7 +26306,7 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
       throw new Error(`Refusing an unsafe Memlin workspace directory at ${dir}`);
     }
   }
-  const file2 = path8.join(dir, WORKSPACE_BINDING_FILE);
+  const file2 = path7.join(dir, WORKSPACE_BINDING_FILE);
   try {
     const existing = await fs5.lstat(file2);
     if (!existing.isFile() || existing.isSymbolicLink()) {
@@ -26813,7 +26324,7 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
     null,
     2
   );
-  const temporary = path8.join(dir, `.config.${randomUUID2()}.tmp`);
+  const temporary = path7.join(dir, `.config.${randomUUID2()}.tmp`);
   let handle;
   try {
     handle = await fs5.open(temporary, "wx", 384);
@@ -26834,10 +26345,10 @@ async function writeWorkspaceBinding(workspaceRoot, binding) {
   }
 }
 async function clearWorkspaceBinding(workspaceRoot) {
-  const root = await fs5.realpath(path8.resolve(workspaceRoot));
+  const root = await fs5.realpath(path7.resolve(workspaceRoot));
   const rootEntry = await fs5.stat(root);
   if (!rootEntry.isDirectory()) throw new Error("Workspace root must be a directory.");
-  const dir = path8.join(root, WORKSPACE_DIR_NAME);
+  const dir = path7.join(root, WORKSPACE_DIR_NAME);
   try {
     const entry = await fs5.lstat(dir);
     if (!entry.isDirectory() || entry.isSymbolicLink()) {
@@ -26847,7 +26358,7 @@ async function clearWorkspaceBinding(workspaceRoot) {
     if (isFileNotFound(error40)) return false;
     throw error40;
   }
-  const file2 = path8.join(dir, WORKSPACE_BINDING_FILE);
+  const file2 = path7.join(dir, WORKSPACE_BINDING_FILE);
   try {
     const entry = await fs5.lstat(file2);
     if (!entry.isFile() || entry.isSymbolicLink()) {
@@ -26866,7 +26377,7 @@ function isFileNotFound(error40) {
 }
 var WORKSPACE_DIR_NAME, WORKSPACE_BINDING_FILE, GIT_POINTER_MAX_BYTES;
 var init_workspace_binding = __esm({
-  "packages/plugin-core/dist/workspace-binding.js"() {
+  "packages/plugin-core/src/workspace-binding.ts"() {
     "use strict";
     init_atomic_rename();
     init_auth_refusal();
@@ -26876,12 +26387,12 @@ var init_workspace_binding = __esm({
   }
 });
 
-// packages/plugin-core/dist/memlin-api-client.js
+// packages/plugin-core/src/memlin-api-client.ts
 import { readFileSync } from "node:fs";
 import crypto3 from "node:crypto";
 import os7 from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
+import { fileURLToPath } from "node:url";
 function agentDevice() {
   return process.env.MEMLIN_AGENT_DEVICE || os7.hostname() || "unknown";
 }
@@ -27011,7 +26522,7 @@ function resolveApiUrl() {
 }
 var DEFAULT_API_URL, cachedAgentVersion, DEFAULT_REQUEST_TIMEOUT_MS, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, NATIVE_MEMORY_BATCH_SIZE, NATIVE_MEMORY_BATCH_CONCURRENCY, NATIVE_MEMORY_REQUEST_TIMEOUT_MS, NATIVE_MEMORY_BATCH_INDEX, RESOLVE_V2_MAX_LINE_BYTES, RETRIABLE_STATUS, RETRIABLE_NETWORK_CODES, MemlinApiClient;
 var init_memlin_api_client = __esm({
-  "packages/plugin-core/dist/memlin-api-client.js"() {
+  "packages/plugin-core/src/memlin-api-client.ts"() {
     "use strict";
     init_dist();
     init_auth_refusal();
@@ -28262,8 +27773,8 @@ var init_memlin_api_client = __esm({
         if (opts.severity) qs.set("severity", opts.severity);
         if (opts.limit) qs.set("limit", String(opts.limit));
         const query = qs.toString();
-        const path19 = `/feeds/${encodeURIComponent(key)}${query ? `?${query}` : ""}`;
-        return this.request("GET", path19, void 0, {
+        const path10 = `/feeds/${encodeURIComponent(key)}${query ? `?${query}` : ""}`;
+        return this.request("GET", path10, void 0, {
           accountId: opts.accountId,
           maxRetries: opts.maxRetries,
           requestTimeoutMs: opts.requestTimeoutMs
@@ -28316,37 +27827,21 @@ var init_memlin_api_client = __esm({
   }
 });
 
-// packages/plugin-core/dist/hook-exit.js
-function releaseStdin() {
-  try {
-    const stdin = process.stdin;
-    stdin.pause();
-    stdin.unref?.();
-  } catch {
-  }
-}
-function exitHook(code) {
-  process.exitCode = code;
-  releaseStdin();
-  void closeHttpSockets();
-  setTimeout(() => process.exit(), HOOK_WATCHDOG_MS).unref();
-}
-var HOOK_WATCHDOG_MS;
+// packages/plugin-core/src/hook-exit.ts
 var init_hook_exit = __esm({
-  "packages/plugin-core/dist/hook-exit.js"() {
+  "packages/plugin-core/src/hook-exit.ts"() {
     "use strict";
     init_runtime_shared();
-    HOOK_WATCHDOG_MS = 2e3;
   }
 });
 
-// packages/plugin-core/dist/client.js
+// packages/plugin-core/src/client.ts
 import { promises as fs6 } from "node:fs";
-import path9 from "node:path";
+import path8 from "node:path";
 import os8 from "node:os";
 import { randomUUID as randomUUID3 } from "node:crypto";
 function globalConfigFilePath() {
-  return process.env.MEMLIN_CONFIG_FILE || path9.join(os8.homedir(), ".config", "memlin", "config.json");
+  return process.env.MEMLIN_CONFIG_FILE || path8.join(os8.homedir(), ".config", "memlin", "config.json");
 }
 async function readConfig() {
   try {
@@ -28421,24 +27916,6 @@ async function getApi(opts = {}) {
     readOnlySession
   };
 }
-async function hookAuthRefusal(opts) {
-  try {
-    const config2 = await readConfig();
-    if (!config2) return { refused: false, notice: "" };
-    const overlay = await findWorkspaceBinding(opts.cwd ?? process.cwd());
-    const { workspaceRoot, workspaceAccountName } = applyWorkspaceOverlay(config2, overlay);
-    const entry = await readAuthRefusal(config2.account_id, workspaceRoot);
-    if (!entry) return { refused: false, notice: "" };
-    if (!opts.notify) return { refused: true, notice: "" };
-    const notice = await claimAuthRefusalNotice(
-      { ...entry, account_name: entry.account_name ?? workspaceAccountName },
-      opts.sessionId ?? null
-    );
-    return { refused: true, notice: notice ?? "" };
-  } catch {
-    return { refused: false, notice: "" };
-  }
-}
 function applyWorkspaceOverlay(config2, overlay) {
   if (!overlay) return { workspaceBound: false, workspaceRoot: null, workspaceAccountName: null };
   config2.account_id = overlay.binding.account_id;
@@ -28451,15 +27928,9 @@ function applyWorkspaceOverlay(config2, overlay) {
     workspaceAccountName: overlay.binding.account_name ?? null
   };
 }
-function log(msg) {
-  if (process.env.MEMLIN_DEBUG) {
-    process.stderr.write(`[memlin] ${msg}
-`);
-  }
-}
 var CONFIG_DIR, TOKEN_FILE;
 var init_client = __esm({
-  "packages/plugin-core/dist/client.js"() {
+  "packages/plugin-core/src/client.ts"() {
     "use strict";
     init_auth();
     init_atomic_rename();
@@ -28470,2183 +27941,158 @@ var init_client = __esm({
     init_private_mode();
     init_runtime_shared();
     init_hook_exit();
-    CONFIG_DIR = path9.join(os8.homedir(), ".config", "memlin");
-    TOKEN_FILE = path9.join(CONFIG_DIR, "token.json");
+    CONFIG_DIR = path8.join(os8.homedir(), ".config", "memlin");
+    TOKEN_FILE = path8.join(CONFIG_DIR, "token.json");
   }
 });
 
-// packages/plugin-core/dist/state.js
-import { promises as fs7 } from "node:fs";
-import path10 from "node:path";
-import os9 from "node:os";
-import crypto4 from "node:crypto";
-async function readState() {
-  try {
-    const raw = await fs7.readFile(STATE_FILE, "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return { ...EMPTY };
+// packages/plugin-core/src/project-resolver.ts
+import { existsSync, readdirSync, readFileSync as readFileSync2, lstatSync } from "node:fs";
+import path9 from "node:path";
+function runtimeCwd(fallback = process.cwd()) {
+  for (const name of WORKSPACE_ENV_VARS) {
+    const raw = process.env[name]?.trim();
+    if (raw && path9.isAbsolute(raw)) return path9.resolve(raw);
   }
+  return path9.resolve(fallback);
 }
-async function writeState(state) {
-  await fs7.mkdir(path10.dirname(STATE_FILE), { recursive: true });
-  const tmp = `${STATE_FILE}.${process.pid}.tmp`;
-  await fs7.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await atomicRename(tmp, STATE_FILE);
-}
-async function acquireStateLock() {
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  await fs7.mkdir(path10.dirname(LOCK_DIR), { recursive: true }).catch(() => {
-  });
-  for (; ; ) {
-    try {
-      await fs7.mkdir(LOCK_DIR);
-      return true;
-    } catch {
-      try {
-        const stat = await fs7.stat(LOCK_DIR);
-        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
-          await fs7.rmdir(LOCK_DIR).catch(() => {
-          });
-          continue;
-        }
-      } catch {
-        continue;
-      }
-      if (Date.now() >= deadline) return false;
-      await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
-    }
-  }
-}
-async function releaseStateLock() {
-  await fs7.rmdir(LOCK_DIR).catch(() => {
-  });
-}
-async function updateState(mutate) {
-  const locked = await acquireStateLock();
-  try {
-    const state = await readState();
-    await mutate(state);
-    await writeState(state);
-    return state;
-  } finally {
-    if (locked) await releaseStateLock();
-  }
-}
-function hash(content) {
-  return crypto4.createHash("sha256").update(content).digest("hex");
-}
-var STATE_FILE, MAX_LAST_RESOLVE_SESSIONS, EMPTY, LOCK_DIR, LOCK_STALE_MS, LOCK_WAIT_MS, LOCK_RETRY_MS;
-var init_state = __esm({
-  "packages/plugin-core/dist/state.js"() {
-    "use strict";
-    init_atomic_rename();
-    STATE_FILE = path10.join(os9.homedir(), ".config", "memlin", "state.json");
-    MAX_LAST_RESOLVE_SESSIONS = 32;
-    EMPTY = { documents: {} };
-    LOCK_DIR = `${STATE_FILE}.lock`;
-    LOCK_STALE_MS = 2e3;
-    LOCK_WAIT_MS = 2e3;
-    LOCK_RETRY_MS = 50;
-  }
-});
-
-// packages/plugin-core/dist/project-resolver.js
-import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2, lstatSync } from "node:fs";
-import path12 from "node:path";
-function allowAccountMismatch(env = process.env) {
-  const v = env[ALLOW_ACCOUNT_MISMATCH_ENV];
-  return v === "1" || v === "true" || v === "yes";
-}
-function accountBindingHazard(r, opts = {}) {
-  if (!r.hasGitRemote || !r.project_id) return "none";
-  if (r.reason === "local-path") return opts.allowMismatch ? "warn" : "block";
-  if (r.reason === "config") return "warn";
-  return "none";
-}
-function formatAccountMismatchWarning(input) {
-  if (input.hazard === "none") return null;
-  const acct = input.accountName ? `"${input.accountName}"` : "this account";
-  const proj = input.projectName ? `"${input.projectName}"` : "a project";
-  const head = input.hazard === "block" ? "Memlin: account-binding mismatch \u2014 capture paused." : "Memlin: account-binding check.";
-  return [
-    head,
-    `  This repo has a git remote, but it resolved to ${proj} under ${acct} via ${input.reason} \u2014`,
-    `  that project does not own your git remote, so you may be recording to the wrong org.`,
-    "  Fix: run `memlin login` to refresh your accounts, then `memlin add-project`",
-    "  (or `memlin link <correct-org>`)." + (input.hazard === "block" ? ` To record here anyway, set ${ALLOW_ACCOUNT_MISMATCH_ENV}=1.` : "")
-  ].join("\n");
-}
-async function resolveProject(api, cwd, configProjectId) {
-  const absCwd = path12.resolve(cwd);
-  const remotes = detectGitRemotes(cwd);
-  const hasGitRemote = remotes.length > 0;
-  let serverFailure;
-  try {
-    const result = await api.resolveProject({
-      // Primary remote (back-compat with the single-remote server path).
-      git_remote: remotes[0] ?? null,
-      // All detected remotes — for the workspace-root-of-repos case, this is
-      // every sibling repo so the server resolves to the owning project.
-      git_remotes: remotes,
-      cwd: absCwd
-    });
-    if (result.project_id) {
-      return {
-        project_id: result.project_id,
-        project_name: result.name,
-        account_id: result.account_id,
-        reason: result.reason === "none" ? "config" : result.reason,
-        hasGitRemote,
-        enforce_done_deployed: result.enforce_done_deployed
-      };
-    }
-  } catch (e) {
-    serverFailure = summarizeBackendFailure(e) ?? void 0;
-  }
-  if (configProjectId) {
-    const localBinding = await findWorkspaceBinding(absCwd).catch(() => null);
-    if (localBinding?.binding.project_id === configProjectId) {
-      return {
-        project_id: configProjectId,
-        project_name: null,
-        account_id: null,
-        reason: "config",
-        hasGitRemote,
-        server_failure: serverFailure
-      };
-    }
-  }
-  return {
-    project_id: null,
-    project_name: null,
-    account_id: null,
-    reason: "none",
-    hasGitRemote,
-    server_failure: serverFailure
-  };
-}
-function readGitRemote(cwd) {
-  const read = (file2) => {
-    const stat = lstatSync(file2);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 64 * 1024)
-      throw new Error("Unsupported Git metadata");
-    return readFileSync2(file2, "utf8");
-  };
-  try {
-    let root = path12.resolve(cwd);
-    for (; ; ) {
-      const marker = path12.join(root, ".git");
-      if (existsSync2(marker)) {
-        const info = lstatSync(marker);
-        if (info.isSymbolicLink()) return null;
-        let directory = marker;
-        if (info.isFile()) {
-          const match = /^gitdir:\s*(.+)$/m.exec(read(marker));
-          if (!match) return null;
-          directory = path12.resolve(root, match[1].trim());
-        }
-        const common2 = path12.join(directory, "commondir");
-        if (existsSync2(common2)) directory = path12.resolve(directory, read(common2).trim());
-        let origin = false;
-        for (const line of read(path12.join(directory, "config")).split(/\r?\n/)) {
-          if (/^\s*\[/.test(line)) origin = /^\s*\[remote\s+"origin"\]\s*(?:[#;].*)?$/.test(line);
-          else if (origin) {
-            const match = /^\s*url\s*=\s*(.*?)\s*$/.exec(line);
-            if (match) return normalizeGitRemote(match[1].replace(/^"(.*)"$/, "$1"));
-          }
-        }
-        return null;
-      }
-      const parent = path12.dirname(root);
-      if (parent === root) return null;
-      root = parent;
-    }
-  } catch {
-    return null;
-  }
-}
-function detectGitRemotes(cwd) {
-  const enclosing = readGitRemote(cwd);
-  if (enclosing) return [enclosing];
-  const out = [];
-  try {
-    let scanned = 0;
-    for (const entry of readdirSync(cwd, { withFileTypes: true })) {
-      if (scanned >= MAX_WORKSPACE_SCAN) break;
-      if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") {
-        continue;
-      }
-      scanned++;
-      const child = path12.join(cwd, entry.name);
-      if (!existsSync2(path12.join(child, ".git"))) continue;
-      const remote = readGitRemote(child);
-      if (remote && !out.includes(remote)) out.push(remote);
-    }
-  } catch {
-  }
-  return out;
-}
-function isWorkspaceActive(input) {
-  return Boolean(input.resolvedProjectId) || input.workspaceBound;
-}
-function effectiveAccountId(input) {
-  return input.resolvedAccountId ?? input.configAccountId;
-}
-var ALLOW_ACCOUNT_MISMATCH_ENV, MAX_WORKSPACE_SCAN;
+var WORKSPACE_ENV_VARS;
 var init_project_resolver = __esm({
-  "packages/plugin-core/dist/project-resolver.js"() {
+  "packages/plugin-core/src/project-resolver.ts"() {
     "use strict";
     init_runtime_shared();
     init_workspace_binding();
     init_backend_error();
-    ALLOW_ACCOUNT_MISMATCH_ENV = "MEMLIN_ALLOW_ACCOUNT_MISMATCH";
-    MAX_WORKSPACE_SCAN = 64;
+    WORKSPACE_ENV_VARS = [
+      // Claude Code exposes the original project dir to hooks/plugin commands.
+      "CLAUDE_PROJECT_DIR",
+      // Cursor/plugin shims and local tests can set this explicitly.
+      "CURSOR_WORKSPACE_ROOT",
+      "CURSOR_PROJECT_ROOT",
+      "MEMLIN_WORKSPACE_ROOT",
+      // npm/pnpm set INIT_CWD to the directory where the user invoked a script.
+      "INIT_CWD"
+    ];
   }
 });
 
-// packages/plugin-core/dist/session-feature.js
-import { execFileSync } from "node:child_process";
-function validSession(value) {
-  return !!value && value.length <= 256;
+// packages/plugin-core/src/cli/cli-runner.ts
+function scheduleProcessExit(code) {
+  process.exitCode = code;
+  void closeHttpSockets();
+  setTimeout(() => process.exit(), WATCHDOG_MS).unref();
 }
-function readFeatureBranch(cwd) {
-  try {
-    const raw = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 2e3
-    }).trim();
-    return raw.length <= 300 ? featureBranch(raw) : null;
-  } catch {
-    return null;
-  }
-}
-function cacheSessionFeature(state, identity, active, now = Date.now()) {
-  if (!validSession(identity.sessionId)) return;
-  if (!identity.accountId || !identity.projectId || !active || !UUID2.test(active.id) || !["pin", "handoff", "branch"].includes(active.via)) {
-    delete state.session_features?.[identity.sessionId];
-    return;
-  }
-  const branch = featureBranch(identity.gitBranch);
-  if (active.via === "branch" && !branch) {
-    delete state.session_features?.[identity.sessionId];
-    return;
-  }
-  const entries = state.session_features ??= /* @__PURE__ */ Object.create(null);
-  entries[identity.sessionId] = {
-    feature_id: active.id,
-    title: active.title.slice(0, 100),
-    via: active.via,
-    account_id: identity.accountId,
-    project_id: identity.projectId,
-    git_branch: branch,
-    at: now
-  };
-  Object.entries(entries).sort(([, a], [, b]) => b.at - a.at).slice(MAX_LAST_RESOLVE_SESSIONS).forEach(([id]) => {
-    delete entries[id];
-  });
-}
-function getSessionFeature(state, identity, now = Date.now()) {
-  if (!validSession(identity.sessionId) || !identity.accountId || !identity.projectId) return null;
-  const entry = state.session_features?.[identity.sessionId];
-  if (!entry || entry.account_id !== identity.accountId || entry.project_id !== identity.projectId || !UUID2.test(entry.feature_id) || !["pin", "handoff", "branch"].includes(entry.via) || !Number.isFinite(entry.at) || entry.at > now || now - entry.at >= TTL || entry.via === "branch" && (!entry.git_branch || entry.git_branch !== featureBranch(identity.gitBranch)))
-    return null;
-  return entry;
-}
-async function recordSessionFeature(identity, active) {
-  if (!validSession(identity.sessionId)) return;
-  await updateState((state) => cacheSessionFeature(state, identity, active)).catch(() => void 0);
-}
-async function sessionFeatureCaptureFields(identity) {
-  const entry = getSessionFeature(await readState(), identity);
-  const branch = featureBranch(identity.gitBranch);
-  return {
-    ...validSession(identity.sessionId) ? { session_id: identity.sessionId } : {},
-    ...branch ? { git_branch: branch } : {},
-    ...entry ? { feature_id: entry.feature_id } : {}
-  };
-}
-var TTL, UUID2;
-var init_session_feature = __esm({
-  "packages/plugin-core/dist/session-feature.js"() {
-    "use strict";
-    init_dist();
-    init_state();
-    TTL = 14 * 864e5;
-    UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  }
-});
-
-// packages/plugin-core/dist/light-gate.js
-function lightGateMessage(feature) {
-  const lead = `${FEATURE_LABEL[feature]} isn't part of Memlin Light.`;
-  const why = feature === "takeover" || feature === "disable_native" || feature === "ingest_native" ? " Light keeps your agents' own memory on and syncs it." : "";
-  return `${lead}${why} To save something yourself, use "Add a note" in Memlin Light.`;
-}
-function isLightGatedError(error40) {
-  return error40 instanceof LightGatedError || typeof error40 === "object" && error40 !== null && error40.code === "light_gated";
-}
-async function isLightAccount(api, accountId, opts = {}) {
-  if (!api || typeof api.lightStatus !== "function") return false;
-  const now = opts.now ?? Date.now;
-  const key = accountId || api.defaultAccountId || "";
-  const hit = cache.get(key);
-  if (hit && now() - hit.at < LIGHT_GATE_TTL_MS) return hit.light;
-  const pending = inflight.get(key);
-  if (pending) return pending;
-  const lookup = (async () => {
-    let timer;
-    try {
-      const status = await Promise.race([
-        api.lightStatus(accountId || void 0),
-        new Promise((resolve) => {
-          timer = setTimeout(
-            () => resolve("timeout"),
-            opts.timeoutMs ?? LIGHT_GATE_LOOKUP_TIMEOUT_MS
-          );
-        })
-      ]);
-      if (status === "timeout") return false;
-      const light = status?.active === true;
-      cache.set(key, { light, at: now() });
-      return light;
-    } catch {
-      return false;
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  })();
-  inflight.set(key, lookup);
-  void lookup.finally(() => {
-    if (inflight.get(key) === lookup) inflight.delete(key);
-  });
-  return lookup;
-}
-async function assertNotLight(api, feature, accountId) {
-  if (await isLightAccount(api, accountId)) throw new LightGatedError(feature);
-}
-var LIGHT_GATE_TTL_MS, LIGHT_GATE_LOOKUP_TIMEOUT_MS, FEATURE_LABEL, LightGatedError, cache, inflight;
-var init_light_gate = __esm({
-  "packages/plugin-core/dist/light-gate.js"() {
-    "use strict";
-    LIGHT_GATE_TTL_MS = 5 * 6e4;
-    LIGHT_GATE_LOOKUP_TIMEOUT_MS = 3e3;
-    FEATURE_LABEL = {
-      takeover: "Moving memory into Memlin",
-      disable_native: "Turning off your agent's native memory",
-      report: "The usage report",
-      remember: "Remember",
-      plans: "Plan sync",
-      realtime: "Live sync",
-      ingest_native: "Importing native memory into Memlin"
-    };
-    LightGatedError = class extends Error {
-      constructor(feature) {
-        super(lightGateMessage(feature));
-        this.feature = feature;
-        this.name = "LightGatedError";
-      }
-      feature;
-      code = "light_gated";
-    };
-    cache = /* @__PURE__ */ new Map();
-    inflight = /* @__PURE__ */ new Map();
-  }
-});
-
-// packages/plugin-core/dist/plan-sync.js
-var plan_sync_exports = {};
-__export(plan_sync_exports, {
-  DEFAULT_PLAN_SETTLE_MS: () => DEFAULT_PLAN_SETTLE_MS,
-  enqueuePlanPush: () => enqueuePlanPush,
-  fetchPlanPullRows: () => fetchPlanPullRows,
-  flushPlanPushes: () => flushPlanPushes,
-  getLastPlanPullCursor: () => getLastPlanPullCursor,
-  listUnboundPlans: () => listUnboundPlans,
-  planSettleMs: () => planSettleMs,
-  pullPlans: () => pullPlans,
-  pushPlanFile: () => pushPlanFile,
-  reconcileKnownPlans: () => reconcileKnownPlans,
-  resolveTargetDocId: () => resolveTargetDocId,
-  setLastPlanPullCursor: () => setLastPlanPullCursor,
-  stampPlanFile: () => stampPlanFile
-});
-import { promises as fs11 } from "node:fs";
-import path15 from "node:path";
-function homeBase(host) {
-  return (host ?? resolveHost()).homeDir();
-}
-function plansDir(host) {
-  return (host ?? resolveHost()).plansDir();
-}
-async function fetchPlanPullRows(api, fetchOpts, accountId) {
-  const callOpts = accountId ? { accountId } : {};
-  await assertNotLight(api, "plans", accountId);
-  const list = await api.listPlans(fetchOpts, callOpts);
-  const rows = [];
-  for (const plan of list) {
-    try {
-      rows.push({ plan, detail: await api.getPlan(plan.document_id, callOpts) });
-    } catch {
-    }
-  }
-  return rows;
-}
-async function pullPlans(api, opts = {}) {
-  const fetchOpts = {};
-  if (opts.projectId !== void 0) fetchOpts.project_id = opts.projectId;
-  if (opts.since) fetchOpts.updated_after = opts.since;
-  let rows;
-  try {
-    rows = await fetchPlanPullRows(api, fetchOpts, opts.accountId);
-  } catch (error40) {
-    if (isLightGatedError(error40)) return { pulled: [], unchanged: [], removed: [] };
-    throw error40;
-  }
-  await fs11.mkdir(plansDir(opts.host), { recursive: true });
-  const state = await readState();
-  const newEntries = {};
-  const pulled = [];
-  const unchanged = [];
-  const removed = [];
-  const isFullSync = !opts.since;
-  const seenPaths = /* @__PURE__ */ new Set();
-  for (const { plan: p, detail } of rows) {
-    const slug = p.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 48);
-    const filename = `${p.document_id.slice(0, 8)}-${slug || "plan"}.md`;
-    const localPath = path15.join("plans", filename);
-    const full = path15.join(plansDir(opts.host), filename);
-    seenPaths.add(localPath);
-    const body = detail.body;
-    const fileContent = formatPlanFile(p.title, body, p.status, {
-      documentId: p.document_id,
-      projectId: p.project_id
-    });
-    const contentHash = hash(fileContent);
-    const existing = state.documents[localPath];
-    if (existing?.content_hash === contentHash) {
-      unchanged.push(localPath);
-      continue;
-    }
-    if (state.plan_push_queue?.[path15.resolve(full)]) {
-      unchanged.push(localPath);
-      continue;
-    }
-    await fs11.writeFile(full, fileContent, "utf8");
-    pulled.push(localPath);
-    newEntries[localPath] = {
-      document_id: p.document_id,
-      version_id: "",
-      version_number: p.version_number,
-      content_hash: contentHash,
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: p.scope ?? "personal",
-      kind: "plan"
-    };
-  }
-  await updateState((s) => {
-    Object.assign(s.documents, newEntries);
-    if (isFullSync) {
-      for (const tracked of Object.keys(s.documents)) {
-        if (!tracked.startsWith("plans/")) continue;
-        if (seenPaths.has(tracked)) continue;
-        delete s.documents[tracked];
-      }
-    }
-  });
-  return { pulled, unchanged, removed };
-}
-function resolveTargetDocId(stateEntry, binding) {
-  return stateEntry?.document_id || binding?.documentId || void 0;
-}
-async function pushPlanFile(api, file2, opts = {}) {
-  const raw = await fs11.readFile(file2, "utf8");
-  const { title, body, binding: existingBinding } = parsePlanFile(raw);
-  if (!body.trim()) {
-    throw new Error("plan body is empty");
-  }
-  const relPath = path15.relative(homeBase(opts.host), file2);
-  const state = await readState();
-  const existing = state.documents[relPath];
-  if (existing?.document_id && existing.content_hash === hash(raw)) {
-    return {
-      document_id: existing.document_id,
-      version_number: existing.version_number,
-      created: false,
-      unchanged: true
-    };
-  }
-  const targetDocId = resolveTargetDocId(existing, existingBinding);
-  await assertNotLight(api, "plans", opts.accountId);
-  if (targetDocId) {
-    const result2 = await api.updatePlan(
-      targetDocId,
-      {
-        body,
-        title,
-        commit_message: "edit from claude-code"
-      },
-      opts.accountId ? { accountId: opts.accountId } : {}
-    );
-    await stampPlanFile(file2, {
-      documentId: result2.document_id,
-      projectId: existingBinding?.projectId ?? null
-    });
-    const stampedUpdate = await syncedHash(file2, raw, { title, body });
-    await updateState((s) => {
-      s.documents[relPath] = {
-        document_id: result2.document_id,
-        version_id: existing?.version_id ?? "",
-        version_number: result2.version_number,
-        content_hash: stampedUpdate,
-        last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-        scope: existing?.scope ?? (existingBinding?.projectId ? "project" : "personal"),
-        kind: "plan"
-      };
-    });
-    return {
-      document_id: result2.document_id,
-      version_number: result2.version_number,
-      created: false
-    };
-  }
-  const sessionId = opts.sessionId ?? process.env.MEMLIN_SESSION_ID ?? null;
-  let projectId = opts.projectId ?? null;
-  if (!projectId && sessionId && opts.cwd && opts.accountId) {
-    const resolved = await resolveProject(api, opts.cwd, null).catch(() => null);
-    if (resolved?.account_id === opts.accountId) projectId = resolved.project_id;
-  }
-  const featureFields = await sessionFeatureCaptureFields({
-    accountId: opts.accountId,
-    projectId,
-    sessionId,
-    gitBranch: opts.gitBranch === void 0 ? readFeatureBranch(opts.cwd ?? process.cwd()) : opts.gitBranch
-  });
-  const result = await api.pushPlan(
-    {
-      title,
-      body,
-      cwd: opts.cwd ?? null,
-      git_remote: opts.gitRemote ?? null,
-      ...featureFields
-    },
-    opts.accountId ? { accountId: opts.accountId } : {}
-  );
-  await updateState((s) => {
-    s.documents[relPath] = {
-      document_id: result.document_id,
-      version_id: "",
-      version_number: result.version_number,
-      content_hash: hash(raw),
-      last_synced_at: (/* @__PURE__ */ new Date()).toISOString(),
-      scope: result.project_id ? "project" : "personal",
-      kind: "plan"
-    };
-  });
-  await stampPlanFile(file2, {
-    documentId: result.document_id,
-    projectId: result.project_id
-  });
-  const stamped = await syncedHash(file2, raw, { title, body });
-  await updateState((s) => {
-    const entry = s.documents[relPath];
-    if (entry) entry.content_hash = stamped;
-  });
-  return {
-    document_id: result.document_id,
-    version_number: result.version_number,
-    created: true
-  };
-}
-async function syncedHash(file2, pushedRaw, pushed) {
-  const current = await fs11.readFile(file2, "utf8").catch(() => null);
-  if (current === null) return hash(pushedRaw);
-  const parsed = parsePlanFile(current);
-  return parsed.title === pushed.title && parsed.body === pushed.body ? hash(current) : hash(pushedRaw);
-}
-async function reconcileKnownPlans(api, opts = {}) {
-  const pushed = [];
-  const skipped = [];
-  const failed = [];
-  const deferred = [];
-  const now = opts.now ?? Date.now();
-  let light;
-  let entries;
-  try {
-    entries = await fs11.readdir(plansDir(opts.host));
-  } catch {
-    return { pushed, skipped, failed, deferred };
-  }
-  const state = await readState();
-  for (const f of entries) {
-    if (!f.endsWith(".md")) continue;
-    const abs = path15.join(plansDir(opts.host), f);
-    let raw;
-    let mtimeMs;
-    try {
-      const st = await fs11.stat(abs);
-      if (!st.isFile() || st.size === 0) continue;
-      mtimeMs = st.mtimeMs;
-      raw = await fs11.readFile(abs, "utf8");
-    } catch {
-      continue;
-    }
-    const relPath = path15.relative(homeBase(opts.host), abs);
-    const tracked = state.documents[relPath]?.document_id;
-    const { binding } = parsePlanFile(raw);
-    const isKnown = Boolean(tracked) || Boolean(binding?.documentId);
-    if (!isKnown) {
-      skipped.push(f);
-      continue;
-    }
-    if (tracked && state.documents[relPath]?.content_hash === hash(raw)) {
-      skipped.push(f);
-      continue;
-    }
-    if (opts.settleMs && now - mtimeMs < opts.settleMs) {
-      deferred.push(f);
-      continue;
-    }
-    light ??= await isLightAccount(api, opts.accountId);
-    if (light) {
-      skipped.push(f);
-      continue;
-    }
-    try {
-      const result = await pushPlanFile(api, abs, opts);
-      if (result.unchanged) skipped.push(f);
-      else pushed.push(`${f} (v${result.version_number})`);
-    } catch (err) {
-      failed.push(`${f}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-  return { pushed, skipped, failed, deferred };
-}
-function planSettleMs() {
-  const raw = Number(process.env.MEMLIN_PLAN_SETTLE_MS);
-  return Number.isFinite(raw) && raw >= 0 && process.env.MEMLIN_PLAN_SETTLE_MS?.trim() ? raw : DEFAULT_PLAN_SETTLE_MS;
-}
-async function enqueuePlanPush(file2, opts = {}) {
-  const now = opts.now ?? Date.now();
-  const key = path15.resolve(file2);
-  await updateState((s) => {
-    const queue = s.plan_push_queue ??= {};
-    const prior = queue[key];
-    queue[key] = {
-      cwd: opts.cwd ?? prior?.cwd ?? null,
-      git_remote: opts.gitRemote ?? prior?.git_remote ?? null,
-      session_id: opts.sessionId ?? prior?.session_id ?? null,
-      git_branch: opts.cwd ? readFeatureBranch(opts.cwd) : prior?.git_branch ?? null,
-      first_edit_at: prior?.first_edit_at ?? now,
-      last_edit_at: now,
-      ...prior?.attempts ? { attempts: prior.attempts } : {}
-    };
-  });
-}
-async function flushPlanPushes(api, opts = {}) {
-  const now = opts.now ?? Date.now();
-  const settleMs = opts.settleMs ?? planSettleMs();
-  const out = {
-    pushed: [],
-    unchanged: [],
-    deferred: [],
-    failed: []
-  };
-  const isDue = (entry) => Boolean(opts.all) || opts.sessionId !== void 0 && entry.session_id === (opts.sessionId ?? null) || now - entry.last_edit_at >= settleMs;
-  const queue = Object.entries((await readState()).plan_push_queue ?? {});
-  if (queue.some(([, entry]) => isDue(entry)) && await isLightAccount(api, opts.accountId)) {
-    out.deferred.push(...queue.map(([file2]) => path15.basename(file2)));
-    return out;
-  }
-  const claimed = [];
-  await updateState((s) => {
-    for (const [file2, entry] of Object.entries(s.plan_push_queue ?? {})) {
-      if (entry.claimed_at && now - entry.claimed_at < PLAN_PUSH_CLAIM_TTL_MS) continue;
-      const due = isDue(entry);
-      if (!due) {
-        out.deferred.push(path15.basename(file2));
-        continue;
-      }
-      entry.claimed_at = now;
-      claimed.push([file2, { ...entry }]);
-    }
-  });
-  for (const [file2, entry] of claimed) {
-    const name = path15.basename(file2);
-    let outcome = "done";
-    try {
-      const result = await pushPlanFile(api, file2, {
-        ...entry.cwd ? { cwd: entry.cwd } : {},
-        gitRemote: entry.git_remote,
-        sessionId: entry.session_id,
-        gitBranch: entry.git_branch,
-        ...opts.host ? { host: opts.host } : {},
-        ...opts.accountId ? { accountId: opts.accountId } : {}
-      });
-      if (result.unchanged) out.unchanged.push(name);
-      else out.pushed.push(`${name} (${result.created ? "new" : "v" + result.version_number})`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const gone = err?.code === "ENOENT" || message === "plan body is empty";
-      out.failed.push(`${name}: ${message}`);
-      if (!gone) outcome = "retry";
-    }
-    await updateState((s) => {
-      const current = s.plan_push_queue?.[file2];
-      if (!current) return;
-      if (current.last_edit_at !== entry.last_edit_at) {
-        delete current.claimed_at;
+function runCliMain(main2, onError) {
+  main2().then(
+    (code) => scheduleProcessExit(typeof code === "number" ? code : 0),
+    (err) => {
+      if (err instanceof CliExit) {
+        scheduleProcessExit(err.code);
         return;
       }
-      if (outcome === "retry" && (current.attempts ?? 0) + 1 < PLAN_PUSH_MAX_ATTEMPTS) {
-        current.attempts = (current.attempts ?? 0) + 1;
-        delete current.claimed_at;
-        return;
-      }
-      delete s.plan_push_queue[file2];
-    });
-  }
-  return out;
-}
-async function listUnboundPlans(host) {
-  const out = [];
-  let entries;
-  try {
-    entries = await fs11.readdir(plansDir(host));
-  } catch {
-    return out;
-  }
-  const state = await readState();
-  for (const f of entries) {
-    if (!f.endsWith(".md")) continue;
-    const abs = path15.join(plansDir(host), f);
-    let raw;
-    let size = 0;
-    try {
-      const st = await fs11.stat(abs);
-      if (!st.isFile() || st.size === 0) continue;
-      size = st.size;
-      raw = await fs11.readFile(abs, "utf8");
-    } catch {
-      continue;
-    }
-    const relPath = path15.relative(homeBase(host), abs);
-    const { title, binding } = parsePlanFile(raw);
-    if (state.documents[relPath]?.document_id || binding?.documentId) continue;
-    out.push({ file: f, title, size });
-  }
-  return out;
-}
-async function stampPlanFile(file2, binding) {
-  let raw;
-  try {
-    raw = await fs11.readFile(file2, "utf8");
-  } catch {
-    return;
-  }
-  const parsed = parsePlanFile(raw);
-  const stampLine = `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`;
-  const bodyNoStamp = parsed.body.replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "");
-  const composed = [
-    `# ${parsed.title}`,
-    "",
-    parsed.status ? `<!-- memlin-plan-status: ${parsed.status} -->` : null,
-    stampLine,
-    "",
-    bodyNoStamp.trim(),
-    ""
-  ].filter((l) => l !== null).join("\n");
-  await fs11.writeFile(file2, composed, "utf8");
-}
-function formatPlanFile(title, body, status, binding) {
-  const trimmedBody = body.replace(/^\s*#\s+.+\n+/, "").trimEnd();
-  const lines = [`# ${title}`, "", `<!-- memlin-plan-status: ${status} -->`];
-  if (binding) {
-    lines.push(
-      `<!-- memlin-binding: doc=${binding.documentId} project=${binding.projectId ?? "none"} -->`
-    );
-  }
-  lines.push("", trimmedBody, "");
-  return lines.join("\n");
-}
-function parsePlanFile(raw) {
-  const firstNl = raw.indexOf("\n");
-  const first = firstNl === -1 ? raw : raw.slice(0, firstNl);
-  const title = first.replace(/^#\s+/, "").trim() || "(untitled plan)";
-  const rest = firstNl === -1 ? "" : raw.slice(firstNl + 1).trim();
-  const statusMatch = rest.match(/<!--\s*memlin-plan-status:\s*([a-z_]+)\s*-->/);
-  const status = statusMatch ? statusMatch[1] ?? null : null;
-  const bindMatch = rest.match(/<!--\s*memlin-binding:\s*doc=([0-9a-f-]+)\s+project=(\S+)\s*-->/i);
-  const binding = bindMatch ? {
-    documentId: bindMatch[1],
-    projectId: bindMatch[2] === "none" ? null : bindMatch[2] ?? null
-  } : null;
-  const body = rest.replace(/<!--\s*memlin-plan-status:[^>]*-->\s*\n?/g, "").replace(/<!--\s*memlin-binding:[^>]*-->\s*\n?/g, "").trim();
-  return { title, body, status, binding };
-}
-function getLastPlanPullCursor(state) {
-  return state.last_plan_pull_at;
-}
-function setLastPlanPullCursor(state, at) {
-  state.last_plan_pull_at = at;
-}
-var DEFAULT_PLAN_SETTLE_MS, PLAN_PUSH_CLAIM_TTL_MS, PLAN_PUSH_MAX_ATTEMPTS;
-var init_plan_sync = __esm({
-  "packages/plugin-core/dist/plan-sync.js"() {
-    "use strict";
-    init_state();
-    init_host();
-    init_light_gate();
-    init_session_feature();
-    init_project_resolver();
-    DEFAULT_PLAN_SETTLE_MS = 9e4;
-    PLAN_PUSH_CLAIM_TTL_MS = 12e4;
-    PLAN_PUSH_MAX_ATTEMPTS = 5;
-  }
-});
-
-// packages/plugin-core/dist/scribe-notice.js
-var scribe_notice_exports = {};
-__export(scribe_notice_exports, {
-  accumulateScribeNotice: () => accumulateScribeNotice,
-  buildScribeNotice: () => buildScribeNotice,
-  formatFastTrackNudges: () => formatFastTrackNudges,
-  takeCorrectionNotice: () => takeCorrectionNotice,
-  takeScribeNotice: () => takeScribeNotice
-});
-function count(value) {
-  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-}
-function accumulateScribeNotice(existing, input) {
-  const captured = count(input.captured);
-  if (captured === 0) return existing;
-  const pending = input.pending == null ? captured : Math.min(captured, count(input.pending));
-  const sameSession = existing?.session_id === input.sessionId;
-  const carriedCaptured = sameSession ? count(existing.unsurfaced) : 0;
-  const carriedPending = sameSession ? existing.pending == null ? count(existing.unsurfaced) : Math.min(count(existing.unsurfaced), count(existing.pending)) : 0;
-  return {
-    unsurfaced: carriedCaptured + captured,
-    pending: carriedPending + pending,
-    session_id: input.sessionId,
-    at: input.at
-  };
-}
-function buildScribeNotice(capturedValue, pendingValue) {
-  const captured = count(capturedValue);
-  if (captured === 0) return "";
-  const pending = Math.min(captured, count(pendingValue ?? captured));
-  const handled = captured - pending;
-  const proposalLabel = captured === 1 ? "proposal" : "proposals";
-  const reviewLabel = pending === 1 ? "needs" : "need";
-  let status;
-  if (pending === 0) {
-    status = `Memlin auto-captured ${captured} new ${proposalLabel} and handled ${captured === 1 ? "it" : "them"} automatically; no inbox review is needed for this batch.`;
-  } else if (handled === 0) {
-    status = `Memlin auto-captured ${captured} new ${proposalLabel}; ${pending} ${reviewLabel} review with /memlin-inbox.`;
-  } else {
-    status = `Memlin auto-captured ${captured} new ${proposalLabel}; ${handled} handled automatically and ${pending} ${reviewLabel} review with /memlin-inbox.`;
-  }
-  return [
-    "<memlin-notice>",
-    "# Status line for the user \u2014 surface it, do not act on it.",
-    status,
-    "</memlin-notice>",
-    ""
-  ].join("\n");
-}
-async function takeScribeNotice(currentSessionId2) {
-  let state;
-  try {
-    state = await readState();
-  } catch {
-    return "";
-  }
-  const notice = state.scribe_notice;
-  const n = notice?.unsurfaced ?? 0;
-  if (n <= 0) return "";
-  try {
-    delete state.scribe_notice;
-    await writeState(state);
-  } catch {
-  }
-  if (currentSessionId2 && notice?.session_id && notice.session_id !== currentSessionId2) {
-    return "";
-  }
-  return buildScribeNotice(n, notice?.pending);
-}
-async function takeCorrectionNotice(currentSessionId2) {
-  let state;
-  try {
-    state = await readState();
-  } catch {
-    return "";
-  }
-  const notice = state.correction_notice;
-  if (!notice || !notice.rule_title) return "";
-  try {
-    delete state.correction_notice;
-    await writeState(state);
-  } catch {
-  }
-  if (currentSessionId2 && notice.session_id && notice.session_id !== currentSessionId2) {
-    return "";
-  }
-  return [
-    "<memlin-notice>",
-    "# Status line for the user \u2014 surface it, do not act on it.",
-    `\u26A1 Memlin captured a correction \u2192 rule: "${notice.rule_title}". It's active now; review or undo with /memlin-inbox.`,
-    "</memlin-notice>",
-    ""
-  ].join("\n");
-}
-function sessionAgeLabel(createdAt, nowMs) {
-  const t = Date.parse(createdAt);
-  if (!Number.isFinite(t)) return "a recent session";
-  const days = (nowMs - t) / 864e5;
-  if (days < 1) return "today's session";
-  if (days < 2) return "yesterday's session";
-  return `a session on ${new Date(t).toISOString().slice(0, 10)}`;
-}
-function formatFastTrackNudges(proposals, nowMs = Date.now()) {
-  const cutoff = nowMs - FAST_TRACK_NUDGE_MAX_AGE_DAYS * 864e5;
-  const rows = proposals.filter((p) => p.fast_track === true && typeof p.title === "string" && p.title.length > 0).filter((p) => {
-    const t = Date.parse(p.created_at);
-    return Number.isFinite(t) ? t >= cutoff : false;
-  }).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at)).slice(0, FAST_TRACK_NUDGE_MAX_LINES);
-  return rows.map((p) => {
-    const age = sessionAgeLabel(p.created_at, nowMs);
-    if (p.docs_change?.path) {
-      return `Memlin: ${age} found repo docs contradicted by what actually worked (${p.docs_change.path}) \u2014 review the docs-change proposal "${p.title}": /memlin-inbox accept ${p.id} (or reject).`;
-    }
-    return `Memlin: ${age} proposed ${p.kind} "${p.title}" \u2014 accept? /memlin-inbox accept ${p.id} (review first: /memlin-inbox).`;
-  });
-}
-var FAST_TRACK_NUDGE_MAX_AGE_DAYS, FAST_TRACK_NUDGE_MAX_LINES;
-var init_scribe_notice = __esm({
-  "packages/plugin-core/dist/scribe-notice.js"() {
-    "use strict";
-    init_state();
-    FAST_TRACK_NUDGE_MAX_AGE_DAYS = 14;
-    FAST_TRACK_NUDGE_MAX_LINES = 3;
-  }
-});
-
-// packages/plugin-core/dist/session-decisions.js
-var session_decisions_exports = {};
-__export(session_decisions_exports, {
-  composeDecisionContext: () => composeDecisionContext,
-  formatOpenDecisionsLine: () => formatOpenDecisionsLine,
-  openDecisionsLine: () => openDecisionsLine,
-  parseSessionDecisions: () => parseSessionDecisions,
-  pendingAfterDecisions: () => pendingAfterDecisions,
-  queueSessionDecisions: () => queueSessionDecisions,
-  recordSessionDecisions: () => recordSessionDecisions,
-  renderDecisionBlock: () => renderDecisionBlock,
-  storeScribeDecisions: () => storeScribeDecisions,
-  takeSessionDecisions: () => takeSessionDecisions,
-  takeTurnDecisions: () => takeTurnDecisions,
-  takeUrgentFromState: () => takeUrgentFromState,
-  takeUrgentStopDecision: () => takeUrgentStopDecision
-});
-function strings(v) {
-  return Array.isArray(v) ? v.filter((s) => typeof s === "string" && s.trim().length > 0).slice(0, 5) : [];
-}
-function parseSessionDecisions(raw) {
-  if (!Array.isArray(raw)) return [];
-  const seen = /* @__PURE__ */ new Set();
-  const out = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const id = typeof item.id === "string" ? item.id : "";
-    if (!id || seen.has(id) || !isDecisionKind(item.kind)) continue;
-    const spec = DECISION_KINDS[item.kind];
-    const rawOptions = Array.isArray(item.options) ? item.options : [];
-    const options2 = spec.options.filter((o) => rawOptions.length === 0 || rawOptions.some((r) => r?.id === o.id)).map((o) => {
-      const r = rawOptions.find((x) => x?.id === o.id) ?? {};
-      return {
-        ...o,
-        label: typeof r.label === "string" && r.label ? r.label : o.label,
-        pros: strings(r.pros),
-        cons: strings(r.cons)
-      };
-    });
-    if (options2.length === 0) continue;
-    const rec = item.recommendation;
-    const recommendation = rec && typeof rec.option === "string" && options2.some((o) => o.id === rec.option) && typeof rec.rationale === "string" && typeof rec.confidence === "number" ? { option: rec.option, confidence: rec.confidence, rationale: rec.rationale } : null;
-    const defaultOption = typeof item.default_option === "string" && options2.some((o) => o.id === item.default_option) ? item.default_option : spec.defaultOption;
-    seen.add(id);
-    out.push({
-      id,
-      kind: item.kind,
-      question: typeof item.question === "string" && item.question ? item.question : spec.label,
-      why_human: typeof item.why_human === "string" && item.why_human ? item.why_human : spec.whyHuman,
-      recommendation,
-      options: options2,
-      default_option: defaultOption,
-      deadline_at: typeof item.deadline_at === "string" ? item.deadline_at : "",
-      urgent: item.urgent === true && spec.urgent
-    });
-  }
-  return out;
-}
-function queueSessionDecisions(existing, input) {
-  const base = existing && existing.session_id === input.sessionId ? {
-    ...existing,
-    pending: [...existing.pending ?? []],
-    asked_ids: [...existing.asked_ids ?? []],
-    urgent_asked: existing.urgent_asked ?? 0
-  } : {
-    session_id: input.sessionId,
-    account_id: input.accountId,
-    pending: [],
-    asked_ids: [],
-    urgent_asked: 0,
-    at: input.at
-  };
-  const known = /* @__PURE__ */ new Set([...base.pending.map((d) => d.id), ...base.asked_ids]);
-  let room = DECISION_CAPS.perSession - base.asked_ids.length - base.pending.length;
-  let added = 0;
-  for (const d of input.decisions) {
-    if (room <= 0) break;
-    if (known.has(d.id)) continue;
-    known.add(d.id);
-    base.pending.push(d);
-    room--;
-    added++;
-  }
-  base.account_id = input.accountId ?? base.account_id;
-  base.at = input.at;
-  return { queue: base, added };
-}
-function boundQueues(map2) {
-  const entries = Object.entries(map2);
-  if (entries.length <= MAX_SESSION_QUEUES) return map2;
-  return Object.fromEntries(
-    entries.sort(([, a], [, b]) => (b.at ?? 0) - (a.at ?? 0)).slice(0, MAX_SESSION_QUEUES)
-  );
-}
-function recordSessionDecisions(state, input) {
-  const map2 = { ...state.session_decisions ?? {} };
-  const { queue, added } = queueSessionDecisions(map2[input.sessionId], input);
-  map2[input.sessionId] = queue;
-  state.session_decisions = boundQueues(map2);
-  return added;
-}
-async function storeScribeDecisions(input) {
-  const decisions = parseSessionDecisions(input.decisions);
-  if (decisions.length === 0 || !input.sessionId) return 0;
-  let added = 0;
-  try {
-    await updateState((state) => {
-      added = recordSessionDecisions(state, {
-        sessionId: input.sessionId,
-        accountId: input.accountId,
-        decisions,
-        at: input.at ?? Date.now()
-      });
-    });
-  } catch {
-    return 0;
-  }
-  return added;
-}
-function pendingAfterDecisions(persisted, pending, decisionCount) {
-  const base = pending == null ? persisted : Math.min(persisted, pending);
-  return Math.max(0, base - Math.max(0, decisionCount));
-}
-function queueFor(state, sessionId) {
-  const map2 = state.session_decisions ?? {};
-  if (sessionId) return map2[sessionId];
-  return Object.values(map2).sort((a, b) => (b.at ?? 0) - (a.at ?? 0))[0];
-}
-function takeTurnDecisions(state, sessionId, at = Date.now()) {
-  const queue = queueFor(state, sessionId);
-  if (!queue || !Array.isArray(queue.pending) || queue.pending.length === 0) {
-    return { decisions: [], accountId: null };
-  }
-  queue.asked_ids ??= [];
-  const room = Math.min(DECISION_CAPS.perTurn, DECISION_CAPS.perSession - queue.asked_ids.length);
-  if (room <= 0) {
-    queue.pending = [];
-    return { decisions: [], accountId: null };
-  }
-  const decisions = queue.pending.splice(0, room);
-  queue.asked_ids.push(...decisions.map((d) => d.id));
-  queue.at = at;
-  return { decisions, accountId: queue.account_id ?? null };
-}
-function defaultMarkAsked(cwd) {
-  let ctx = null;
-  return async (decisionId, accountId) => {
-    ctx ??= getApi(cwd ? { cwd } : {});
-    const api = await ctx;
-    if (!api) return;
-    await api.api.markDecisionAsked(decisionId, "session", accountId ? { accountId } : {});
-  };
-}
-async function markAsked(decisions, accountId, mark) {
-  await withTimeout(
-    Promise.allSettled(decisions.map((d) => mark(d.id, accountId))),
-    MARK_ASKED_TIMEOUT_MS,
-    []
-  ).catch(() => void 0);
-}
-async function takeSessionDecisions(opts) {
-  const nowMs = opts.nowMs ?? Date.now();
-  let taken = {
-    decisions: [],
-    accountId: null
-  };
-  try {
-    await updateState((state) => {
-      taken = takeTurnDecisions(state, opts.sessionId ?? null, nowMs);
-    });
-  } catch {
-    return NONE;
-  }
-  if (taken.decisions.length === 0) return NONE;
-  const block = taken.decisions.map((d) => renderDecisionBlock(d, { host: opts.host, nowMs, maxBytes: opts.maxBytes })).join("");
-  const systemMessage = decisionNoticeLine(taken.decisions[0], 700, nowMs);
-  await markAsked(taken.decisions, taken.accountId, opts.markAsked ?? defaultMarkAsked(opts.cwd ?? void 0));
-  return { decisions: taken.decisions, block, systemMessage };
-}
-function composeDecisionContext(decisions, context, opts) {
-  let room = opts.maxBytes - utf8Bytes(context);
-  let prefix = "";
-  for (const d of decisions) {
-    if (room <= 0) break;
-    const block = renderDecisionBlock(d, { host: opts.host, maxBytes: room, nowMs: opts.nowMs });
-    if (!block) break;
-    prefix += block;
-    room -= utf8Bytes(block);
-  }
-  return prefix + context;
-}
-function takeUrgentFromState(state, sessionId, at = Date.now()) {
-  const queue = state.session_decisions?.[sessionId];
-  if (!queue || !Array.isArray(queue.pending)) return null;
-  queue.asked_ids ??= [];
-  if ((queue.urgent_asked ?? 0) >= DECISION_CAPS.urgentPerSession) return null;
-  if (queue.asked_ids.length >= DECISION_CAPS.perSession) return null;
-  const index = queue.pending.findIndex((d) => d.urgent === true && DECISION_KINDS[d.kind]?.urgent);
-  if (index < 0) return null;
-  const [decision] = queue.pending.splice(index, 1);
-  queue.asked_ids.push(decision.id);
-  queue.urgent_asked = (queue.urgent_asked ?? 0) + 1;
-  queue.at = at;
-  return { decision, accountId: queue.account_id ?? null };
-}
-async function takeUrgentStopDecision(opts) {
-  if (opts.stopHookActive) return null;
-  if (!opts.sessionId) return null;
-  const sessionId = opts.sessionId;
-  const nowMs = opts.nowMs ?? Date.now();
-  let taken = null;
-  try {
-    await updateState((state) => {
-      taken = takeUrgentFromState(state, sessionId, nowMs);
-    });
-  } catch {
-    return null;
-  }
-  if (!taken) return null;
-  const { decision, accountId } = taken;
-  await markAsked([decision], accountId, opts.markAsked ?? defaultMarkAsked(opts.cwd));
-  return {
-    decision: "block",
-    reason: [
-      "Before this turn ends, Memlin needs the user to answer one memory decision that should not wait.",
-      "Ask it now, once, as the block below describes. Then end the turn: whether or not they answer, do not ask it again. If they do not answer, the default applies.",
-      "",
-      renderDecisionBlock(decision, { host: opts.host, nowMs }).trimEnd()
-    ].join("\n")
-  };
-}
-function formatOpenDecisionsLine(count2, needsYou = null) {
-  const open = Number.isFinite(count2) ? Math.max(0, Math.floor(count2)) : 0;
-  const grouped = needsYou !== null && Number.isFinite(needsYou) ? Math.max(0, Math.floor(needsYou)) : null;
-  if (grouped === 0) return "";
-  const phrase = needsYouDecisionsPhrase({ open, needsYou: grouped });
-  if (!phrase) return "";
-  const one = (grouped ?? open) === 1;
-  return `Memlin: ${phrase} \u2014 ask me about ${one ? "it" : "them"}.`;
-}
-async function openDecisionsLine(api) {
-  try {
-    const res = await api.listDecisions({ limit: 1, maxRetries: 0, requestTimeoutMs: 3e3 });
-    const { open, needsYou } = decisionCountsOf(res);
-    return formatOpenDecisionsLine(open, needsYou);
-  } catch {
-    return "";
-  }
-}
-var MAX_SESSION_QUEUES, MARK_ASKED_TIMEOUT_MS, NONE;
-var init_session_decisions = __esm({
-  "packages/plugin-core/dist/session-decisions.js"() {
-    "use strict";
-    init_dist();
-    init_client();
-    init_runtime_shared();
-    init_state();
-    MAX_SESSION_QUEUES = 16;
-    MARK_ASKED_TIMEOUT_MS = 1500;
-    NONE = { decisions: [], block: "", systemMessage: "" };
-  }
-});
-
-// packages/plugin-core/dist/update-feed-notice.js
-var update_feed_notice_exports = {};
-__export(update_feed_notice_exports, {
-  formatModelWatchLine: () => formatModelWatchLine,
-  modelWatchLine: () => modelWatchLine
-});
-function formatModelWatchLine(entries) {
-  const unread = entries.filter((e) => e.unread);
-  if (!unread.length) return "";
-  const top = unread.find((e) => e.severity === "action") ?? unread[0];
-  const count2 = unread.length;
-  const act = unread.some((e) => e.severity === "action");
-  return `Memlin Model Watch: ${count2} ${count2 === 1 ? "change affects" : "changes affect"} this project${act ? " (action needed)" : ""} \u2014 ${top.title.slice(0, 140)}. Ask me about model updates for details.`;
-}
-async function modelWatchLine(api, projectId) {
-  if (!projectId) return "";
-  try {
-    const res = await api.getFeed("model-watch", {
-      project: projectId,
-      severity: "notable",
-      limit: 10,
-      maxRetries: 0,
-      requestTimeoutMs: 3e3
-    });
-    return formatModelWatchLine(res.entries ?? []);
-  } catch {
-    return "";
-  }
-}
-var init_update_feed_notice = __esm({
-  "packages/plugin-core/dist/update-feed-notice.js"() {
-    "use strict";
-  }
-});
-
-// packages/plugin-core/dist/light-worker.js
-import { spawn } from "node:child_process";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-function startLightWorker(cwd, payload) {
-  const directory = path.dirname(fileURLToPath(import.meta.url));
-  const worker = path.basename(directory) === "hooks" || path.basename(directory) === "cli" ? path.resolve(directory, "../cli/light-worker.js") : path.join(directory, "cli/light-worker.js");
-  const child = spawn(process.execPath, [worker, JSON.stringify({ cwd, payload })], {
-    cwd,
-    stdio: "ignore",
-    detached: true,
-    env: { ...process.env, MEMLIN_LIGHT_WORKER: "1" }
-  });
-  child.on("error", () => {
-  });
-  child.unref();
-}
-
-// apps/cli-plugin/src/hooks/session-start.ts
-init_client();
-init_hook_exit();
-init_private_mode();
-
-// packages/plugin-core/dist/plugin-runtime.js
-init_companion_client();
-import { createHash, randomUUID as randomUUID4 } from "node:crypto";
-var PLUGIN_RUNTIME_TIMEOUT_MS = 150;
-var VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/;
-var HOSTS3 = /* @__PURE__ */ new Set(["cursor", "antigravity", "codex", "claude-code"]);
-function ownVersion() {
-  const version2 = "0.2.93";
-  return typeof version2 === "string" && VERSION.test(version2) ? version2 : null;
-}
-async function reportPluginRuntime(report) {
-  try {
-    return (await companionRequest("runtime.report", report, {
-      timeoutMs: PLUGIN_RUNTIME_TIMEOUT_MS
-    }))?.accepted === true;
-  } catch {
-    return false;
-  }
-}
-function reportPluginHookActivity(host, input, cwd) {
-  const version2 = ownVersion();
-  if (!version2 || !HOSTS3.has(host) || !cwd || !input || typeof input !== "object" || Array.isArray(input))
-    return;
-  const payload = input;
-  const session = payload.session_id ?? payload.conversation_id ?? payload.conversationId;
-  if (typeof session !== "string" || session.length === 0 || session.length > 256) return;
-  const instance = createHash("sha256").update(JSON.stringify([host, cwd, session, version2])).digest("hex");
-  void reportPluginRuntime({
-    host,
-    plugin_version: version2,
-    instance_id: instance,
-    source: "hook",
-    event: payload.hook_event_name === "sessionEnd" ? "end" : "activity"
-  });
-}
-
-// apps/cli-plugin/src/hooks/session-start.ts
-init_state();
-
-// packages/plugin-core/dist/apply.js
-init_state();
-import { promises as fs8 } from "node:fs";
-import { existsSync } from "node:fs";
-import os10 from "node:os";
-import path11 from "node:path";
-
-// packages/plugin-core/dist/paths.js
-var SLUG = /[^a-z0-9]+/g;
-function slugify(s) {
-  const cleaned = s.toLowerCase().replace(SLUG, "-").replace(/^-|-$/g, "");
-  return cleaned || "untitled";
-}
-function inferLocalPath(kind, title, existing) {
-  if (kind === "skill") {
-    if (existing && existing.endsWith("/SKILL.md")) return existing;
-    if (existing) {
-      const stripped = existing.replace(/\.md$/i, "");
-      return `${stripped}/SKILL.md`;
-    }
-    return `skills/${slugify(title)}/SKILL.md`;
-  }
-  if (existing) return existing;
-  switch (kind) {
-    case "goal":
-      return `goals/${slugify(title)}.md`;
-    case "schema":
-      return `schemas/${slugify(title)}.json`;
-    case "memory":
-      return `memory/${slugify(title)}.md`;
-    default:
-      return `${kind}/${slugify(title)}.md`;
-  }
-}
-
-// packages/plugin-core/dist/apply.js
-init_host();
-function archiveRoot() {
-  return path11.join(os10.homedir(), ".config", "memlin", "archive");
-}
-async function archiveDestination(trackedRelPath) {
-  const base = path11.join(archiveRoot(), trackedRelPath);
-  if (!existsSync(base)) return base;
-  const ext = path11.extname(base);
-  const stem = base.slice(0, base.length - ext.length);
-  for (let i = 1; i < 1e3; i++) {
-    const candidate = `${stem}.${i}${ext}`;
-    if (!existsSync(candidate)) return candidate;
-  }
-  return `${stem}.${Date.now()}${ext}`;
-}
-async function applyPullToLocal(docs, state, now, rootOverride, opts = {}) {
-  const reconcileMissing = opts.reconcileMissing ?? true;
-  const out = {
-    written: [],
-    unchanged: [],
-    removed: [],
-    archived: [],
-    keptEdited: [],
-    citations: {},
-    reconciliationSkipped: !reconcileMissing,
-    collisions: {}
-  };
-  const currentPaths = /* @__PURE__ */ new Set();
-  const root = rootOverride ?? resolveHost().homeDir();
-  for (const d of docs) {
-    if (d.kind === "brand_guidelines") continue;
-    if (d.kind === "feedback") continue;
-    const localPath = inferLocalPath(d.kind, d.title, d.path);
-    if (currentPaths.has(localPath)) {
-      out.collisions[localPath] = (out.collisions[localPath] ?? 1) + 1;
-    }
-    currentPaths.add(localPath);
-    const full = path11.join(root, localPath);
-    const contentHash = hash(d.content);
-    let needsWrite = true;
-    try {
-      const local = await fs8.readFile(full, "utf8");
-      if (hash(local) === contentHash) needsWrite = false;
-    } catch {
-    }
-    if (needsWrite) {
-      await fs8.mkdir(path11.dirname(full), { recursive: true });
-      await fs8.writeFile(full, d.content, "utf8");
-      out.written.push(localPath);
-    } else {
-      out.unchanged.push(localPath);
-    }
-    state.documents[localPath] = stateRow(d, contentHash, now);
-    out.citations[localPath] = {
-      localPath,
-      sourcePath: d.path ?? null,
-      version_number: d.version_number ?? state.documents[localPath]?.version_number ?? 1,
-      updated_at: d.updated_at ?? null
-    };
-  }
-  for (const tracked of Object.keys(state.documents)) {
-    if (!reconcileMissing) break;
-    if (currentPaths.has(tracked)) continue;
-    const full = path11.join(root, tracked);
-    if (existsSync(full)) {
-      let userEdited = false;
+      let code;
       try {
-        const local = await fs8.readFile(full, "utf8");
-        const prior = state.documents[tracked]?.content_hash;
-        userEdited = !prior || hash(local) !== prior;
-      } catch {
-        userEdited = true;
-      }
-      if (userEdited) {
-        out.keptEdited.push(tracked);
-        out.removed.push(`${tracked} (kept \u2014 locally edited)`);
-      } else {
-        const dest = await archiveDestination(tracked);
-        try {
-          await fs8.mkdir(path11.dirname(dest), { recursive: true });
-          await fs8.rename(full, dest);
-          out.archived.push(tracked);
-          out.removed.push(`${tracked} (archived)`);
-        } catch {
-          out.keptEdited.push(tracked);
-          out.removed.push(`${tracked} (kept \u2014 archive failed)`);
-        }
-      }
-    }
-    delete state.documents[tracked];
-  }
-  return out;
-}
-function stateRow(d, h, at) {
-  return {
-    document_id: d.id,
-    version_id: "",
-    version_number: d.version_number ?? 0,
-    content_hash: h,
-    last_synced_at: at,
-    scope: d.scope,
-    kind: d.kind
-  };
-}
-
-// apps/cli-plugin/src/hooks/session-start.ts
-init_project_resolver();
-
-// packages/plugin-core/dist/session-banner.js
-init_state();
-init_workspace_binding();
-import { fileURLToPath as fileURLToPath3 } from "node:url";
-var VERSION_URL = "https://raw.githubusercontent.com/memlin-ai/memlin-claude-plugin/main/.claude-plugin/marketplace.json";
-var FRESHNESS_TTL_MS = 6 * 60 * 60 * 1e3;
-function pluginVersionFromPath(filePath) {
-  const match = filePath.match(/[\\/]memlin-ai[\\/]memlin[\\/](\d+\.\d+\.\d+)[\\/]/);
-  return match ? match[1] : null;
-}
-function detectLocalPluginVersion() {
-  try {
-    return pluginVersionFromPath(fileURLToPath3(import.meta.url));
-  } catch {
-    return null;
-  }
-}
-function isOlderVersion(a, b) {
-  const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-  const len = Math.max(pa.length, pb.length);
-  for (let i = 0; i < len; i++) {
-    const x = pa[i] ?? 0;
-    const y = pb[i] ?? 0;
-    if (x < y) return true;
-    if (x > y) return false;
-  }
-  return false;
-}
-async function getLatestPublishedVersion(state) {
-  const cache2 = state.plugin_version;
-  if (cache2 && Date.now() - cache2.checked_at < FRESHNESS_TTL_MS) {
-    return cache2.latest_version ?? null;
-  }
-  try {
-    const res = await fetch(VERSION_URL, { headers: { Accept: "application/json" } });
-    if (!res.ok) return cache2?.latest_version ?? null;
-    const json2 = await res.json();
-    const v = json2.plugins?.[0]?.version;
-    if (typeof v !== "string") return cache2?.latest_version ?? null;
-    state.plugin_version = { latest_version: v, checked_at: Date.now() };
-    await writeState(state);
-    return v;
-  } catch {
-    return cache2?.latest_version ?? null;
-  }
-}
-async function resolveBannerAccountName(input) {
-  const accountId = input.resolvedAccountId ?? input.configAccountId;
-  try {
-    const { name } = await input.api.getAccount({ accountId });
-    if (name) return name;
-  } catch {
-  }
-  if (input.workspaceAccountName && accountId === input.configAccountId) {
-    return input.workspaceAccountName;
-  }
-  return `${accountId.slice(0, 8)}\u2026`;
-}
-function formatBanner(opts) {
-  const lines = [];
-  if (opts.hazardWarning) lines.push(opts.hazardWarning);
-  if (opts.ignoredBroadPin) {
-    lines.push(
-      `Memlin: ignoring ${opts.ignoredBroadPin} \u2014 a link in your home folder would put every project under it into one account. Delete it and run /memlin-link inside each project instead.`
-    );
-  }
-  if (opts.binding) {
-    const { accountName, projectName, projectId, source } = opts.binding;
-    const sourceTag = source === "workspace" ? " (workspace pin)" : source === "cross-account-match" ? " (auto-matched)" : "";
-    const projectPart = projectName ? ` / project "${projectName}"` : projectId ? " / linked project" : " / no project bound";
-    lines.push(`Memlin \u2192 "${accountName}"${projectPart}${sourceTag}`);
-  } else if (opts.authenticated) {
-    lines.push(
-      "Memlin: idle (this directory isn't a known Memlin project). Run /memlin-add-project to register it, or /memlin-link to pin it to an existing project."
-    );
-  } else {
-    lines.push(
-      "Memlin: not signed in, so it adds nothing to this session. Run /memlin-login to connect."
-    );
-  }
-  if (opts.localVersion && opts.latestVersion && isOlderVersion(opts.localVersion, opts.latestVersion)) {
-    lines.push(`Memlin: plugin update available \u2014 ${opts.localVersion} \u2192 ${opts.latestVersion}`);
-    lines.push(
-      "  Update: /plugin marketplace update memlin-ai  then  /plugin update memlin  (restart after)"
-    );
-  }
-  return lines.join("\n");
-}
-async function buildSessionBanner(binding, opts = { authenticated: true }) {
-  const state = await readState();
-  const localVersion = detectLocalPluginVersion();
-  const latestVersion = localVersion ? await getLatestPublishedVersion(state) : null;
-  return formatBanner({
-    binding,
-    authenticated: opts.authenticated,
-    localVersion,
-    latestVersion,
-    hazardWarning: opts.hazardWarning ?? null,
-    ignoredBroadPin: await findIgnoredBroadWorkspaceBinding().catch(() => null)
-  });
-}
-
-// packages/plugin-core/dist/handoffs.js
-init_host();
-init_session_feature();
-import { createHash as createHash2 } from "node:crypto";
-async function acceptPendingHandoffContext(api, projectId, opts = {}) {
-  const targetAgentKind = resolveHost().kind;
-  const { handoffs } = await api.listHandoffs(
-    {
-      project_id: projectId ?? null,
-      target_agent_kind: targetAgentKind,
-      ...opts.sessionId ? { target_session_id: opts.sessionId } : {},
-      status: "pending",
-      limit: 1
-    },
-    opts.accountId ? { accountId: opts.accountId } : {}
-  );
-  const handoff = handoffs[0];
-  if (!handoff || handoff.packet_truncated) return null;
-  if (handoff.kind === "thought_handoff_v2") {
-    const frozen = handoff.packet_markdown.split("\n").at(-1) ?? "";
-    if (createHash2("sha256").update(frozen, "utf8").digest("hex") !== handoff.context_bundle_id)
-      return null;
-    try {
-      const context = JSON.parse(frozen);
-      if (context.version !== 2 || context.audience !== "private" || opts.accountId && context.account_id !== opts.accountId)
-        return null;
-    } catch {
-      return null;
-    }
-  }
-  const accepted = await api.updateHandoff(handoff.id, "accept", {
-    ...opts.accountId ? { accountId: opts.accountId } : {},
-    ...opts.sessionId ? { sessionId: opts.sessionId } : {}
-  }).catch(() => null);
-  if (!accepted || accepted.id !== handoff.id || accepted.status !== "accepted") return null;
-  const binding = accepted.feature_binding;
-  const active = binding?.bound && binding.feature_id && (binding.via === "pin" || binding.via === "handoff" || binding.via === "branch") ? { id: binding.feature_id, title: binding.feature_id, via: binding.via } : null;
-  if (active)
-    await recordSessionFeature(
-      {
-        accountId: opts.accountId,
-        projectId: handoff.project_id,
-        sessionId: opts.sessionId
-      },
-      active
-    );
-  return renderHandoffContext(handoff, active?.id);
-}
-function renderHandoffContext(handoff, activeFeatureId) {
-  return [
-    "<memlin-handoff>",
-    "# Assigned handoff accepted by Memlin session start.",
-    "# Use this packet as the task brief. Mark complete with memlin_update_handoff when finished.",
-    "",
-    handoff.packet_markdown,
-    "",
-    `handoff_id: ${handoff.id}`,
-    ...activeFeatureId ? [`active_feature_id: ${activeFeatureId}`] : [],
-    "</memlin-handoff>"
-  ].join("\n");
-}
-
-// packages/plugin-core/dist/heartbeat.js
-init_client();
-init_host();
-init_project_resolver();
-import crypto5 from "node:crypto";
-import { promises as fs9 } from "node:fs";
-import os11 from "node:os";
-import path13 from "node:path";
-var DEFAULT_THROTTLE_MS = 6e4;
-var HEARTBEAT_REQUEST_TIMEOUT_MS = 750;
-function statePath(cwd, host) {
-  const key = crypto5.createHash("sha256").update(cwd).digest("hex").slice(0, 16);
-  return path13.join(os11.tmpdir(), `memlin-${host}-heartbeat-${key}.json`);
-}
-async function recentlySent(file2, throttleMs) {
-  try {
-    const raw = await fs9.readFile(file2, "utf8");
-    const parsed = JSON.parse(raw);
-    return typeof parsed.sent_at === "number" && Date.now() - parsed.sent_at < throttleMs;
-  } catch {
-    return false;
-  }
-}
-async function recordInstallHeartbeat(cwd, reason, opts = {}) {
-  const host = opts.host ?? resolveHost().kind;
-  const throttleMs = opts.throttleMs ?? DEFAULT_THROTTLE_MS;
-  const file2 = statePath(cwd, host);
-  if (await recentlySent(file2, throttleMs)) return;
-  try {
-    const ctx = await getApi({ cwd });
-    if (!ctx) return;
-    const resolved = await resolveProject(ctx.api, cwd, ctx.config.project_id);
-    if (!isWorkspaceActive({
-      resolvedProjectId: resolved.project_id,
-      workspaceBound: ctx.workspaceBound
-    })) {
-      return;
-    }
-    await ctx.api.getAccount({
-      accountId: effectiveAccountId({
-        configAccountId: ctx.config.account_id,
-        resolvedAccountId: resolved.account_id
-      }),
-      requestTimeoutMs: HEARTBEAT_REQUEST_TIMEOUT_MS,
-      maxRetries: 0
-    });
-    await fs9.writeFile(file2, JSON.stringify({ sent_at: Date.now(), reason, host }), "utf8");
-    log(`${host} activity recorded: ${reason}`);
-  } catch (err) {
-    log(`${host} activity failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-// packages/plugin-core/dist/auto-bind.js
-init_workspace_binding();
-import { promises as fs10 } from "node:fs";
-import path14 from "node:path";
-async function findWorkspaceRoot(cwd) {
-  let dir = path14.resolve(cwd);
-  for (let i = 0; i < 64; i++) {
-    try {
-      const stat = await fs10.stat(path14.join(dir, ".git"));
-      if (stat.isDirectory() || stat.isFile()) return dir;
-    } catch {
-    }
-    const parent = path14.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return path14.resolve(cwd);
-}
-async function autoBindWorkspaceIfMatched(args) {
-  if (args.workspaceAlreadyBound) {
-    return { bound: false, reason: "already-bound" };
-  }
-  if (args.resolved.reason !== "git-remote") {
-    return { bound: false, reason: "low-confidence-match" };
-  }
-  if (!args.resolved.project_id || !args.resolved.account_id) {
-    return { bound: false, reason: "incomplete-match" };
-  }
-  const observedRoot = await findWorkspaceRoot(args.cwd);
-  const gitIdentity2 = await resolveGitWorkspaceIdentity(observedRoot);
-  if (gitIdentity2.state === "unknown") {
-    return {
-      bound: false,
-      reason: "write-failed",
-      workspaceRoot: observedRoot,
-      error: "Git metadata is unreadable or malformed; automatic binding was refused."
-    };
-  }
-  const workspaceRoot = gitIdentity2.state === "worktree" ? gitIdentity2.repository_root : gitIdentity2.checkout_root;
-  try {
-    const bindingPath = await writeWorkspaceBinding(workspaceRoot, {
-      account_id: args.resolved.account_id,
-      project_id: args.resolved.project_id,
-      account_name: args.accountName
-    });
-    return { bound: true, bindingPath, workspaceRoot };
-  } catch (err) {
-    return {
-      bound: false,
-      reason: "write-failed",
-      workspaceRoot,
-      error: err instanceof Error ? err.message : String(err)
-    };
-  }
-}
-
-// apps/cli-plugin/src/hooks/session-start.ts
-init_plan_sync();
-
-// packages/plugin-core/dist/trigger-memories.js
-init_dist();
-init_atomic_rename();
-import { promises as fs12 } from "node:fs";
-import os14 from "node:os";
-import path18 from "node:path";
-
-// packages/plugin-core/dist/edit-activity.js
-init_client();
-init_project_resolver();
-import { execSync } from "node:child_process";
-import { realpathSync as realpathSync2 } from "node:fs";
-import path17 from "node:path";
-import os13 from "node:os";
-
-// packages/plugin-core/dist/edit-broker-local.js
-import crypto6 from "node:crypto";
-import {
-  closeSync,
-  existsSync as existsSync3,
-  mkdirSync,
-  openSync,
-  readFileSync as readFileSync3,
-  realpathSync,
-  renameSync,
-  rmSync,
-  writeFileSync
-} from "node:fs";
-import os12 from "node:os";
-import path16 from "node:path";
-import { execFileSync as execFileSync2 } from "node:child_process";
-
-// packages/plugin-core/dist/trigger-memories.js
-init_workspace_binding();
-init_dist();
-function compiledTriggersPath() {
-  return path18.join(os14.homedir(), ".config", "memlin", "triggers.json");
-}
-function decodeStoredEntry(raw, fallbackId) {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const obj = raw;
-  const parsed = parseMemoryTrigger({
-    command_pattern: obj.command_pattern ?? null,
-    path_prefix: obj.path_prefix ?? null,
-    mode: obj.mode ?? void 0,
-    message: obj.message ?? null
-  });
-  if (!parsed.ok) return null;
-  const title = typeof obj.title === "string" && obj.title.trim() ? obj.title.trim() : null;
-  if (!title) return null;
-  const id = typeof obj.id === "string" && obj.id.trim() ? obj.id.trim() : fallbackId;
-  return {
-    id,
-    title: title.slice(0, 200),
-    mode: parsed.trigger.mode,
-    command_pattern: parsed.trigger.command_pattern,
-    path_prefix: parsed.trigger.path_prefix,
-    message: parsed.trigger.message
-  };
-}
-async function readCompiledTriggers(file2 = compiledTriggersPath()) {
-  const empty = { version: 1, workspaces: {} };
-  let raw;
-  try {
-    raw = await fs12.readFile(file2, "utf8");
-  } catch {
-    return empty;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || typeof parsed.workspaces !== "object") {
-      return empty;
-    }
-    const workspaces = {};
-    for (const [root, section] of Object.entries(parsed.workspaces ?? {})) {
-      if (!section || typeof section !== "object") continue;
-      const s = section;
-      const rawTriggers = Array.isArray(s.triggers) ? s.triggers : [];
-      const triggers = rawTriggers.map((t, i) => decodeStoredEntry(t, `${root}#${i}`)).filter((t) => t !== null);
-      workspaces[root] = {
-        account_id: typeof s.account_id === "string" ? s.account_id : null,
-        project_id: typeof s.project_id === "string" ? s.project_id : null,
-        compiled_at: typeof s.compiled_at === "string" ? s.compiled_at : "",
-        triggers
-      };
-    }
-    return { version: 1, workspaces };
-  } catch {
-    return empty;
-  }
-}
-var COMPILED_MESSAGE_MAX = 700;
-async function refreshWorkspaceTriggers(args) {
-  const docs = await args.api.listDocuments(
-    { kinds: ["memory"], has_trigger: true, project_id: args.projectId },
-    args.callOpts ?? {}
-  );
-  return compileWorkspaceTriggers({ ...args, docs });
-}
-async function compileWorkspaceTriggers(args) {
-  const file2 = args.file ?? compiledTriggersPath();
-  const root = await canonicalRoot(args.workspaceRoot);
-  const triggers = [];
-  let skipped = 0;
-  for (const doc of args.docs) {
-    if (doc.kind !== "memory") continue;
-    if (doc.trigger === null || doc.trigger === void 0) continue;
-    const parsed = parseMemoryTrigger(doc.trigger);
-    if (!parsed.ok) {
-      skipped++;
-      continue;
-    }
-    triggers.push({
-      id: doc.id,
-      title: doc.title.slice(0, 200),
-      mode: parsed.trigger.mode,
-      command_pattern: parsed.trigger.command_pattern,
-      path_prefix: parsed.trigger.path_prefix,
-      message: parsed.trigger.message ?? truncateMessage(doc.content)
-    });
-  }
-  const state = await readCompiledTriggers(file2);
-  if (triggers.length === 0) {
-    delete state.workspaces[root];
-  } else {
-    state.workspaces[root] = {
-      account_id: args.accountId,
-      project_id: args.projectId,
-      compiled_at: args.now ?? (/* @__PURE__ */ new Date()).toISOString(),
-      triggers
-    };
-  }
-  await fs12.mkdir(path18.dirname(file2), { recursive: true });
-  const tmp = `${file2}.${process.pid}.tmp`;
-  await fs12.writeFile(tmp, JSON.stringify(state, null, 2), "utf8");
-  await atomicRename(tmp, file2);
-  return { compiled: triggers.length, skipped };
-}
-function truncateMessage(content) {
-  const text = content.trim();
-  if (!text) return null;
-  if (text.length <= COMPILED_MESSAGE_MAX) return text;
-  return `${text.slice(0, COMPILED_MESSAGE_MAX - 1)}\u2026`;
-}
-async function workspaceRootFor(cwd) {
-  try {
-    const binding = await findWorkspaceBinding(cwd);
-    if (binding) return canonicalRoot(binding.workspaceRoot);
-  } catch {
-  }
-  try {
-    const identity = await resolveGitWorkspaceIdentity(cwd);
-    return canonicalRoot(identity.checkout_root);
-  } catch {
-    return canonicalRoot(cwd);
-  }
-}
-async function canonicalRoot(dir) {
-  const resolved = path18.resolve(dir);
-  try {
-    return await fs12.realpath(resolved);
-  } catch {
-    return resolved;
-  }
-}
-
-// apps/cli-plugin/src/hooks/session-start.ts
-init_companion_client();
-async function readStdinJson() {
-  return new Promise((resolve) => {
-    process.stdin.setEncoding("utf8");
-    const chunks = [];
-    let timeout = setTimeout(() => {
-      timeout = null;
-      resolve(null);
-    }, 1e3);
-    process.stdin.on("data", (c) => chunks.push(String(c)));
-    process.stdin.on("end", () => {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      try {
-        const text = chunks.join("");
-        if (!text.trim()) {
-          resolve(null);
+        code = onError(err);
+      } catch (handlerErr) {
+        if (handlerErr instanceof CliExit) {
+          scheduleProcessExit(handlerErr.code);
           return;
         }
-        resolve(JSON.parse(text));
-      } catch {
-        resolve(null);
+        console.error("cli error handler failed:", handlerErr);
+        code = 1;
       }
-    });
-    process.stdin.on("error", () => resolve(null));
-  });
+      scheduleProcessExit(code);
+    }
+  );
 }
+var WATCHDOG_MS, CliExit;
+var init_cli_runner = __esm({
+  "packages/plugin-core/src/cli/cli-runner.ts"() {
+    "use strict";
+    init_runtime_shared();
+    WATCHDOG_MS = 2e3;
+    CliExit = class extends Error {
+      constructor(code) {
+        super(`CliExit(${code})`);
+        this.code = code;
+        this.name = "CliExit";
+      }
+      code;
+    };
+  }
+});
+
+// packages/plugin-core/src/cli/private.ts
+var private_exports = {};
 async function main() {
-  const payload = await readStdinJson();
-  const cwd = process.cwd();
-  reportPluginHookActivity("claude-code", payload, cwd);
-  const sessionId = payload?.session_id ?? null;
-  if (sessionId) process.env.MEMLIN_SESSION_ID = sessionId;
-  await inheritClearedPrivate(sessionId, { source: payload?.source ?? null, cwd }).catch(
-    () => false
-  );
-  const refusal = await hookAuthRefusal({
-    cwd,
-    sessionId: payload?.session_id ?? null,
-    notify: true
-  });
-  if (refusal.refused) {
-    if (refusal.notice) process.stdout.write(refusal.notice + "\n");
-    return;
+  const arg2 = (process.argv[2] ?? "on").toLowerCase();
+  const command = arg2 === "on" || arg2 === "start" || arg2 === "enable" ? "on" : arg2 === "read-only" || arg2 === "readonly" || arg2 === "read_only" || arg2 === "ro" ? "read_only" : arg2 === "off" || arg2 === "stop" || arg2 === "end" || arg2 === "disable" ? "off" : arg2 === "status" ? "status" : null;
+  if (!command) {
+    process.stderr.write("usage: memlin private [on|read-only|off|status]\n");
+    return 2;
   }
-  void recordInstallHeartbeat(cwd, "session-start", { throttleMs: 0, host: "claude-code" });
-  const ctx = await getApi();
-  if (!ctx) {
-    log("not configured \u2014 skipping pull");
-    const signedOutBanner = await buildSessionBanner(null, { authenticated: false });
-    if (signedOutBanner) process.stdout.write(signedOutBanner + "\n");
-    return;
+  const ctx = await getApi().catch(() => null);
+  const accountId = ctx?.config.account_id ?? null;
+  if (command === "on" && ctx && await checkPrivateAllowed(ctx.api, ctx.config.account_id) === false) {
+    console.log(PRIVATE_DENIED_NOTICE);
+    return 0;
   }
-  if (ctx.privateSession) process.stdout.write(PRIVATE_ON_NOTICE + "\n");
-  else if (ctx.readOnlySession) process.stdout.write(READ_ONLY_ON_NOTICE + "\n");
-  if ((await ctx.api.lightStatus())?.active) {
-    startLightWorker(cwd);
-    process.stdout.write(
-      "Memlin Light: project memory only. Sync runs in the background; saved memories are reference material. Use the memory screen for conflicts or upgrades.\n"
-    );
-    return;
-  }
-  const { api, config: config2, workspaceBound, workspaceAccountName } = ctx;
-  const companion = await companionForDelegation().catch(() => null);
-  if (companion) {
-    await companionReportSession({ cwd: process.cwd(), host: "claude-code" }).catch(() => false);
-  }
-  let resolved = null;
-  if (companion) {
-    resolved = await companionResolveWorkspace(process.cwd()).catch(() => null);
-  }
-  if (!resolved) {
-    try {
-      resolved = await resolveProject(api, process.cwd(), config2.project_id);
-    } catch (err) {
-      log(`project resolve failed: ${err instanceof Error ? err.message : String(err)}`);
-      resolved = {
-        project_id: null,
-        project_name: null,
-        account_id: null,
-        reason: "none",
-        hasGitRemote: false
-      };
-    }
-  }
-  const accountName = await resolveBannerAccountName({
-    api,
-    configAccountId: config2.account_id,
-    resolvedAccountId: resolved.account_id,
-    workspaceAccountName
-  });
-  let autoBoundJustNow = false;
-  try {
-    const autoBindResult = await autoBindWorkspaceIfMatched({
-      cwd: process.cwd(),
-      resolved,
-      workspaceAlreadyBound: workspaceBound,
-      accountName
+  const sessionId = currentSessionId();
+  if (sessionId && command !== "status") {
+    await setPrivateSession(sessionId, command !== "off", {
+      cwd: runtimeCwd(),
+      level: command === "read_only" ? "read_only" : "private"
     });
-    if (autoBindResult.bound) {
-      autoBoundJustNow = true;
-      process.stdout.write(
-        `Memlin: auto-bound this workspace to project "${resolved.project_name ?? resolved.project_id?.slice(0, 8) ?? "?"}" via git remote (${autoBindResult.bindingPath}).
-`
-      );
-    } else if (autoBindResult.reason === "write-failed") {
-      log(`auto-bind write failed: ${autoBindResult.error ?? "unknown"}`);
-    }
-  } catch (err) {
-    log(`auto-bind threw: ${err instanceof Error ? err.message : String(err)}`);
   }
-  const active = autoBoundJustNow || isWorkspaceActive({
-    resolvedProjectId: resolved.project_id,
-    workspaceBound
-  });
-  if (!active) {
-    const idleBanner = await buildSessionBanner(null, { authenticated: true });
-    if (idleBanner) process.stdout.write(idleBanner + "\n");
-    return;
-  }
-  try {
-    let result;
-    let planResult;
-    let reconcile;
-    if (companion) {
-      await updateState(async (s) => {
-        result = await applyPullToLocal([], s, (/* @__PURE__ */ new Date()).toISOString());
-      });
-      const synced = await companionSyncNow({
-        cwd: process.cwd(),
-        reason: "session-start"
-      }).catch(() => null);
-      planResult = { pulled: synced?.pulled ?? [], removed: [] };
-      reconcile = { pushed: synced?.pushed ?? [], skipped: [], failed: synced?.failed ?? [] };
-    } else {
-      const state = await readState();
-      result = await applyPullToLocal([], state, (/* @__PURE__ */ new Date()).toISOString());
-      planResult = await pullPlans(ctx.api, {
-        projectId: resolved.project_id
-      });
-      setLastPlanPullCursor(state, (/* @__PURE__ */ new Date()).toISOString());
-      await writeState(state);
-      reconcile = await reconcileKnownPlans(ctx.api, {
-        cwd: process.cwd(),
-        settleMs: planSettleMs()
-      }).catch((err) => {
-        log(`plan reconcile failed: ${err instanceof Error ? err.message : String(err)}`);
-        return { pushed: [], skipped: [], failed: [], deferred: [] };
-      });
-    }
-    const parts = [];
-    if (result && result.archived.length > 0)
-      parts.push(
-        `archived ${result.archived.length} superseded file(s) to ~/.config/memlin/archive (preserved, not deleted)`
-      );
-    if (result && result.keptEdited.length > 0)
-      parts.push(`kept ${result.keptEdited.length} locally-edited file(s) in place`);
-    if (planResult.pulled.length > 0) parts.push(`pulled ${planResult.pulled.length} plan(s)`);
-    if (planResult.removed.length > 0)
-      parts.push(`removed ${planResult.removed.length} stale plan(s)`);
-    if (reconcile.pushed.length > 0) parts.push(`re-versioned ${reconcile.pushed.length} plan(s)`);
-    const detail = parts.length > 0 ? parts.join(", ") : "nothing changed";
-    log(
-      `session-start: ${detail} (project ${resolved.project_id?.slice(0, 8) ?? "(none)"} via ${resolved.reason})`
+  const status = await privateStatus(sessionId, Date.now(), accountId);
+  const name = status.level === "read_only" ? "read-only" : "private";
+  if (status.source === "account") {
+    console.log(
+      `Memlin ${name} mode is ON for your whole account (set in Memlin Settings or Companion)` + (status.expiresAt ? ` until ${new Date(status.expiresAt).toLocaleString()}` : "") + (status.level === "read_only" ? ". Nothing changes team memory." : ". Nothing from your sessions is saved.") + " Turn it off in Settings \u2192 Private mode or Companion."
     );
-  } catch (err) {
-    log(`session-start sync failed: ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
   }
-  try {
-    const compiled = await refreshWorkspaceTriggers({
-      api,
-      workspaceRoot: await workspaceRootFor(process.cwd()),
-      accountId: resolved.account_id ?? config2.account_id,
-      projectId: resolved.project_id,
-      callOpts: resolved.account_id && resolved.account_id !== config2.account_id ? { accountId: resolved.account_id } : {}
-    });
-    if (compiled.compiled > 0 || compiled.skipped > 0) {
-      log(
-        `session-start: compiled ${compiled.compiled} trigger-bound memory(ies)` + (compiled.skipped > 0 ? `, skipped ${compiled.skipped} invalid` : "")
-      );
-    }
-  } catch (err) {
-    log(`trigger compile failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+  if (status.source === "denied") {
+    console.log(PRIVATE_DENIED_NOTICE);
+    return 0;
   }
-  let source = "config";
-  if (workspaceBound) source = "workspace";
-  else if (resolved.account_id && resolved.account_id !== config2.account_id) {
-    source = "cross-account-match";
+  if (status.source === "env") {
+    console.log(
+      `Memlin ${name} mode is ON for this whole process (MEMLIN_PRIVATE is set). Unset it and restart the agent to turn it off.`
+    );
+    return 0;
   }
-  const hazard = accountBindingHazard(resolved, { allowMismatch: allowAccountMismatch() });
-  const hazardWarning = formatAccountMismatchWarning({
-    hazard,
-    accountName,
-    projectName: resolved.project_name,
-    reason: resolved.reason
-  });
-  const banner = await buildSessionBanner(
-    {
-      accountName,
-      projectName: resolved.project_name,
-      projectId: resolved.project_id,
-      source
-    },
-    { authenticated: true, hazardWarning }
+  console.log(
+    !status.on ? PRIVATE_OFF_NOTICE : status.level === "read_only" ? READ_ONLY_ON_NOTICE : PRIVATE_ON_NOTICE
   );
-  if (banner) {
-    process.stdout.write(banner + "\n");
+  if (status.on && status.expiresAt) {
+    console.log(`Expires ${new Date(status.expiresAt).toLocaleString()} at the latest.`);
   }
-  const isFreshSession = payload?.source === void 0 || payload.source === "startup";
-  if (isFreshSession) {
-    try {
-      const handoffContext = await acceptPendingHandoffContext(api, resolved.project_id, {
-        ...payload?.session_id ? { sessionId: payload.session_id } : {}
-      });
-      if (handoffContext) process.stdout.write(`${handoffContext}
-`);
-    } catch {
-    }
+  if (!sessionId && (command === "on" || command === "read_only") && !status.on) {
+    console.log(
+      "This host did not identify the session, so nothing was changed. Start the agent with MEMLIN_PRIVATE=1 for a private session."
+    );
   }
-  try {
-    const { listUnboundPlans: listUnboundPlans2 } = await Promise.resolve().then(() => (init_plan_sync(), plan_sync_exports));
-    const unbound = await listUnboundPlans2();
-    if (unbound.length > 0) {
-      process.stdout.write(
-        `Memlin: ${unbound.length} local plan(s) not synced (unknown project). Run /memlin-bind-plans to review.
-`
-      );
-    }
-  } catch {
-  }
-  try {
-    const { proposals } = await api.listInbox();
-    const { formatFastTrackNudges: formatFastTrackNudges2 } = await Promise.resolve().then(() => (init_scribe_notice(), scribe_notice_exports));
-    for (const line of formatFastTrackNudges2(proposals ?? [])) {
-      process.stdout.write(line + "\n");
-    }
-  } catch {
-  }
-  try {
-    const { openDecisionsLine: openDecisionsLine2 } = await Promise.resolve().then(() => (init_session_decisions(), session_decisions_exports));
-    const line = await openDecisionsLine2(api);
-    if (line) process.stdout.write(line + "\n");
-  } catch {
-  }
-  try {
-    const { modelWatchLine: modelWatchLine2 } = await Promise.resolve().then(() => (init_update_feed_notice(), update_feed_notice_exports));
-    const line = await modelWatchLine2(api, resolved.project_id);
-    if (line) process.stdout.write(line + "\n");
-  } catch {
-  }
+  return 0;
 }
-var SESSION_START_DEADLINE_MS = 15e3;
-void Promise.race([
-  main(),
-  new Promise((resolve) => {
-    const t = setTimeout(() => {
-      log(
-        `session-start: hit the ${SESSION_START_DEADLINE_MS}ms deadline \u2014 exiting (sync resumes next launch)`
-      );
-      resolve();
-    }, SESSION_START_DEADLINE_MS);
-    t.unref?.();
-  })
-]).catch((err) => log(`session-start failed: ${err instanceof Error ? err.message : String(err)}`)).finally(() => exitHook(0));
+var init_private = __esm({
+  "packages/plugin-core/src/cli/private.ts"() {
+    "use strict";
+    init_private_mode();
+    init_client();
+    init_project_resolver();
+    init_cli_runner();
+    runCliMain(main, (err) => {
+      console.error("memlin private failed:", err instanceof Error ? err.message : err);
+      return 1;
+    });
+  }
+});
+
+// packages/plugin-core/src/cli/read-only.ts
+var arg = (process.argv[2] ?? "on").toLowerCase();
+process.argv[2] = arg === "off" || arg === "stop" || arg === "end" || arg === "disable" ? "off" : arg === "status" ? "status" : "read-only";
+void Promise.resolve().then(() => (init_private(), private_exports));
 /*! Bundled license information:
 
 is-extendable/index.js:

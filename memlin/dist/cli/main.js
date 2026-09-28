@@ -3565,9 +3565,9 @@ var init_types = __esm({
         const { status, ctx } = this._processInputParams(input);
         const effect = this._def.effect || null;
         const checkCtx = {
-          addIssue: (arg) => {
-            addIssueToContext(ctx, arg);
-            if (arg.fatal) {
+          addIssue: (arg2) => {
+            addIssueToContext(ctx, arg2);
+            if (arg2.fatal) {
               status.abort();
             } else {
               status.dirty();
@@ -4004,14 +4004,14 @@ var init_types = __esm({
     onumber = () => numberType().optional();
     oboolean = () => booleanType().optional();
     coerce = {
-      string: ((arg) => ZodString.create({ ...arg, coerce: true })),
-      number: ((arg) => ZodNumber.create({ ...arg, coerce: true })),
-      boolean: ((arg) => ZodBoolean.create({
-        ...arg,
+      string: ((arg2) => ZodString.create({ ...arg2, coerce: true })),
+      number: ((arg2) => ZodNumber.create({ ...arg2, coerce: true })),
+      boolean: ((arg2) => ZodBoolean.create({
+        ...arg2,
         coerce: true
       })),
-      bigint: ((arg) => ZodBigInt.create({ ...arg, coerce: true })),
-      date: ((arg) => ZodDate.create({ ...arg, coerce: true }))
+      bigint: ((arg2) => ZodBigInt.create({ ...arg2, coerce: true })),
+      date: ((arg2) => ZodDate.create({ ...arg2, coerce: true }))
     };
     NEVER = INVALID;
   }
@@ -9071,6 +9071,160 @@ var init_model_price_promotion = __esm({
   }
 });
 
+// packages/shared/dist/update-feed.js
+var FEED_FORMAT, FeedSeveritySchema, FeedKeySchema, FeedCitationSchema, modelId, perMTok, PricesSchema, AiChangeAuthoritySchema, AiChangeDetailsSchema, ModelWatchAlertDetailsSchema, FeedEntryInputSchema, FeedEntrySchema, FeedSummarySchema, FeedResponseSchema;
+var init_update_feed = __esm({
+  "packages/shared/dist/update-feed.js"() {
+    "use strict";
+    init_zod();
+    FEED_FORMAT = "memlin.feed.v1";
+    FeedSeveritySchema = external_exports.enum(["info", "notable", "action"]);
+    FeedKeySchema = external_exports.string().regex(/^[a-z0-9][a-z0-9-]{1,62}$/);
+    FeedCitationSchema = external_exports.object({
+      url: external_exports.string().url().max(2048).refine((value) => value.startsWith("https://"), "Citations must be https"),
+      title: external_exports.string().trim().min(1).max(300)
+    }).strict();
+    modelId = external_exports.string().trim().min(1).max(240);
+    perMTok = external_exports.number().nonnegative().max(1e5);
+    PricesSchema = external_exports.object({
+      input: perMTok.nullable(),
+      output: perMTok.nullable(),
+      cache_read: perMTok.nullable().optional(),
+      cache_write: perMTok.nullable().optional()
+    }).strict();
+    AiChangeAuthoritySchema = external_exports.enum(["authoritative", "reported", "community"]);
+    AiChangeDetailsSchema = external_exports.discriminatedUnion("kind", [
+      external_exports.object({
+        kind: external_exports.literal("price_change"),
+        authority: AiChangeAuthoritySchema,
+        vendor: external_exports.string().max(40),
+        model: modelId,
+        before: PricesSchema.nullable(),
+        after: PricesSchema,
+        effective_at: external_exports.string().datetime().nullable()
+      }).strict(),
+      external_exports.object({
+        kind: external_exports.literal("new_model"),
+        authority: AiChangeAuthoritySchema,
+        vendor: external_exports.string().max(40),
+        model: modelId,
+        family: external_exports.string().max(80).nullable(),
+        predecessor: modelId.nullable(),
+        prices: PricesSchema.nullable()
+      }).strict(),
+      external_exports.object({
+        kind: external_exports.enum(["deprecation", "retirement"]),
+        authority: AiChangeAuthoritySchema,
+        vendor: external_exports.string().max(40),
+        model: modelId,
+        retire_at: external_exports.string().datetime().nullable(),
+        replacement: modelId.nullable()
+      }).strict(),
+      external_exports.object({
+        kind: external_exports.enum(["tool_release", "breaking_change"]),
+        authority: AiChangeAuthoritySchema,
+        vendor: external_exports.string().max(40),
+        tool: external_exports.string().regex(/^[a-z0-9][a-z0-9:@/._-]{1,80}$/),
+        version: external_exports.string().max(80),
+        breaking: external_exports.array(external_exports.string().max(300)).max(10)
+      }).strict(),
+      external_exports.object({
+        kind: external_exports.literal("news"),
+        authority: AiChangeAuthoritySchema,
+        vendor: external_exports.string().max(40).nullable()
+      }).strict()
+    ]);
+    ModelWatchAlertDetailsSchema = external_exports.object({
+      kind: external_exports.enum([
+        "price_change",
+        "new_model",
+        "deprecation",
+        "retirement",
+        "tool_release",
+        "breaking_change",
+        "news"
+      ]),
+      change_entry_id: external_exports.string().uuid(),
+      evidence: external_exports.object({
+        models_used: external_exports.array(external_exports.object({ model: modelId, tokens_30d: external_exports.number().int().nonnegative() }).strict()).max(20),
+        monthly_cost_delta_usd: external_exports.number().nullable(),
+        files: external_exports.array(external_exports.object({ repo: external_exports.string().max(200), path: external_exports.string().max(500) }).strict()).max(50),
+        workflows: external_exports.array(external_exports.object({ id: external_exports.string().uuid(), title: external_exports.string().max(240) }).strict()).max(20),
+        host_versions: external_exports.array(external_exports.object({ tool: external_exports.string().max(80), version: external_exports.string().max(80) }).strict()).max(10)
+      }).strict()
+    }).strict();
+    FeedEntryInputSchema = external_exports.object({
+      dedupe_key: external_exports.string().trim().min(1).max(300),
+      kind: external_exports.string().regex(/^[a-z][a-z_]{1,39}$/),
+      severity: FeedSeveritySchema,
+      title: external_exports.string().trim().min(1).max(200),
+      summary: external_exports.string().max(600).default(""),
+      body_md: external_exports.string().max(2e3).default(""),
+      citations: external_exports.array(FeedCitationSchema).min(1).max(20),
+      details: external_exports.record(external_exports.string(), external_exports.unknown()).default({}),
+      subjects: external_exports.record(external_exports.string(), external_exports.unknown()).default({}),
+      project_id: external_exports.string().uuid().nullable().default(null),
+      receipt: external_exports.record(external_exports.string(), external_exports.unknown()).optional()
+    }).strict();
+    FeedEntrySchema = external_exports.object({
+      id: external_exports.string().uuid(),
+      kind: external_exports.string(),
+      severity: FeedSeveritySchema,
+      title: external_exports.string(),
+      summary: external_exports.string(),
+      body_md: external_exports.string(),
+      citations: external_exports.array(FeedCitationSchema),
+      details: external_exports.record(external_exports.string(), external_exports.unknown()),
+      subjects: external_exports.record(external_exports.string(), external_exports.unknown()),
+      project_id: external_exports.string().uuid().nullable(),
+      producer: external_exports.enum(["workflow", "lane"]),
+      content_sha256: external_exports.string(),
+      supersedes_id: external_exports.string().uuid().nullable(),
+      published_at: external_exports.string(),
+      unread: external_exports.boolean()
+    }).strict();
+    FeedSummarySchema = external_exports.object({
+      key: FeedKeySchema,
+      title: external_exports.string(),
+      audience: external_exports.enum(["global", "account"]),
+      entry_schema: external_exports.string(),
+      manifest_version: external_exports.number().int().positive(),
+      unread: external_exports.number().int().nonnegative()
+    }).strict();
+    FeedResponseSchema = external_exports.object({
+      format: external_exports.literal(FEED_FORMAT),
+      feed: FeedSummarySchema,
+      entries: external_exports.array(FeedEntrySchema),
+      next_since: external_exports.string().nullable(),
+      generated_at: external_exports.string()
+    }).strict();
+  }
+});
+
+// packages/shared/dist/job-dispatch.js
+var JOB_KINDS, JobMessageSchema;
+var init_job_dispatch = __esm({
+  "packages/shared/dist/job-dispatch.js"() {
+    "use strict";
+    init_zod();
+    JOB_KINDS = ["workflow_run", "model_watch_match", "model_watch_digest"];
+    JobMessageSchema = external_exports.object({
+      version: external_exports.literal(1),
+      kind: external_exports.enum(JOB_KINDS),
+      job_key: external_exports.string().min(1).max(200),
+      account_id: external_exports.string().uuid(),
+      delivery: external_exports.number().int().positive()
+    }).strict();
+  }
+});
+
+// packages/shared/dist/proposal-lifecycle.js
+var init_proposal_lifecycle = __esm({
+  "packages/shared/dist/proposal-lifecycle.js"() {
+    "use strict";
+  }
+});
+
 // packages/shared/dist/model-lifecycle-parser.js
 var init_model_lifecycle_parser = __esm({
   "packages/shared/dist/model-lifecycle-parser.js"() {
@@ -9098,6 +9252,12 @@ var init_memlin_commands = __esm({
   "packages/shared/dist/memlin-commands.js"() {
     "use strict";
     MEMLIN_COMMANDS = [
+      {
+        section: "Native agents",
+        cmd: "agent",
+        blurb: "run an agent through Companion with an approved model endpoint",
+        details: "Runs locally through Companion using your device-held API keys, bounded token and dollar limits, and an auditable context snapshot. Run memlin agent --help for endpoint approval, secure key entry, and read-only model comparisons. Remote native conversations require the separately gated encrypted transport."
+      },
       {
         section: "Files",
         cmd: "upload",
@@ -12781,12 +12941,13 @@ var init_ops_watch = __esm({
 });
 
 // packages/shared/dist/entitlements.js
-var COORDINATION_SELF, INDIVIDUAL_KIT, TEAM_KIT, ENTERPRISE_KIT, ENTITLEMENTS_BY_TIER;
+var FREE_KIT, COORDINATION_SELF, INDIVIDUAL_KIT, TEAM_KIT, ENTERPRISE_KIT, ENTITLEMENTS_BY_TIER;
 var init_entitlements = __esm({
   "packages/shared/dist/entitlements.js"() {
     "use strict";
     init_ops_watch();
     init_constants();
+    FREE_KIT = ["thoughts.personal"];
     COORDINATION_SELF = [
       "coordination.work_ledger",
       "coordination.handoffs",
@@ -12795,6 +12956,8 @@ var init_entitlements = __esm({
       "coordination.fleet_dashboard"
     ];
     INDIVIDUAL_KIT = [
+      ...FREE_KIT,
+      "thoughts.maps",
       ...COORDINATION_SELF,
       "roles",
       "connectors",
@@ -12814,15 +12977,26 @@ var init_entitlements = __esm({
       "governance.byoc"
     ];
     ENTITLEMENTS_BY_TIER = {
-      // Free: memory only, BYO key (AI gated separately by AI_QUOTA_BY_TIER.free = 0).
-      free: /* @__PURE__ */ new Set(),
-      // Starter: low-cost "memory + a little funded AI", still no feature gates.
-      starter: /* @__PURE__ */ new Set(),
+      // Free: Thoughts (capped by THOUGHTS_LIMITS_BY_TIER) + memory. AI is funded
+      // separately — see the signup credit grant, not AI_QUOTA_BY_TIER.
+      free: new Set(FREE_KIT),
+      // Starter: low-cost "memory + a little funded AI"; same feature set as Free.
+      starter: new Set(FREE_KIT),
       // Pro = Personal Pro.
       pro: new Set(INDIVIDUAL_KIT),
       team: new Set(TEAM_KIT),
       enterprise: new Set(ENTERPRISE_KIT)
     };
+  }
+});
+
+// packages/shared/dist/entitlement-envelope.js
+var init_entitlement_envelope = __esm({
+  "packages/shared/dist/entitlement-envelope.js"() {
+    "use strict";
+    init_constants();
+    init_entitlements();
+    init_light();
   }
 });
 
@@ -14325,13 +14499,13 @@ var init_doc = __esm({
         fn(this);
         this.indent -= 1;
       }
-      write(arg) {
-        if (typeof arg === "function") {
-          arg(this, { execution: "sync" });
-          arg(this, { execution: "async" });
+      write(arg2) {
+        if (typeof arg2 === "function") {
+          arg2(this, { execution: "sync" });
+          arg2(this, { execution: "async" });
           return;
         }
-        const content = arg;
+        const content = arg2;
         const lines = content.split("\n").filter((x) => x);
         const minIndent = Math.min(...lines.map((x) => x.length - x.trimStart().length));
         const dedented = lines.map((x) => x.slice(minIndent)).map((x) => " ".repeat(this.indent * 2) + x);
@@ -23647,8 +23821,8 @@ var init_schemas3 = __esm({
       inst.nullish = () => optional(nullable(inst));
       inst.nonoptional = (params) => nonoptional(inst, params);
       inst.array = () => array(inst);
-      inst.or = (arg) => union([inst, arg]);
-      inst.and = (arg) => intersection(inst, arg);
+      inst.or = (arg2) => union([inst, arg2]);
+      inst.and = (arg2) => intersection(inst, arg2);
       inst.transform = (tx) => pipe(inst, transform(tx));
       inst.default = (def2) => _default2(inst, def2);
       inst.prefault = (def2) => prefault(inst, def2);
@@ -25496,7 +25670,12 @@ var init_research_collection = __esm({
         }
       }, "Use a public HTTPS feed URL"),
       label: external_exports.string().trim().min(1).max(120),
-      category: external_exports.enum(["official", "community"])
+      category: external_exports.enum(["official", "community"]),
+      /** Omitted: inferred (a GitHub releases.atom URL reads the latest stable
+       * release; anything else is RSS/Atom). `github_releases` reads the ten
+       * most recent stable releases; `page` tracks a published page's sections
+       * and reports new or changed ones (needs a feed Save to record them). */
+      format: external_exports.enum(["feed", "github_releases", "page"]).optional()
     }).strict();
     ResearchCollectionSchema = external_exports.object({
       topics: external_exports.array(external_exports.string().trim().min(2).max(100)).min(1).max(10),
@@ -25935,6 +26114,9 @@ var init_dist = __esm({
     init_model_prices();
     init_model_price_parser();
     init_model_price_promotion();
+    init_update_feed();
+    init_job_dispatch();
+    init_proposal_lifecycle();
     init_model_lifecycle_parser();
     init_credit_math();
     init_ai_pricing();
@@ -25976,6 +26158,7 @@ var init_dist = __esm({
     init_admission();
     init_review_reasons();
     init_entitlements();
+    init_entitlement_envelope();
     init_beta_trial();
     init_account_deletion_sweep();
     init_project_flow_contracts();
@@ -26207,8 +26390,8 @@ function scheduleProcessExit(code) {
   void closeHttpSockets();
   setTimeout(() => process.exit(), WATCHDOG_MS).unref();
 }
-function runCliMain(main41, onError) {
-  main41().then(
+function runCliMain(main42, onError) {
+  main42().then(
     (code) => scheduleProcessExit(typeof code === "number" ? code : 0),
     (err2) => {
       if (err2 instanceof CliExit) {
@@ -26698,6 +26881,16 @@ var init_companion_client = __esm({
     DEFAULT_CALL_TIMEOUT_MS = 1e3;
     CALL_TIMEOUTS = {
       "workspace.resolve": 2e3,
+      "nativeDevices.status": 3e4,
+      "nativeDevices.list": 3e4,
+      "nativeDevices.pairStart": 3e4,
+      "nativeDevices.pairConfirm": 3e4,
+      "nativeDevices.trust": 3e4,
+      "nativeDevices.revoke": 3e4,
+      "nativeDevices.renew": 6e4,
+      "nativeDevices.keyOffer": 6e4,
+      "nativeDevices.keyOffers": 6e4,
+      "nativeDevices.keyAccept": 6e4,
       "resolve.start": 750,
       "resolve.reuse": 4500,
       "resolve.reserve": 750,
@@ -27551,7 +27744,7 @@ function agentDevice() {
 }
 function agentVersion() {
   if (cachedAgentVersion) return cachedAgentVersion;
-  cachedAgentVersion = "0.2.92";
+  cachedAgentVersion = "0.2.93";
   return cachedAgentVersion;
 }
 function agentCapabilities() {
@@ -28907,6 +29100,28 @@ var init_memlin_api_client = __esm({
       async listDecisions(opts = {}) {
         const qs = opts.limit ? `?limit=${encodeURIComponent(String(opts.limit))}` : "";
         return this.request("GET", `/decisions${qs}`, void 0, {
+          accountId: opts.accountId,
+          maxRetries: opts.maxRetries,
+          requestTimeoutMs: opts.requestTimeoutMs
+        });
+      }
+      /** GET /feeds — live update feeds the caller can see, with notable/action unread counts. */
+      async listFeeds(opts = {}) {
+        return this.request("GET", "/feeds", void 0, {
+          accountId: opts.accountId,
+          maxRetries: opts.maxRetries,
+          requestTimeoutMs: opts.requestTimeoutMs
+        });
+      }
+      /** GET /feeds/{key} — one update feed (memlin.feed.v1), snapshot-only. */
+      async getFeed(key, opts = {}) {
+        const qs = new URLSearchParams();
+        if (opts.project) qs.set("project", opts.project);
+        if (opts.severity) qs.set("severity", opts.severity);
+        if (opts.limit) qs.set("limit", String(opts.limit));
+        const query = qs.toString();
+        const path58 = `/feeds/${encodeURIComponent(key)}${query ? `?${query}` : ""}`;
+        return this.request("GET", path58, void 0, {
           accountId: opts.accountId,
           maxRetries: opts.maxRetries,
           requestTimeoutMs: opts.requestTimeoutMs
@@ -33165,8 +33380,8 @@ var init_remember = __esm({
 // packages/plugin-core/src/cli/private.ts
 var private_exports = {};
 async function main11() {
-  const arg = (process.argv[2] ?? "on").toLowerCase();
-  const command = arg === "on" || arg === "start" || arg === "enable" ? "on" : arg === "read-only" || arg === "readonly" || arg === "read_only" || arg === "ro" ? "read_only" : arg === "off" || arg === "stop" || arg === "end" || arg === "disable" ? "off" : arg === "status" ? "status" : null;
+  const arg2 = (process.argv[2] ?? "on").toLowerCase();
+  const command = arg2 === "on" || arg2 === "start" || arg2 === "enable" ? "on" : arg2 === "read-only" || arg2 === "readonly" || arg2 === "read_only" || arg2 === "ro" ? "read_only" : arg2 === "off" || arg2 === "stop" || arg2 === "end" || arg2 === "disable" ? "off" : arg2 === "status" ? "status" : null;
   if (!command) {
     process.stderr.write("usage: memlin private [on|read-only|off|status]\n");
     return 2;
@@ -33226,6 +33441,18 @@ var init_private = __esm({
       console.error("memlin private failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
+  }
+});
+
+// packages/plugin-core/src/cli/read-only.ts
+var read_only_exports = {};
+var arg;
+var init_read_only = __esm({
+  "packages/plugin-core/src/cli/read-only.ts"() {
+    "use strict";
+    arg = (process.argv[2] ?? "on").toLowerCase();
+    process.argv[2] = arg === "off" || arg === "stop" || arg === "end" || arg === "disable" ? "off" : arg === "status" ? "status" : "read-only";
+    void Promise.resolve().then(() => (init_private(), private_exports));
   }
 });
 
@@ -35111,6 +35338,281 @@ var init_ask = __esm({
   }
 });
 
+// packages/plugin-core/src/cli/agent.ts
+var agent_exports = {};
+import { randomUUID as randomUUID6 } from "node:crypto";
+async function readHiddenKey() {
+  if (!process.stdin.isTTY || !process.stdout.isTTY)
+    throw new Error("Key setup requires an interactive terminal");
+  process.stdout.write("API key (hidden): ");
+  process.stdin.setRawMode(true);
+  process.stdin.resume();
+  try {
+    return await new Promise((resolve, reject) => {
+      let key = "";
+      const cleanup = () => {
+        process.stdin.off("data", receive);
+      };
+      const receive = (data) => {
+        for (const char of data.toString("utf8")) {
+          if (char === "\r" || char === "\n") {
+            cleanup();
+            resolve(key);
+            return;
+          }
+          if (char === "" || char === "") {
+            cleanup();
+            reject(new Error("Key setup cancelled"));
+            return;
+          }
+          if (char === "\x7F" || char === "\b") key = key.slice(0, -1);
+          else if (char >= " " && key.length < 8192) key += char;
+        }
+      };
+      process.stdin.on("data", receive);
+    });
+  } finally {
+    process.stdin.setRawMode(false);
+    process.stdin.pause();
+    process.stdout.write("\n");
+  }
+}
+async function main16() {
+  const args2 = process.argv.slice(2), cwd = process.cwd();
+  const flag = (key) => {
+    const at = args2.indexOf(key);
+    if (at < 0) return false;
+    args2.splice(at, 1);
+    return true;
+  };
+  const value = (key) => {
+    const at = args2.indexOf(key);
+    if (at < 0) return void 0;
+    const result = args2[at + 1];
+    if (!result || result.startsWith("--")) throw new Error(`${key} requires a value`);
+    args2.splice(at, 2);
+    return result;
+  };
+  const finite = (key, required2 = true, fallback = 0) => {
+    const text = value(key);
+    if (text === void 0) {
+      if (required2) throw new Error(`${key} is required`);
+      return fallback;
+    }
+    const n = Number(text);
+    if (!Number.isFinite(n) || n < 0) throw new Error(`${key} must be a finite nonnegative number`);
+    return n;
+  };
+  if (flag("--help") || !args2.length) {
+    console.log(`memlin agent endpoints
+memlin agent sync
+memlin agent discover
+memlin agent publish --endpoint <id>
+memlin agent endpoint --url <base-url> --protocol <anthropic-messages|openai-responses|google-gemini|openai-chat> --name <name> --approve [--endpoint <existing-id>] [--kind <server-kind>] [--auth-mode <none|bearer|api_key>] [--private-network] [--local-inference]
+memlin agent key --endpoint <id>
+memlin agent probe --endpoint <id>
+memlin agent resume --run <run-id>
+memlin agent "task" --endpoint <id> --model <model> --max-tokens <n> --max-cost <usd> --input-price <usd/million> --output-price <usd/million> [--max-turns 8] [--local-only]
+Add --compare-endpoint and --compare-model for read-only runs using one frozen context.
+Model-server kinds include ollama, lmstudio, llamacpp, vllm, openllm, mlx, exo, openai-compatible and provider.
+API-key mode is available for Anthropic and Gemini. Use bearer for OpenAI-compatible APIs, or --no-auth for a server without authentication.
+Run probe before publish to include discovered models. Sync proposes endpoints; each device must approve its own destinations.
+Explicit memory writes require --allow-memory-writes; their content is sent to Memlin.`);
+    return;
+  }
+  const registry2 = await companionRequest("agent.endpoints", { cwd }, { timeoutMs: 15e3 });
+  if (!registry2)
+    throw new Error("Open an updated Memlin Companion, sign in, and bind this workspace");
+  if (args2[0] === "resume") {
+    args2.shift();
+    const runId = value("--run");
+    if (!runId || args2.length) throw new Error("Resume requires --run <run-id>");
+    const result = await companionRequest("agent.resume", { runId, cwd }, { timeoutMs: 2e4 });
+    if (!result)
+      throw new Error("This run could not resume; uncertain operations require reconciliation");
+    return watchRun(result.runId, cwd);
+  }
+  const endpointId = value("--endpoint");
+  if (args2[0] === "sync" || args2[0] === "discover") {
+    const result = await companionRequest(
+      args2[0] === "sync" ? "agent.endpoints.sync" : "agent.endpoints.discover",
+      { cwd },
+      { timeoutMs: 2e4 }
+    );
+    if (!result) throw new Error("Endpoint sync or discovery is unavailable");
+    console.log(JSON.stringify(result.endpoints, null, 2));
+    return;
+  }
+  if (args2[0] === "endpoints") {
+    console.log(JSON.stringify(registry2.endpoints, null, 2));
+    return;
+  }
+  if (args2[0] === "endpoint") {
+    args2.shift();
+    const baseUrl = value("--url"), protocol = value("--protocol"), name = value("--name");
+    if (!baseUrl || !protocol || !name || !flag("--approve"))
+      throw new Error("Endpoint setup requires --url, --protocol, --name and explicit --approve");
+    const authMode = value("--auth-mode"), noAuth = flag("--no-auth");
+    if (authMode && noAuth) throw new Error("Choose --auth-mode or --no-auth");
+    const auth = authMode ?? (noAuth ? "none" : ["anthropic-messages", "google-gemini"].includes(protocol) ? "api_key" : "bearer");
+    if (!["none", "bearer", "api_key"].includes(auth) || auth === "api_key" && !["anthropic-messages", "google-gemini"].includes(protocol))
+      throw new Error("Unsupported authentication for this API format");
+    const endpoint2 = {
+      id: endpointId ?? randomUUID6(),
+      baseUrl,
+      protocol,
+      name,
+      kind: value("--kind") ?? "openai-compatible",
+      auth,
+      privateNetwork: flag("--private-network"),
+      localInference: flag("--local-inference"),
+      models: []
+    };
+    if (args2.length) throw new Error("Unknown endpoint option");
+    if (!await companionRequest("agent.endpoint.approve", { cwd, endpoint: endpoint2 }, { timeoutMs: 15e3 }))
+      throw new Error("Destination approval failed");
+    console.log(`Approved endpoint ${endpoint2.name}: ${endpoint2.id}`);
+    return;
+  }
+  const endpoint = registry2.endpoints.find((x) => x.id === endpointId || x.name === endpointId);
+  if (!endpoint) throw new Error("Select an approved endpoint with --endpoint");
+  if (args2[0] === "publish") {
+    const result = await companionRequest(
+      "agent.endpoint.publish",
+      { cwd, endpointId: endpoint.id },
+      { timeoutMs: 15e3 }
+    );
+    if (!result) throw new Error("Endpoint settings could not sync");
+    console.log("Endpoint settings synced. Each device must approve the destination before use.");
+    return;
+  }
+  if (args2[0] === "key") {
+    const key = await readHiddenKey();
+    const result = await companionRequest(
+      "agent.key.set",
+      { cwd, endpointId: endpoint.id, key },
+      { timeoutMs: 15e3 }
+    );
+    if (!result) throw new Error("Companion could not save this key in the protected device vault");
+    console.log("Provider key configured in the device vault.");
+    return;
+  }
+  if (args2[0] === "probe") {
+    const result = await companionRequest(
+      "agent.endpoint.probe",
+      { cwd, endpointId: endpoint.id },
+      { timeoutMs: 2e4 }
+    );
+    if (!result) throw new Error("Endpoint probe unavailable");
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const requestedProvider = value("--provider");
+  const modelName = value("--model");
+  if (!modelName) throw new Error("--model is required");
+  const budget = {
+    maxTokens: finite("--max-tokens"),
+    maxCostUsd: finite("--max-cost"),
+    maxTurns: finite("--max-turns", false, 8)
+  };
+  const inputUsdPerMillion = finite("--input-price"), outputUsdPerMillion = finite("--output-price");
+  const maxOutputTokens = finite("--max-output-tokens", false, 2048);
+  const localOnly = flag("--local-only"), allowMemoryWrites = flag("--allow-memory-writes");
+  const providerFor = (e) => e.kind === "provider" ? e.protocol === "anthropic-messages" ? "anthropic" : e.protocol === "google-gemini" ? "google" : new URL(e.baseUrl).hostname === "api.x.ai" ? "xai" : "openai" : "endpoint";
+  if (requestedProvider && requestedProvider !== "both" && requestedProvider !== providerFor(endpoint))
+    throw new Error("--provider must match the selected endpoint, or use both for comparison");
+  const selection = (e, model) => ({
+    endpointId: e.id,
+    model: {
+      provider: providerFor(e),
+      protocol: e.protocol,
+      endpointId: e.id,
+      model,
+      maxOutputTokens,
+      inputUsdPerMillion,
+      outputUsdPerMillion
+    }
+  });
+  const models = [selection(endpoint, modelName)];
+  const compareId = value("--compare-endpoint");
+  if (compareId || requestedProvider === "both") {
+    const compare = compareId ? registry2.endpoints.find((x) => x.id === compareId || x.name === compareId) : registry2.endpoints.find((x) => x.protocol === "anthropic-messages");
+    const compareModel = value("--compare-model") ?? value("--anthropic-model");
+    if (!compare || !compareModel)
+      throw new Error("Comparison requires an approved second endpoint and --compare-model");
+    const other = selection(compare, compareModel);
+    other.model.inputUsdPerMillion = finite("--compare-input-price");
+    other.model.outputUsdPerMillion = finite("--compare-output-price");
+    models.push(other);
+  }
+  if (args2.some((x) => x.startsWith("--"))) throw new Error("Unknown agent option");
+  const task = args2.join(" ").trim();
+  if (!task) throw new Error("Provide an agent task");
+  const started = await companionRequest(
+    "agent.start",
+    { clientRequestId: randomUUID6(), cwd, task, models, budget, localOnly, allowMemoryWrites },
+    { timeoutMs: 2e4 }
+  );
+  if (!started)
+    throw new Error("Native run could not start; check destination approval and budgets");
+  return watchRun(started.runId, cwd);
+}
+async function watchRun(runId, cwd) {
+  const cancel = () => {
+    void companionRequest("agent.cancel", { runId });
+  };
+  process.once("SIGINT", cancel);
+  try {
+    let displayed = 0;
+    for (; ; ) {
+      const status = await companionRequest("agent.status", { runId, cwd }, { timeoutMs: 1e4 });
+      if (!status)
+        throw new Error(
+          `Companion disconnected. Run ${runId} needs reconciliation; do not repeat effects blindly.`
+        );
+      if (status.text.length > displayed) {
+        process.stdout.write(status.text.slice(displayed));
+        displayed = status.text.length;
+      }
+      if (!["starting", "running"].includes(status.state)) {
+        console.log(`
+${status.state} \xB7 run ${runId}`);
+        for (const result of status.results)
+          console.log(
+            JSON.stringify({
+              run_id: result.runId,
+              audit_id: result.context.auditId,
+              context_source: result.context.source,
+              status: result.status,
+              input_tokens: result.inputTokens,
+              output_tokens: result.outputTokens,
+              estimated_cost_usd: result.costUsd,
+              reason: result.reason
+            })
+          );
+        if (status.error) console.error(status.error);
+        return status.state === "completed" ? 0 : 1;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+  } finally {
+    process.off("SIGINT", cancel);
+  }
+}
+var init_agent = __esm({
+  "packages/plugin-core/src/cli/agent.ts"() {
+    "use strict";
+    init_companion_client();
+    init_cli_runner();
+    runCliMain(main16, (error40) => {
+      console.error(
+        `memlin agent: ${error40 instanceof Error ? error40.message : "Unable to complete the request"}`
+      );
+      return 1;
+    });
+  }
+});
+
 // packages/plugin-core/src/cli/verify.ts
 var verify_exports = {};
 __export(verify_exports, {
@@ -35186,7 +35688,7 @@ function parseVerifyArgs(argv) {
   }
   return out2;
 }
-async function main16() {
+async function main17() {
   const parsed = parseVerifyArgs(process.argv.slice(2));
   if ("error" in parsed) {
     console.error(parsed.error);
@@ -35232,7 +35734,7 @@ var init_verify = __esm({
     init_client();
     isDirectRun = process.argv[1]?.endsWith("verify.js") || process.argv[1]?.endsWith("verify.ts");
     if (isDirectRun) {
-      main16().catch((err2) => {
+      main17().catch((err2) => {
         console.error("memlin verify failed:", err2 instanceof Error ? err2.message : err2);
         process.exit(1);
       });
@@ -35350,7 +35852,7 @@ function deepEq(a, b) {
   }
   return false;
 }
-async function main17() {
+async function main18() {
   const parsed = parseDiffArgs(process.argv.slice(2));
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -35478,7 +35980,7 @@ var init_diff = __esm({
     init_cli_runner();
     extractContract = extractMemlinContract;
     if (import.meta.url === (process.argv[1] ? pathToFileURL(process.argv[1]).href : void 0)) {
-      runCliMain(main17, (err2) => {
+      runCliMain(main18, (err2) => {
         console.error(`memlin diff: ${err2 instanceof Error ? err2.message : err2}`);
         return 2;
       });
@@ -35594,7 +36096,7 @@ ${text}`);
   }
   return turns.join("\n\n");
 }
-async function main18() {
+async function main19() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
@@ -35699,7 +36201,7 @@ var init_scribe = __esm({
     init_cli_runner();
     init_transcript();
     init_project_resolver();
-    runCliMain(main18, (err2) => {
+    runCliMain(main19, (err2) => {
       process.stderr.write(`scribe failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
       return 1;
@@ -35793,16 +36295,16 @@ function extractFeatureFlag(input) {
   const args2 = [];
   let feature;
   for (let i = 0; i < input.length; i++) {
-    const arg = input[i];
-    if (arg === "--feature" || arg === "--no-feature") {
+    const arg2 = input[i];
+    if (arg2 === "--feature" || arg2 === "--no-feature") {
       if (feature !== void 0) throw Error("Choose --feature or --no-feature once.");
-      if (arg === "--no-feature") feature = "none";
+      if (arg2 === "--no-feature") feature = "none";
       else {
         const id = input[++i];
         if (!id || !UUID3.test(id)) throw Error("--feature needs a complete feature ID.");
         feature = { feature_id: id };
       }
-    } else args2.push(arg);
+    } else args2.push(arg2);
   }
   if (feature !== void 0 && args2[0] !== "accept")
     throw Error("Filing choices apply only to accept.");
@@ -35824,8 +36326,8 @@ function extractNoteFlag(args2) {
   const rest = [];
   let note = null;
   for (let i = 0; i < args2.length; i++) {
-    const arg = args2[i];
-    if (arg === "--note") {
+    const arg2 = args2[i];
+    if (arg2 === "--note") {
       const value = args2[i + 1];
       if (value === void 0 || value.startsWith("--")) {
         return { args: rest, note: null, error: 'missing value for --note \u2014 use --note "your reason"' };
@@ -35834,11 +36336,11 @@ function extractNoteFlag(args2) {
       i++;
       continue;
     }
-    if (arg.startsWith("--note=")) {
-      note = arg.slice("--note=".length);
+    if (arg2.startsWith("--note=")) {
+      note = arg2.slice("--note=".length);
       continue;
     }
-    rest.push(arg);
+    rest.push(arg2);
   }
   const trimmed = note?.trim() ?? "";
   return { args: rest, note: trimmed ? trimmed : null, error: null };
@@ -36017,7 +36519,7 @@ function matchProposal(proposals, needle) {
     error: `"${needle}" is ambiguous \u2014 matches ${matches.length} proposals; use more characters`
   };
 }
-async function main19() {
+async function main20() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
@@ -36094,7 +36596,7 @@ var init_inbox = __esm({
     init_args();
     init_inbox_feature_args();
     init_decide_args();
-    runCliMain(main19, (err2) => {
+    runCliMain(main20, (err2) => {
       process.stderr.write(
         `memlin inbox failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
@@ -36125,7 +36627,7 @@ async function showDecision(api, needle) {
   const { decision, evidence } = await api.getDecision(id);
   process.stdout.write(formatDecisionDetail(decision, evidence));
 }
-async function main20() {
+async function main21() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run /memlin-login first\n");
@@ -36147,7 +36649,7 @@ var init_decisions = __esm({
     init_cli_runner();
     init_decide_args();
     init_decisions_view();
-    runCliMain(main20, (err2) => {
+    runCliMain(main21, (err2) => {
       process.stderr.write(
         `memlin decisions failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
@@ -36159,7 +36661,7 @@ var init_decisions = __esm({
 
 // packages/plugin-core/src/cli/decide.ts
 var decide_exports = {};
-async function main21() {
+async function main22() {
   const parsed = parseDecideArgs(argvAsSlashArgs());
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}
@@ -36211,7 +36713,7 @@ var init_decide = __esm({
     init_args();
     init_cli_runner();
     init_decide_args();
-    runCliMain(main21, (err2) => {
+    runCliMain(main22, (err2) => {
       process.stderr.write(`memlin decide failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
       return 1;
@@ -36229,7 +36731,7 @@ function matchHandoff(handoffs, needle) {
   if (matches.length === 0) return { error: `no handoff matches "${needle}"` };
   return { error: `"${needle}" is ambiguous \u2014 matches ${matches.length} handoffs` };
 }
-async function main22() {
+async function main23() {
   const ctx = await getApi();
   if (!ctx) {
     process.stderr.write("not signed in \u2014 run memlin login first\n");
@@ -36406,7 +36908,7 @@ var init_handoffs = __esm({
     init_cli_runner();
     init_host();
     init_args();
-    runCliMain(main22, (err2) => {
+    runCliMain(main23, (err2) => {
       process.stderr.write(
         `memlin handoffs failed: ${err2 instanceof Error ? err2.message : String(err2)}
 `
@@ -36436,7 +36938,7 @@ function printHelp4() {
     ].join("\n")
   );
 }
-async function main23() {
+async function main24() {
   const argv = process.argv.slice(2);
   const sub = argv[0];
   if (sub === "--help" || sub === "-h" || sub === "help") {
@@ -36508,7 +37010,7 @@ var init_role = __esm({
     "use strict";
     init_client();
     init_cli_runner();
-    runCliMain(main23, (err2) => {
+    runCliMain(main24, (err2) => {
       console.error("memlin role failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -36516,7 +37018,7 @@ var init_role = __esm({
 });
 
 // packages/plugin-core/src/review-copy.ts
-import { randomUUID as randomUUID6 } from "node:crypto";
+import { randomUUID as randomUUID7 } from "node:crypto";
 import { constants as constants3, promises as fs26 } from "node:fs";
 import path34 from "node:path";
 async function ensureDirectory(directory) {
@@ -36548,7 +37050,7 @@ async function saveReviewBytes(copy, destination, edited = () => true) {
     if (current.dev !== directory.dev || current.ino !== directory.ino || await fs26.realpath(parsed.dir) !== realDirectory)
       throw Error("Export directory changed during publication.");
   };
-  const temporary = path34.join(parsed.dir, `.memlin-feature-doc-${randomUUID6()}.tmp`);
+  const temporary = path34.join(parsed.dir, `.memlin-feature-doc-${randomUUID7()}.tmp`);
   const handle2 = await fs26.open(
     temporary,
     constants3.O_CREAT | constants3.O_EXCL | constants3.O_WRONLY | (constants3.O_NOFOLLOW ?? 0),
@@ -37113,7 +37615,7 @@ var init_features_command = __esm({
 
 // packages/plugin-core/src/cli/features.ts
 var features_exports = {};
-async function main24() {
+async function main25() {
   const cwd = runtimeCwd();
   const ctx = await getApi({ cwd });
   if (!ctx) throw Error("Not signed in \u2014 run memlin login first.");
@@ -37158,7 +37660,7 @@ var init_features = __esm({
     init_args();
     init_project_resolver();
     init_features_command();
-    runCliMain(main24, (error40) => {
+    runCliMain(main25, (error40) => {
       process.stderr.write(
         `memlin features: ${error40 instanceof Error ? error40.message : String(error40)}
 `
@@ -37172,7 +37674,7 @@ var init_features = __esm({
 import { constants as constants4, promises as fs27 } from "node:fs";
 import path38 from "node:path";
 import os24 from "node:os";
-import { createHash as createHash7, randomUUID as randomUUID7 } from "node:crypto";
+import { createHash as createHash7, randomUUID as randomUUID8 } from "node:crypto";
 function validateFileUploadId(value) {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
     throw new FileUploadRefusal("Expected a UUID.");
@@ -37280,7 +37782,7 @@ function verifyLocalContent(bytes, mime) {
   if (!matches) throw new FileUploadRefusal("The file content does not match its extension.");
 }
 async function uploadLocalFile(input) {
-  const uploadId = validateFileUploadId(input.uploadId ?? randomUUID7());
+  const uploadId = validateFileUploadId(input.uploadId ?? randomUUID8());
   const role = input.role ?? "reference";
   if (input.host && !input.api.attachFile)
     throw new FileUploadRefusal("This client cannot attach files. Update the Memlin CLI.");
@@ -37491,7 +37993,7 @@ var init_upload_target = __esm({
 var upload_exports = {};
 import path39 from "node:path";
 import { promises as fs28 } from "node:fs";
-async function main25() {
+async function main26() {
   const cwd = runtimeCwd();
   let args2 = process.argv.slice(2);
   if (args2.length === 1 && !await fs28.lstat(path39.resolve(cwd, args2[0])).then(
@@ -37509,12 +38011,12 @@ async function main25() {
   let role = "reference", title, scope, project, uploadId, json2 = false, flags2 = true;
   let feature, host, caption;
   for (let i = 0; i < args2.length; i++) {
-    const arg = args2[i];
-    if (flags2 && arg === "--") {
+    const arg2 = args2[i];
+    if (flags2 && arg2 === "--") {
       flags2 = false;
       continue;
     }
-    if (flags2 && arg === "--json") {
+    if (flags2 && arg2 === "--json") {
       json2 = true;
       continue;
     }
@@ -37529,31 +38031,31 @@ async function main25() {
       "--flow-stage",
       "--thought",
       "--caption"
-    ].includes(arg)) {
+    ].includes(arg2)) {
       const value = args2[++i];
       if (!value || value.startsWith("--"))
-        throw new FileUploadRefusal(`Missing value for ${arg}.`);
-      if (arg === "--caption") caption = value;
-      else if (["--feature", "--work-item", "--flow-stage", "--thought"].includes(arg)) {
+        throw new FileUploadRefusal(`Missing value for ${arg2}.`);
+      if (arg2 === "--caption") caption = value;
+      else if (["--feature", "--work-item", "--flow-stage", "--thought"].includes(arg2)) {
         if (feature || host) throw new FileUploadRefusal("Choose one attachment target.");
-        if (arg === "--feature") feature = value;
+        if (arg2 === "--feature") feature = value;
         else
           host = {
-            kind: arg === "--work-item" ? "project_work_item" : arg === "--flow-stage" ? "flow_stage_run" : "thought",
+            kind: arg2 === "--work-item" ? "project_work_item" : arg2 === "--flow-stage" ? "flow_stage_run" : "thought",
             id: validateFileUploadId(value)
           };
-      } else if (arg === "--role") role = value;
-      else if (arg === "--title") title = value;
-      else if (arg === "--scope") {
+      } else if (arg2 === "--role") role = value;
+      else if (arg2 === "--title") title = value;
+      else if (arg2 === "--scope") {
         if (!["project", "private"].includes(value))
           throw new FileUploadRefusal("Scope must be project or private.");
         scope = value;
-      } else if (arg === "--project") project = validateFileUploadId(value);
+      } else if (arg2 === "--project") project = validateFileUploadId(value);
       else uploadId = validateFileUploadId(value);
       continue;
     }
-    if (flags2 && arg.startsWith("--")) throw new FileUploadRefusal(`Unsupported option ${arg}.`);
-    paths.push(path39.resolve(cwd, arg));
+    if (flags2 && arg2.startsWith("--")) throw new FileUploadRefusal(`Unsupported option ${arg2}.`);
+    paths.push(path39.resolve(cwd, arg2));
   }
   if (!RESOURCE_ATTACHMENT_ROLES.some((value) => value === role))
     throw new FileUploadRefusal("Unknown file role.");
@@ -37667,7 +38169,7 @@ var init_upload = __esm({
     init_file_upload();
     init_args();
     init_cli_runner();
-    runCliMain(main25, (error40) => {
+    runCliMain(main26, (error40) => {
       process.stderr.write(
         `Upload refused: ${error40 instanceof Error ? error40.message : "Unknown error"}
 `
@@ -37734,7 +38236,7 @@ function chooseAccount(accounts, needle) {
   if (byName.length === 1) return byName[0];
   return null;
 }
-async function main26() {
+async function main27() {
   const argv = process.argv.slice(2);
   const parsed = parseArgs4(argv);
   if ("error" in parsed) {
@@ -37811,7 +38313,7 @@ var init_link = __esm({
     init_cli_runner();
     init_workspace_binding();
     init_project_resolver();
-    runCliMain(main26, (err2) => {
+    runCliMain(main27, (err2) => {
       console.error("memlin link failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -37821,7 +38323,7 @@ var init_link = __esm({
 // packages/plugin-core/src/cli/revert.ts
 var revert_exports = {};
 import readline2 from "node:readline/promises";
-async function main27() {
+async function main28() {
   const args2 = process.argv.slice(2);
   if (args2.length === 0) {
     console.error("usage: memlin revert <document-name-or-path> [version-number]");
@@ -37897,7 +38399,7 @@ var init_revert = __esm({
     "use strict";
     init_client();
     init_cli_runner();
-    runCliMain(main27, (err2) => {
+    runCliMain(main28, (err2) => {
       console.error("memlin revert failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -37921,7 +38423,7 @@ function printHelp6() {
     ].join("\n")
   );
 }
-async function main28() {
+async function main29() {
   const argv = process.argv.slice(2);
   const first = argv[0];
   if (!first || first === "--help" || first === "-h" || first === "help") {
@@ -37951,7 +38453,7 @@ var init_pin = __esm({
     "use strict";
     init_client();
     init_cli_runner();
-    runCliMain(main28, (err2) => {
+    runCliMain(main29, (err2) => {
       console.error("memlin pin failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -38105,7 +38607,7 @@ function pickAccount(accounts, needle, fallback) {
   }
   return accounts.find((a) => a.id === fallback) ?? null;
 }
-async function main29() {
+async function main30() {
   const argv = process.argv.slice(2);
   const parsed = parseArgs5(argv);
   if ("error" in parsed) {
@@ -38331,7 +38833,7 @@ var init_add_project = __esm({
     init_workspace_binding();
     init_sibling_detect();
     init_plugin_install();
-    runCliMain(main29, (err2) => {
+    runCliMain(main30, (err2) => {
       console.error("memlin add-project failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -38571,7 +39073,7 @@ function parseAction(argv) {
   }
   return action;
 }
-async function main30() {
+async function main31() {
   const parsed = parseAction(process.argv.slice(2));
   if (parsed === "help") {
     printHelp8();
@@ -38594,7 +39096,7 @@ var init_manage_memory = __esm({
     init_native_memory();
     init_native_memory_backup();
     init_cli_runner();
-    runCliMain(main30, (err2) => {
+    runCliMain(main31, (err2) => {
       console.error("memlin manage-memory failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -38603,7 +39105,7 @@ var init_manage_memory = __esm({
 
 // packages/plugin-core/src/cli/managed-memory.ts
 var managed_memory_exports = {};
-async function main31() {
+async function main32() {
   const argv = process.argv.slice(2);
   if (argv.includes("--help") || argv.includes("-h")) {
     console.log("`memlin managed-memory` is now `memlin manage-memory`.");
@@ -38620,7 +39122,7 @@ var init_managed_memory = __esm({
     "use strict";
     init_cli_runner();
     init_manage_memory();
-    runCliMain(main31, (err2) => {
+    runCliMain(main32, (err2) => {
       console.error("memlin managed-memory failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -38630,7 +39132,7 @@ var init_managed_memory = __esm({
 // packages/plugin-core/src/cli/ingest-native-memory.ts
 var ingest_native_memory_exports = {};
 import path43 from "node:path";
-async function main32() {
+async function main33() {
   const ctx = await getApi();
   if (!ctx) {
     console.error("memlin: not configured. Run `memlin login` first.");
@@ -38694,7 +39196,7 @@ var init_ingest_native_memory = __esm({
     init_cli_runner();
     init_project_resolver();
     init_native_memory();
-    runCliMain(main32, (err2) => {
+    runCliMain(main33, (err2) => {
       console.error("memlin ingest-native-memory failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -38742,7 +39244,7 @@ function printHelp9() {
     ].join("\n")
   );
 }
-async function main33() {
+async function main34() {
   const parsed = parseArgs6(process.argv.slice(2));
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -38836,7 +39338,7 @@ var init_attach_path = __esm({
     init_project_resolver();
     init_workspace_binding();
     init_sibling_detect();
-    runCliMain(main33, (err2) => {
+    runCliMain(main34, (err2) => {
       console.error("memlin attach-path failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -38984,7 +39486,7 @@ function renderItem2(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main34() {
+async function main35() {
   const parsed = parseArgs7(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -39089,7 +39591,7 @@ var init_audit_replay = __esm({
     init_cli_runner();
     init_args();
     init_audit_replay_renderer();
-    runCliMain(main34, (err2) => {
+    runCliMain(main35, (err2) => {
       console.error("memlin audit replay failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -39167,7 +39669,7 @@ function renderItem3(item) {
   lines.push("");
   return lines.join("\n");
 }
-async function main35() {
+async function main36() {
   const parsed = parseArgs8(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -39243,7 +39745,7 @@ var init_audit_explain = __esm({
     init_client();
     init_cli_runner();
     init_args();
-    runCliMain(main35, (err2) => {
+    runCliMain(main36, (err2) => {
       console.error("memlin audit explain failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -39312,7 +39814,7 @@ function renderRow(a) {
     `  invoke:       POST ${a.invoke_url}  body={"input":${inputSummary}}`
   ].join("\n");
 }
-async function main36() {
+async function main37() {
   const parsed = parseArgs9(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -39358,7 +39860,7 @@ var init_actions_list = __esm({
     init_client();
     init_cli_runner();
     init_args();
-    runCliMain(main36, (err2) => {
+    runCliMain(main37, (err2) => {
       console.error("memlin actions list failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -39432,7 +39934,7 @@ function printHelp13() {
     ].join("\n")
   );
 }
-async function main37() {
+async function main38() {
   const parsed = parseArgs10(argvAsSlashArgs());
   if ("error" in parsed) {
     if (parsed.error === "help") {
@@ -39496,7 +39998,7 @@ var init_actions_execute = __esm({
     init_client();
     init_cli_runner();
     init_args();
-    runCliMain(main37, (err2) => {
+    runCliMain(main38, (err2) => {
       console.error("memlin actions execute failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -39521,7 +40023,7 @@ function printHelp14() {
     ].join("\n")
   );
 }
-async function main38() {
+async function main39() {
   const argv = argvAsSlashArgs();
   if (argv.includes("--help") || argv.includes("-h")) {
     printHelp14();
@@ -39643,7 +40145,7 @@ var init_prompt_ci = __esm({
     init_local_scan();
     init_state();
     init_args();
-    runCliMain(main38, (err2) => {
+    runCliMain(main39, (err2) => {
       console.error("memlin prompt-ci failed:", err2 instanceof Error ? err2.message : err2);
       return 1;
     });
@@ -42703,7 +43205,7 @@ async function enrichManifestSummaries(functions, opts) {
     errors
   };
 }
-async function summarizeBatch(batch, apiKey, modelId) {
+async function summarizeBatch(batch, apiKey, modelId2) {
   const items = batch.map(({ key, ref }) => {
     return `--- id: ${key}
 kind: ${ref.kind}
@@ -42721,7 +43223,7 @@ Return JSON now.`;
     apiKey,
     maxTokens: 1500,
     role: MODEL_ROLES.generationFast,
-    modelId
+    modelId: modelId2
   });
   let cleaned = raw.trim().replace(/^```(?:json)?\n?|\n?```$/g, "");
   const first = cleaned.indexOf("{");
@@ -44606,9 +45108,9 @@ var require_source_map_support = __commonJS({
       }
     }
     function handlerExec(list) {
-      return function(arg) {
+      return function(arg2) {
         for (var i = 0; i < list.length; i++) {
-          var ret = list[i](arg);
+          var ret = list[i](arg2);
           if (ret) {
             return ret;
           }
@@ -48084,11 +48586,11 @@ var require_typescript = __commonJS({
         return result;
       }
       function assign(t, ...args2) {
-        for (const arg of args2) {
-          if (arg === void 0) continue;
-          for (const p in arg) {
-            if (hasProperty(arg, p)) {
-              t[p] = arg[p];
+        for (const arg2 of args2) {
+          if (arg2 === void 0) continue;
+          for (const p in arg2) {
+            if (hasProperty(arg2, p)) {
+              t[p] = arg2[p];
             }
           }
         }
@@ -48404,11 +48906,11 @@ var require_typescript = __commonJS({
       }
       function memoizeOne(callback) {
         const map22 = /* @__PURE__ */ new Map();
-        return (arg) => {
-          const key = `${typeof arg}:${arg}`;
+        return (arg2) => {
+          const key = `${typeof arg2}:${arg2}`;
           let value = map22.get(key);
           if (value === void 0 && !map22.has(key)) {
-            value = callback(arg);
+            value = callback(arg2);
             map22.set(key, value);
           }
           return value;
@@ -48680,7 +49182,7 @@ var require_typescript = __commonJS({
         return candidate.length >= prefix.length + suffix.length && startsWith(candidate, prefix) && endsWith(candidate, suffix);
       }
       function and(f, g) {
-        return (arg) => f(arg) && g(arg);
+        return (arg2) => f(arg2) && g(arg2);
       }
       function or(...fs38) {
         return (...args2) => {
@@ -53685,7 +54187,7 @@ ${lanes.join("\n")}
             disableCPUProfiler,
             cpuProfilingEnabled: () => !!activeSession || contains(process.execArgv, "--cpu-prof") || contains(process.execArgv, "--prof"),
             realpath,
-            debugMode: !!process.env.NODE_INSPECTOR_IPC || !!process.env.VSCODE_INSPECTOR_OPTIONS || some(process.execArgv, (arg) => /^--(?:inspect|debug)(?:-brk)?(?:=\d+)?$/i.test(arg)) || !!process.recordreplay,
+            debugMode: !!process.env.NODE_INSPECTOR_IPC || !!process.env.VSCODE_INSPECTOR_OPTIONS || some(process.execArgv, (arg2) => /^--(?:inspect|debug)(?:-brk)?(?:=\d+)?$/i.test(arg2)) || !!process.recordreplay,
             tryEnableSourceMapsForHost() {
               try {
                 require_source_map_support().install();
@@ -60445,9 +60947,9 @@ ${lanes.join("\n")}
               case 212:
                 return expr.name;
               case 213:
-                const arg = expr.argumentExpression;
-                if (isIdentifier(arg)) {
-                  return arg;
+                const arg2 = expr.argumentExpression;
+                if (isIdentifier(arg2)) {
+                  return arg2;
                 }
             }
             break;
@@ -64086,8 +64588,8 @@ ${lanes.join("\n")}
         if (args2.length !== 1) {
           return false;
         }
-        const arg = args2[0];
-        return !requireStringLiteralLikeArgument || isStringLiteralLike(arg);
+        const arg2 = args2[0];
+        return !requireStringLiteralLikeArgument || isStringLiteralLike(arg2);
       }
       function isVariableDeclarationInitializedToRequire(node) {
         return isVariableDeclarationInitializedWithRequireHelper(
@@ -64302,9 +64804,9 @@ ${lanes.join("\n")}
         if (isPropertyAccessExpression(node)) {
           return node.name;
         }
-        const arg = skipParentheses(node.argumentExpression);
-        if (isNumericLiteral(arg) || isStringLiteralLike(arg)) {
-          return arg;
+        const arg2 = skipParentheses(node.argumentExpression);
+        if (isNumericLiteral(arg2) || isStringLiteralLike(arg2)) {
+          return arg2;
         }
         return node;
       }
@@ -88647,10 +89149,10 @@ ${lanes.join("\n")}
               const referencedFiles = context.referencedFiles;
               const typeReferenceDirectives = context.typeReferenceDirectives;
               const libReferenceDirectives = context.libReferenceDirectives;
-              forEach(toArray(entryOrList), (arg) => {
-                const { types, lib, path: path58, ["resolution-mode"]: res, preserve: _preserve } = arg.arguments;
+              forEach(toArray(entryOrList), (arg2) => {
+                const { types, lib, path: path58, ["resolution-mode"]: res, preserve: _preserve } = arg2.arguments;
                 const preserve = _preserve === "true" ? true : void 0;
-                if (arg.arguments["no-default-lib"] === "true") {
+                if (arg2.arguments["no-default-lib"] === "true") {
                 } else if (types) {
                   const parsed = parseResolutionMode(res, types.pos, types.end, reportDiagnostic);
                   typeReferenceDirectives.push({ pos: types.pos, end: types.end, fileName: types.value, ...parsed ? { resolutionMode: parsed } : {}, ...preserve ? { preserve } : {} });
@@ -88659,7 +89161,7 @@ ${lanes.join("\n")}
                 } else if (path58) {
                   referencedFiles.push({ pos: path58.pos, end: path58.end, fileName: path58.value, ...preserve ? { preserve } : {} });
                 } else {
-                  reportDiagnostic(arg.range.pos, arg.range.end - arg.range.pos, Diagnostics.Invalid_reference_directive_syntax);
+                  reportDiagnostic(arg2.range.pos, arg2.range.end - arg2.range.pos, Diagnostics.Invalid_reference_directive_syntax);
                 }
               });
               break;
@@ -88729,22 +89231,22 @@ ${lanes.join("\n")}
           }
           if (pragma.args) {
             const argument = {};
-            for (const arg of pragma.args) {
-              const matcher = getNamedArgRegEx(arg.name);
+            for (const arg2 of pragma.args) {
+              const matcher = getNamedArgRegEx(arg2.name);
               const matchResult = matcher.exec(text);
-              if (!matchResult && !arg.optional) {
+              if (!matchResult && !arg2.optional) {
                 return;
               } else if (matchResult) {
                 const value = matchResult[2] || matchResult[3];
-                if (arg.captureSpan) {
+                if (arg2.captureSpan) {
                   const startPos = range.pos + matchResult.index + matchResult[1].length + 1;
-                  argument[arg.name] = {
+                  argument[arg2.name] = {
                     value,
                     pos: startPos,
                     end: startPos + value.length
                   };
                 } else {
-                  argument[arg.name] = value;
+                  argument[arg2.name] = value;
                 }
               }
             }
@@ -99797,8 +100299,8 @@ ${lanes.join("\n")}
       }
       function createTypeChecker(host) {
         var deferredDiagnosticsCallbacks = [];
-        var addLazyDiagnostic = (arg) => {
-          deferredDiagnosticsCallbacks.push(arg);
+        var addLazyDiagnostic = (arg2) => {
+          deferredDiagnosticsCallbacks.push(arg2);
         };
         var cancellationToken;
         var scanner2;
@@ -125491,8 +125993,8 @@ ${lanes.join("\n")}
                 if (getObjectFlags(type) & 256) {
                   let evolvedType2 = type;
                   if (node.kind === 214) {
-                    for (const arg of node.arguments) {
-                      evolvedType2 = addEvolvingArrayElementType(evolvedType2, arg);
+                    for (const arg2 of node.arguments) {
+                      evolvedType2 = addEvolvingArrayElementType(evolvedType2, arg2);
                     }
                   } else {
                     const indexType = getContextFreeTypeOfExpression(node.left.argumentExpression);
@@ -128023,9 +128525,9 @@ ${lanes.join("\n")}
           }
           return void 0;
         }
-        function getContextualTypeForArgument(callTarget, arg) {
+        function getContextualTypeForArgument(callTarget, arg2) {
           const args2 = getEffectiveCallArguments(callTarget);
-          const argIndex = args2.indexOf(arg);
+          const argIndex = args2.indexOf(arg2);
           return argIndex === -1 ? void 0 : getContextualTypeForArgumentAtIndex(callTarget, argIndex);
         }
         function getContextualTypeForArgumentAtIndex(callTarget, argIndex) {
@@ -131099,8 +131601,8 @@ ${lanes.join("\n")}
             result.splice(spliceIndex, 0, callChainFlags ? getOptionalCallSignature(signature, callChainFlags) : signature);
           }
         }
-        function isSpreadArgument(arg) {
-          return !!arg && (arg.kind === 231 || arg.kind === 238 && arg.isSpread);
+        function isSpreadArgument(arg2) {
+          return !!arg2 && (arg2.kind === 231 || arg2.kind === 238 && arg2.isSpread);
         }
         function getSpreadArgumentIndex(args2) {
           return findIndex(args2, isSpreadArgument);
@@ -131306,11 +131808,11 @@ ${lanes.join("\n")}
             inferTypes(context.inferences, getThisArgumentType(thisArgumentNode), thisType);
           }
           for (let i = 0; i < argCount; i++) {
-            const arg = args2[i];
-            if (arg.kind !== 233) {
+            const arg2 = args2[i];
+            if (arg2.kind !== 233) {
               const paramType = getTypeAtPosition(signature, i);
               if (couldContainTypeVariables(paramType)) {
-                const argType = checkExpressionWithContextualType(arg, paramType, context, checkMode);
+                const argType = checkExpressionWithContextualType(arg2, paramType, context, checkMode);
                 inferTypes(context.inferences, argType, paramType);
               }
             }
@@ -131336,22 +131838,22 @@ ${lanes.join("\n")}
         function getSpreadArgumentType(args2, index, argCount, restType, context, checkMode) {
           const inConstContext = isConstTypeVariable(restType);
           if (index >= argCount - 1) {
-            const arg = args2[argCount - 1];
-            if (isSpreadArgument(arg)) {
-              const spreadType = arg.kind === 238 ? arg.type : checkExpressionWithContextualType(arg.expression, restType, context, checkMode);
+            const arg2 = args2[argCount - 1];
+            if (isSpreadArgument(arg2)) {
+              const spreadType = arg2.kind === 238 ? arg2.type : checkExpressionWithContextualType(arg2.expression, restType, context, checkMode);
               if (isArrayLikeType(spreadType)) {
                 return getMutableArrayOrTupleType(spreadType);
               }
-              return createArrayType(checkIteratedTypeOrElementType(33, spreadType, undefinedType2, arg.kind === 231 ? arg.expression : arg), inConstContext);
+              return createArrayType(checkIteratedTypeOrElementType(33, spreadType, undefinedType2, arg2.kind === 231 ? arg2.expression : arg2), inConstContext);
             }
           }
           const types = [];
           const flags2 = [];
           const names = [];
           for (let i = index; i < argCount; i++) {
-            const arg = args2[i];
-            if (isSpreadArgument(arg)) {
-              const spreadType = arg.kind === 238 ? arg.type : checkExpression(arg.expression);
+            const arg2 = args2[i];
+            if (isSpreadArgument(arg2)) {
+              const spreadType = arg2.kind === 238 ? arg2.type : checkExpression(arg2.expression);
               if (isArrayLikeType(spreadType)) {
                 types.push(spreadType);
                 flags2.push(
@@ -131359,7 +131861,7 @@ ${lanes.join("\n")}
                   /* Variadic */
                 );
               } else {
-                types.push(checkIteratedTypeOrElementType(33, spreadType, undefinedType2, arg.kind === 231 ? arg.expression : arg));
+                types.push(checkIteratedTypeOrElementType(33, spreadType, undefinedType2, arg2.kind === 231 ? arg2.expression : arg2));
                 flags2.push(
                   4
                   /* Rest */
@@ -131372,7 +131874,7 @@ ${lanes.join("\n")}
                 256
                 /* Contextual */
               );
-              const argType = checkExpressionWithContextualType(arg, contextualType, context, checkMode);
+              const argType = checkExpressionWithContextualType(arg2, contextualType, context, checkMode);
               const hasPrimitiveContextualType = inConstContext || maybeTypeOfKind(
                 contextualType,
                 12713980 | 2097152 | 4194304 | 8388608
@@ -131384,8 +131886,8 @@ ${lanes.join("\n")}
                 /* Required */
               );
             }
-            if (arg.kind === 238 && arg.tupleNameSource) {
-              names.push(arg.tupleNameSource);
+            if (arg2.kind === 238 && arg2.tupleNameSource) {
+              names.push(arg2.tupleNameSource);
             } else {
               names.push(void 0);
             }
@@ -131587,21 +132089,21 @@ ${lanes.join("\n")}
           const restType = getNonArrayRestType(signature);
           const argCount = restType ? Math.min(getParameterCount(signature) - 1, args2.length) : args2.length;
           for (let i = 0; i < argCount; i++) {
-            const arg = args2[i];
-            if (arg.kind !== 233) {
+            const arg2 = args2[i];
+            if (arg2.kind !== 233) {
               const paramType = getTypeAtPosition(signature, i);
               const argType = checkExpressionWithContextualType(
-                arg,
+                arg2,
                 paramType,
                 /*inferenceContext*/
                 void 0,
                 checkMode
               );
               const checkArgType = checkMode & 4 ? getRegularTypeOfObjectLiteral(argType) : argType;
-              const effectiveCheckArgumentNode = getEffectiveCheckNode(arg);
+              const effectiveCheckArgumentNode = getEffectiveCheckNode(arg2);
               if (!checkTypeRelatedToAndOptionallyElaborate(checkArgType, paramType, relation, reportErrors2 ? effectiveCheckArgumentNode : void 0, effectiveCheckArgumentNode, headMessage, containingMessageChain, errorOutputContainer)) {
                 Debug.assert(!reportErrors2 || !!errorOutputContainer.errors, "parameter should have errors when reporting errors");
-                maybeAddMissingAwaitInfo(arg, checkArgType, paramType);
+                maybeAddMissingAwaitInfo(arg2, checkArgType, paramType);
                 return errorOutputContainer.errors || emptyArray;
               }
             }
@@ -131692,17 +132194,17 @@ ${lanes.join("\n")}
           if (spreadIndex >= 0) {
             const effectiveArgs = args2.slice(0, spreadIndex);
             for (let i = spreadIndex; i < args2.length; i++) {
-              const arg = args2[i];
-              const spreadType = arg.kind === 231 && (flowLoopCount ? checkExpression(arg.expression) : checkExpressionCached(arg.expression));
+              const arg2 = args2[i];
+              const spreadType = arg2.kind === 231 && (flowLoopCount ? checkExpression(arg2.expression) : checkExpressionCached(arg2.expression));
               if (spreadType && isTupleType(spreadType)) {
                 forEach(getElementTypes(spreadType), (t, i2) => {
                   var _a;
                   const flags2 = spreadType.target.elementFlags[i2];
-                  const syntheticArg = createSyntheticExpression(arg, flags2 & 4 ? createArrayType(t) : t, !!(flags2 & 12), (_a = spreadType.target.labeledElementDeclarations) == null ? void 0 : _a[i2]);
+                  const syntheticArg = createSyntheticExpression(arg2, flags2 & 4 ? createArrayType(t) : t, !!(flags2 & 12), (_a = spreadType.target.labeledElementDeclarations) == null ? void 0 : _a[i2]);
                   effectiveArgs.push(syntheticArg);
                 });
               } else {
-                effectiveArgs.push(arg);
+                effectiveArgs.push(arg2);
               }
             }
             return effectiveArgs;
@@ -132355,8 +132857,8 @@ ${lanes.join("\n")}
           if (node.expression.kind === 108) {
             const superType = checkSuperExpression(node.expression);
             if (isTypeAny(superType)) {
-              for (const arg of node.arguments) {
-                checkExpression(arg);
+              for (const arg2 of node.arguments) {
+                checkExpression(arg2);
               }
               return anySignature;
             }
@@ -133417,8 +133919,8 @@ ${lanes.join("\n")}
               return isValidConstAssertionArgument(node.expression);
             case 225:
               const op = node.operator;
-              const arg = node.operand;
-              return op === 41 && (arg.kind === 9 || arg.kind === 10) || op === 40 && arg.kind === 9;
+              const arg2 = node.operand;
+              return op === 41 && (arg2.kind === 9 || arg2.kind === 10) || op === 40 && arg2.kind === 9;
             case 212:
             case 213:
               const expr = skipParentheses(node.expression);
@@ -153403,15 +153905,15 @@ ${lanes.join("\n")}
           }
           return void 0;
         }
-        function setCurrentClassElementAnd(classElement, visitor2, arg) {
+        function setCurrentClassElementAnd(classElement, visitor2, arg2) {
           if (classElement !== currentClassElement) {
             const savedCurrentClassElement = currentClassElement;
             currentClassElement = classElement;
-            const result = visitor2(arg);
+            const result = visitor2(arg2);
             currentClassElement = savedCurrentClassElement;
             return result;
           }
-          return visitor2(arg);
+          return visitor2(arg2);
         }
         function getHoistedFunctionName(node) {
           Debug.assert(isPrivateIdentifier(node.name));
@@ -155389,12 +155891,12 @@ ${lanes.join("\n")}
           serializeParameterTypesOfNode: (serializerContext, node, container) => setSerializerContextAnd(serializerContext, serializeParameterTypesOfNode, node, container),
           serializeReturnTypeOfNode: (serializerContext, node) => setSerializerContextAnd(serializerContext, serializeReturnTypeOfNode, node)
         };
-        function setSerializerContextAnd(serializerContext, cb, node, arg) {
+        function setSerializerContextAnd(serializerContext, cb, node, arg2) {
           const savedCurrentLexicalScope = currentLexicalScope;
           const savedCurrentNameScope = currentNameScope;
           currentLexicalScope = serializerContext.currentLexicalScope;
           currentNameScope = serializerContext.currentNameScope;
-          const result = arg === void 0 ? cb(node) : cb(node, arg);
+          const result = arg2 === void 0 ? cb(node) : cb(node, arg2);
           currentLexicalScope = savedCurrentLexicalScope;
           currentNameScope = savedCurrentNameScope;
           return result;
@@ -169242,11 +169744,11 @@ ${lanes.join("\n")}
             node.expression,
             /*typeArguments*/
             void 0,
-            visitNodes2(node.arguments, (arg) => {
-              if (arg === node.arguments[0]) {
-                return isStringLiteralLike(arg) ? rewriteModuleSpecifier(arg, compilerOptions) : emitHelpers().createRewriteRelativeImportExtensionsHelper(arg);
+            visitNodes2(node.arguments, (arg2) => {
+              if (arg2 === node.arguments[0]) {
+                return isStringLiteralLike(arg2) ? rewriteModuleSpecifier(arg2, compilerOptions) : emitHelpers().createRewriteRelativeImportExtensionsHelper(arg2);
               }
-              return visitor(arg);
+              return visitor(arg2);
             }, isExpression)
           );
         }
@@ -169268,11 +169770,11 @@ ${lanes.join("\n")}
               return createImportCallExpressionCommonJS(argument);
           }
         }
-        function createImportCallExpressionUMD(arg, containsLexicalThis) {
+        function createImportCallExpressionUMD(arg2, containsLexicalThis) {
           needUMDDynamicImportHelper = true;
-          if (isSimpleCopiableExpression(arg)) {
-            const argClone = isGeneratedIdentifier(arg) ? arg : isStringLiteral(arg) ? factory2.createStringLiteralFromNode(arg) : setEmitFlags(
-              setTextRange(factory2.cloneNode(arg), arg),
+          if (isSimpleCopiableExpression(arg2)) {
+            const argClone = isGeneratedIdentifier(arg2) ? arg2 : isStringLiteral(arg2) ? factory2.createStringLiteralFromNode(arg2) : setEmitFlags(
+              setTextRange(factory2.cloneNode(arg2), arg2),
               3072
               /* NoComments */
             );
@@ -169282,7 +169784,7 @@ ${lanes.join("\n")}
               /*questionToken*/
               void 0,
               /*whenTrue*/
-              createImportCallExpressionCommonJS(arg),
+              createImportCallExpressionCommonJS(arg2),
               /*colonToken*/
               void 0,
               /*whenFalse*/
@@ -169291,7 +169793,7 @@ ${lanes.join("\n")}
           } else {
             const temp = factory2.createTempVariable(hoistVariableDeclaration);
             return factory2.createComma(
-              factory2.createAssignment(temp, arg),
+              factory2.createAssignment(temp, arg2),
               factory2.createConditionalExpression(
                 /*condition*/
                 factory2.createIdentifier("__syncRequire"),
@@ -169311,7 +169813,7 @@ ${lanes.join("\n")}
             );
           }
         }
-        function createImportCallExpressionAMD(arg, containsLexicalThis) {
+        function createImportCallExpressionAMD(arg2, containsLexicalThis) {
           const resolve = factory2.createUniqueName("resolve");
           const reject = factory2.createUniqueName("reject");
           const parameters = [
@@ -169338,7 +169840,7 @@ ${lanes.join("\n")}
                 factory2.createIdentifier("require"),
                 /*typeArguments*/
                 void 0,
-                [factory2.createArrayLiteralExpression([arg || factory2.createOmittedExpression()]), resolve, reject]
+                [factory2.createArrayLiteralExpression([arg2 || factory2.createOmittedExpression()]), resolve, reject]
               )
             )
           ]);
@@ -169395,8 +169897,8 @@ ${lanes.join("\n")}
           }
           return promise2;
         }
-        function createImportCallExpressionCommonJS(arg, isInlineable) {
-          const needSyncEval = arg && !isSimpleInlineableExpression(arg) && !isInlineable;
+        function createImportCallExpressionCommonJS(arg2, isInlineable) {
+          const needSyncEval = arg2 && !isSimpleInlineableExpression(arg2) && !isInlineable;
           const promiseResolveCall = factory2.createCallExpression(
             factory2.createPropertyAccessExpression(factory2.createIdentifier("Promise"), "resolve"),
             /*typeArguments*/
@@ -169404,14 +169906,14 @@ ${lanes.join("\n")}
             /*argumentsArray*/
             needSyncEval ? languageVersion >= 2 ? [
               factory2.createTemplateExpression(factory2.createTemplateHead(""), [
-                factory2.createTemplateSpan(arg, factory2.createTemplateTail(""))
+                factory2.createTemplateSpan(arg2, factory2.createTemplateTail(""))
               ])
             ] : [
               factory2.createCallExpression(
                 factory2.createPropertyAccessExpression(factory2.createStringLiteral(""), "concat"),
                 /*typeArguments*/
                 void 0,
-                [arg]
+                [arg2]
               )
             ] : []
           );
@@ -169419,7 +169921,7 @@ ${lanes.join("\n")}
             factory2.createIdentifier("require"),
             /*typeArguments*/
             void 0,
-            needSyncEval ? [factory2.createIdentifier("s")] : arg ? [arg] : []
+            needSyncEval ? [factory2.createIdentifier("s")] : arg2 ? [arg2] : []
           );
           if (getESModuleInterop(compilerOptions)) {
             requireCall = emitHelpers().createImportStarHelper(requireCall);
@@ -200700,13 +201202,13 @@ ${lanes.join("\n")}
         return isReturnStatement(node) && !!node.expression && isFixablePromiseHandler(node.expression, checker);
       }
       function isFixablePromiseHandler(node, checker) {
-        if (!isPromiseHandler(node) || !hasSupportedNumberOfArguments(node) || !node.arguments.every((arg) => isFixablePromiseArgument(arg, checker))) {
+        if (!isPromiseHandler(node) || !hasSupportedNumberOfArguments(node) || !node.arguments.every((arg2) => isFixablePromiseArgument(arg2, checker))) {
           return false;
         }
         let currentNode = node.expression.expression;
         while (isPromiseHandler(currentNode) || isPropertyAccessExpression(currentNode)) {
           if (isCallExpression(currentNode)) {
-            if (!hasSupportedNumberOfArguments(currentNode) || !currentNode.arguments.every((arg) => isFixablePromiseArgument(arg, checker))) {
+            if (!hasSupportedNumberOfArguments(currentNode) || !currentNode.arguments.every((arg2) => isFixablePromiseArgument(arg2, checker))) {
               return false;
             }
             currentNode = currentNode.expression.expression;
@@ -200724,27 +201226,27 @@ ${lanes.join("\n")}
         const maxArguments = name === "then" ? 2 : name === "catch" ? 1 : name === "finally" ? 1 : 0;
         if (node.arguments.length > maxArguments) return false;
         if (node.arguments.length < maxArguments) return true;
-        return maxArguments === 1 || some(node.arguments, (arg) => {
-          return arg.kind === 106 || isIdentifier(arg) && arg.text === "undefined";
+        return maxArguments === 1 || some(node.arguments, (arg2) => {
+          return arg2.kind === 106 || isIdentifier(arg2) && arg2.text === "undefined";
         });
       }
-      function isFixablePromiseArgument(arg, checker) {
-        switch (arg.kind) {
+      function isFixablePromiseArgument(arg2, checker) {
+        switch (arg2.kind) {
           case 263:
           case 219:
-            const functionFlags = getFunctionFlags(arg);
+            const functionFlags = getFunctionFlags(arg2);
             if (functionFlags & 1) {
               return false;
             }
           // falls through
           case 220:
-            visitedNestedConvertibleFunctions.set(getKeyFromNode(arg), true);
+            visitedNestedConvertibleFunctions.set(getKeyFromNode(arg2), true);
           // falls through
           case 106:
             return true;
           case 80:
           case 212: {
-            const symbol2 = checker.getSymbolAtLocation(arg);
+            const symbol2 = checker.getSymbolAtLocation(arg2);
             if (!symbol2) {
               return false;
             }
@@ -204795,12 +205297,12 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         const parameters = getRefactorableParameters(functionDeclaration.parameters);
         const hasRestParameter2 = isRestParameter(last(parameters));
         const nonRestArguments = hasRestParameter2 ? functionArguments.slice(0, parameters.length - 1) : functionArguments;
-        const properties = map2(nonRestArguments, (arg, i) => {
+        const properties = map2(nonRestArguments, (arg2, i) => {
           const parameterName = getParameterName(parameters[i]);
-          const property = createPropertyOrShorthandAssignment(parameterName, arg);
+          const property = createPropertyOrShorthandAssignment(parameterName, arg2);
           suppressLeadingAndTrailingTrivia(property.name);
           if (isPropertyAssignment(property)) suppressLeadingAndTrailingTrivia(property.initializer);
-          copyComments(arg, property);
+          copyComments(arg2, property);
           return property;
         });
         if (hasRestParameter2 && functionArguments.length >= parameters.length) {
@@ -216814,7 +217316,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         const parent2 = token.parent;
         if (errorCode === Diagnostics.Argument_of_type_0_is_not_assignable_to_parameter_of_type_1.code) {
           if (!(token.kind === 19 && isObjectLiteralExpression(parent2) && isCallExpression(parent2.parent))) return void 0;
-          const argIndex = findIndex(parent2.parent.arguments, (arg) => arg === parent2);
+          const argIndex = findIndex(parent2.parent.arguments, (arg2) => arg2 === parent2);
           if (argIndex < 0) return void 0;
           const signature = checker.getResolvedSignature(parent2.parent);
           if (!(signature && signature.declaration && signature.parameters[argIndex])) return void 0;
@@ -217500,9 +218002,9 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         }
         const declarations = [nonOverloadDeclaration, ...getOverloads(nonOverloadDeclaration, convertibleSignatureDeclarations)];
         for (let i = 0, pos2 = 0, paramIndex = 0; i < argumentsLength; i++) {
-          const arg = callExpression.arguments[i];
-          const expr = isAccessExpression(arg) ? getNameOfAccessExpression(arg) : arg;
-          const type2 = checker.getWidenedType(checker.getBaseTypeOfLiteralType(checker.getTypeAtLocation(arg)));
+          const arg2 = callExpression.arguments[i];
+          const expr = isAccessExpression(arg2) ? getNameOfAccessExpression(arg2) : arg2;
+          const type2 = checker.getWidenedType(checker.getBaseTypeOfLiteralType(checker.getTypeAtLocation(arg2)));
           const parameter = pos2 < parametersLength ? nonOverloadDeclaration.parameters[pos2] : void 0;
           if (parameter && checker.isTypeAssignableTo(type2, checker.getTypeAtLocation(parameter))) {
             pos2++;
@@ -217817,7 +218319,7 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         if (token.kind !== 110) return void 0;
         const constructor = getContainingFunction(token);
         const superCall = findSuperCall(constructor.body);
-        return superCall && !superCall.expression.arguments.some((arg) => isPropertyAccessExpression(arg) && arg.expression === token) ? { constructor, superCall } : void 0;
+        return superCall && !superCall.expression.arguments.some((arg2) => isPropertyAccessExpression(arg2) && arg2.expression === token) ? { constructor, superCall } : void 0;
       }
       function findSuperCall(n) {
         return isExpressionStatement(n) && isSuperCall(n.expression) ? n : isFunctionLike(n) ? void 0 : forEachChild(n, findSuperCall);
@@ -217886,8 +218388,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           const { sourceFile, span, program } = context;
           const info2 = getInfo12(program, sourceFile, span);
           if (info2 === void 0) return;
-          const { suggestion, expression, arg } = info2;
-          const changes = ts_textChanges_exports.ChangeTracker.with(context, (t) => doChange23(t, sourceFile, arg, expression));
+          const { suggestion, expression, arg: arg2 } = info2;
+          const changes = ts_textChanges_exports.ChangeTracker.with(context, (t) => doChange23(t, sourceFile, arg2, expression));
           return [createCodeFixAction(fixId29, changes, [Diagnostics.Use_0, suggestion], fixId29, Diagnostics.Use_Number_isNaN_in_all_conditions)];
         },
         fixIds: [fixId29],
@@ -217912,12 +218414,12 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         }
         return void 0;
       }
-      function doChange23(changes, sourceFile, arg, expression) {
+      function doChange23(changes, sourceFile, arg2, expression) {
         const callExpression = factory.createCallExpression(
           factory.createPropertyAccessExpression(factory.createIdentifier("Number"), factory.createIdentifier("isNaN")),
           /*typeArguments*/
           void 0,
-          [arg]
+          [arg2]
         );
         const operator = expression.operatorToken.kind;
         changes.replaceNode(
@@ -221397,8 +221899,8 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
         const isJs = isInJSFile(contextNode);
         const { typeArguments, arguments: args2, parent: parent2 } = call;
         const contextualType = isJs ? void 0 : checker.getContextualType(call);
-        const names = map2(args2, (arg) => isIdentifier(arg) ? arg.text : isPropertyAccessExpression(arg) && isIdentifier(arg.name) ? arg.name.text : void 0);
-        const instanceTypes = isJs ? [] : map2(args2, (arg) => checker.getTypeAtLocation(arg));
+        const names = map2(args2, (arg2) => isIdentifier(arg2) ? arg2.text : isPropertyAccessExpression(arg2) && isIdentifier(arg2.name) ? arg2.name.text : void 0);
+        const instanceTypes = isJs ? [] : map2(args2, (arg2) => checker.getTypeAtLocation(arg2));
         const { argumentTypeNodes, argumentTypeParameters } = getArgumentTypesAndTypeParameters(
           checker,
           importAdder,
@@ -227493,10 +227995,10 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
       function getAlreadyUsedTypesInStringLiteralUnion(union2, current) {
         return mapDefined(union2.types, (type) => type !== current && isLiteralTypeNode(type) && isStringLiteral(type.literal) ? type.literal.text : void 0);
       }
-      function getStringLiteralCompletionsFromSignature(call, arg, argumentInfo, checker) {
+      function getStringLiteralCompletionsFromSignature(call, arg2, argumentInfo, checker) {
         let isNewIdentifier = false;
         const uniques = /* @__PURE__ */ new Set();
-        const editingArgument = isJsxOpeningLikeElement(call) ? Debug.checkDefined(findAncestor(arg.parent, isJsxAttribute)) : arg;
+        const editingArgument = isJsxOpeningLikeElement(call) ? Debug.checkDefined(findAncestor(arg2.parent, isJsxAttribute)) : arg2;
         const candidates = checker.getCandidateSignaturesForStringLiteralCompletions(call, editingArgument);
         const types = flatMap(candidates, (candidate) => {
           if (!signatureHasRestParameter(candidate) && argumentInfo.argumentCount > candidate.parameters.length) return;
@@ -231554,14 +232056,14 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
           if (signature === void 0) return;
           let signatureParamPos = 0;
           for (const originalArg of args2) {
-            const arg = skipParentheses(originalArg);
-            if (shouldShowLiteralParameterNameHintsOnly(preferences) && !isHintableLiteral(arg)) {
+            const arg2 = skipParentheses(originalArg);
+            if (shouldShowLiteralParameterNameHintsOnly(preferences) && !isHintableLiteral(arg2)) {
               signatureParamPos++;
               continue;
             }
             let spreadArgs = 0;
-            if (isSpreadElement(arg)) {
-              const spreadType = checker.getTypeAtLocation(arg.expression);
+            if (isSpreadElement(arg2)) {
+              const spreadType = checker.getTypeAtLocation(arg2.expression);
               if (checker.isTupleType(spreadType)) {
                 const { elementFlags, fixedLength } = spreadType.target;
                 if (fixedLength === 0) {
@@ -231578,12 +232080,12 @@ ${newComment.split("\n").map((c) => ` * ${c}`).join("\n")}
             signatureParamPos = signatureParamPos + (spreadArgs || 1);
             if (identifierInfo) {
               const { parameter, parameterName, isRestParameter: isFirstVariadicArgument } = identifierInfo;
-              const isParameterNameNotSameAsArgument = preferences.includeInlayParameterNameHintsWhenArgumentMatchesName || !identifierOrAccessExpressionPostfixMatchesParameterName(arg, parameterName);
+              const isParameterNameNotSameAsArgument = preferences.includeInlayParameterNameHintsWhenArgumentMatchesName || !identifierOrAccessExpressionPostfixMatchesParameterName(arg2, parameterName);
               if (!isParameterNameNotSameAsArgument && !isFirstVariadicArgument) {
                 continue;
               }
               const name = unescapeLeadingUnderscores(parameterName);
-              if (leadingCommentsContainsParameterName(arg, name)) {
+              if (leadingCommentsContainsParameterName(arg2, name)) {
                 continue;
               }
               addParameterHints(name, parameter, originalArg.getStart(), isFirstVariadicArgument);
@@ -239053,8 +239555,8 @@ ${options2.prefix}` : "\n" : options2.prefix
       function tokenRangeFrom(tokens) {
         return { tokens, isSpecific: true };
       }
-      function toTokenRange(arg) {
-        return typeof arg === "number" ? tokenRangeFrom([arg]) : isArray(arg) ? tokenRangeFrom(arg) : arg;
+      function toTokenRange(arg2) {
+        return typeof arg2 === "number" ? tokenRangeFrom([arg2]) : isArray(arg2) ? tokenRangeFrom(arg2) : arg2;
       }
       function tokenRangeFromRange(from, to, except = []) {
         const tokens = [];
@@ -240878,7 +241380,7 @@ ${options2.prefix}` : "\n" : options2.prefix
         function argumentStartsOnSameLineAsPreviousArgument(parent2, child, childStartLine, sourceFile) {
           if (isCallOrNewExpression(parent2)) {
             if (!parent2.arguments) return false;
-            const currentNode = find(parent2.arguments, (arg) => arg.pos === child.pos);
+            const currentNode = find(parent2.arguments, (arg2) => arg2.pos === child.pos);
             if (!currentNode) return false;
             const currentIndex = parent2.arguments.indexOf(currentNode);
             if (currentIndex === 0) return false;
@@ -258562,13 +259064,13 @@ var require_path_browserify = __commonJS({
           return ".";
         var joined;
         for (var i = 0; i < arguments.length; ++i) {
-          var arg = arguments[i];
-          assertPath(arg);
-          if (arg.length > 0) {
+          var arg2 = arguments[i];
+          assertPath(arg2);
+          if (arg2.length > 0) {
             if (joined === void 0)
-              joined = arg;
+              joined = arg2;
             else
-              joined += "/" + arg;
+              joined += "/" + arg2;
           }
         }
         if (joined === void 0)
@@ -261678,9 +262180,9 @@ var require_ts_morph_common = __commonJS({
         if (index >= 0)
           this.#subscriptions.splice(index, 1);
       }
-      fire(arg) {
+      fire(arg2) {
         for (const subscription of this.#subscriptions)
-          subscription(arg);
+          subscription(arg2);
       }
       #getIndex(subscription) {
         return this.#subscriptions.indexOf(subscription);
@@ -280767,8 +281269,8 @@ Node text: ${this.#forgottenText}`;
         return callBaseGetStructure(DecoratorBase.prototype, this, {
           kind: exports2.StructureKind.Decorator,
           name: this.getName(),
-          arguments: isDecoratorFactory ? this.getArguments().map((arg) => arg.getText()) : void 0,
-          typeArguments: isDecoratorFactory ? this.getTypeArguments().map((arg) => arg.getText()) : void 0
+          arguments: isDecoratorFactory ? this.getArguments().map((arg2) => arg2.getText()) : void 0,
+          typeArguments: isDecoratorFactory ? this.getTypeArguments().map((arg2) => arg2.getText()) : void 0
         });
       }
     };
@@ -281010,15 +281512,15 @@ Node text: ${this.#forgottenText}`;
     };
     var ImportTypeNode = class extends NodeWithTypeArguments {
       setArgument(text) {
-        const arg = this.getArgument();
-        if (Node3.isLiteralTypeNode(arg)) {
-          const literal2 = arg.getLiteral();
+        const arg2 = this.getArgument();
+        if (Node3.isLiteralTypeNode(arg2)) {
+          const literal2 = arg2.getLiteral();
           if (Node3.isStringLiteral(literal2)) {
             literal2.setLiteralValue(text);
             return this;
           }
         }
-        arg.replaceWithText((writer) => writer.quote(text), this._getWriterWithQueuedChildIndentation());
+        arg2.replaceWithText((writer) => writer.quote(text), this._getWriterWithQueuedChildIndentation());
         return this;
       }
       getArgument() {
@@ -283439,7 +283941,7 @@ Node text: ${this.#forgottenText}`;
         return this.compilerObject.getSymbolsInScope(node.compilerNode, meaning).map((s) => this.#context.compilerFactory.getSymbol(s));
       }
       getTypeArguments(typeReference) {
-        return this.compilerObject.getTypeArguments(typeReference.compilerType).map((arg) => this.#context.compilerFactory.getType(arg));
+        return this.compilerObject.getTypeArguments(typeReference.compilerType).map((arg2) => this.#context.compilerFactory.getType(arg2));
       }
       isTypeAssignableTo(sourceType, targetType) {
         return this.compilerObject.isTypeAssignableTo(sourceType.compilerType, targetType.compilerType);
@@ -286926,25 +287428,25 @@ function detectTableRef(call) {
   }
   return { table: literal2, access, accessKnown: true, via: "from" };
 }
-function urlFromArg(arg) {
-  if (!arg)
+function urlFromArg(arg2) {
+  if (!arg2)
     return null;
-  if (import_ts_morph2.Node.isStringLiteral(arg) || import_ts_morph2.Node.isNoSubstitutionTemplateLiteral(arg)) {
-    return arg.getLiteralText();
+  if (import_ts_morph2.Node.isStringLiteral(arg2) || import_ts_morph2.Node.isNoSubstitutionTemplateLiteral(arg2)) {
+    return arg2.getLiteralText();
   }
-  if (import_ts_morph2.Node.isTemplateExpression(arg)) {
-    let s = arg.getHead().getLiteralText();
-    for (const span of arg.getTemplateSpans()) {
+  if (import_ts_morph2.Node.isTemplateExpression(arg2)) {
+    let s = arg2.getHead().getLiteralText();
+    for (const span of arg2.getTemplateSpans()) {
       s += ":param" + span.getLiteral().getLiteralText();
     }
     return s;
   }
   return null;
 }
-function methodFromOptions(arg) {
-  if (!arg || !import_ts_morph2.Node.isObjectLiteralExpression(arg))
+function methodFromOptions(arg2) {
+  if (!arg2 || !import_ts_morph2.Node.isObjectLiteralExpression(arg2))
     return null;
-  for (const prop of arg.getProperties()) {
+  for (const prop of arg2.getProperties()) {
     if (import_ts_morph2.Node.isPropertyAssignment(prop) && prop.getName() === "method") {
       const init2 = prop.getInitializer();
       if (init2 && (import_ts_morph2.Node.isStringLiteral(init2) || import_ts_morph2.Node.isNoSubstitutionTemplateLiteral(init2))) {
@@ -287301,8 +287803,8 @@ function firstStringArg(invocation) {
   const args2 = invocation.childForFieldName("arguments");
   if (!args2)
     return null;
-  for (const arg of args2.namedChildren) {
-    const expr = arg.type === "argument" ? arg.namedChild(0) : arg;
+  for (const arg2 of args2.namedChildren) {
+    const expr = arg2.type === "argument" ? arg2.namedChild(0) : arg2;
     if (expr && STRING_LITERAL_TYPES.has(expr.type)) {
       return stripCsStringLiteral(expr.text ?? "");
     }
@@ -288174,7 +288676,7 @@ function configureBundledWasmDir() {
   } catch {
   }
 }
-async function main39() {
+async function main40() {
   const args2 = parseArgs11(process.argv);
   if (args2.help) {
     printHelp15();
@@ -288326,7 +288828,7 @@ var init_scan = __esm({
     init_client();
     init_project_resolver();
     init_run_scan();
-    main39().catch((err2) => {
+    main40().catch((err2) => {
       console.error(`memlin: ${err2 instanceof Error ? err2.stack ?? err2.message : String(err2)}`);
       process.exit(2);
     });
@@ -288348,10 +288850,12 @@ var RUN = {
   "push-plan": () => Promise.resolve().then(() => (init_push_plan(), push_plan_exports)),
   remember: () => Promise.resolve().then(() => (init_remember(), remember_exports)),
   private: () => Promise.resolve().then(() => (init_private(), private_exports)),
+  "read-only": () => Promise.resolve().then(() => (init_read_only(), read_only_exports)),
   "bind-plans": () => Promise.resolve().then(() => (init_bind_plans(), bind_plans_exports)),
   "archive-plans": () => Promise.resolve().then(() => (init_archive_plans(), archive_plans_exports)),
   resolve: () => Promise.resolve().then(() => (init_resolve(), resolve_exports)),
   ask: () => Promise.resolve().then(() => (init_ask(), ask_exports)),
+  agent: () => Promise.resolve().then(() => (init_agent(), agent_exports)),
   verify: () => Promise.resolve().then(() => (init_verify(), verify_exports)),
   diff: () => Promise.resolve().then(() => (init_diff(), diff_exports)),
   scribe: () => Promise.resolve().then(() => (init_scribe(), scribe_exports)),
@@ -288378,7 +288882,7 @@ var RUN = {
   "prompt-ci": () => Promise.resolve().then(() => (init_prompt_ci(), prompt_ci_exports)),
   scan: () => Promise.resolve().then(() => (init_scan(), scan_exports))
 };
-async function main40() {
+async function main41() {
   let sub = process.argv[2];
   if (sub === "audit") {
     const action = process.argv[3];
@@ -288402,7 +288906,7 @@ async function main40() {
   process.argv.splice(2, 1);
   await run2();
 }
-main40().catch((err2) => {
+main41().catch((err2) => {
   process.stderr.write(`memlin: ${err2 instanceof Error ? err2.message : String(err2)}
 `);
   scheduleProcessExit(1);
